@@ -14,14 +14,14 @@ stock/v5 adapter firmware and is unchanged by this project.
 | `:bridge` | Sideloaded USB bridge, package `android.car.usb.handler`. Holds the adapter's USB permission silently on every attach, relays the raw OCBM bulk stream to the app over a socket, and hosts the cluster icon `ContentProvider`. |
 | `:bridge-api` | AIDL contract between the two. |
 
-Modules inherited from OCBM that this fork does **not** use and will remove: `:projection`
-(Raspberry Pi target), `:car-system-stubs` (system APIs a third-party app cannot hold),
-`:usbhandler` (OCBM's untested proof of the permission grant — superseded by `:bridge`).
+Modules inherited from OCBM and removed here: `:projection` (Raspberry Pi target), `:car-system-stubs`
+(system APIs a third-party app cannot hold), `:usbhandler` (OCBM's untested proof of the permission
+grant — superseded by `:bridge`).
 
 ## Status
 
 **Scaffold builds.** `:app` (`com.enigy.carlink3`), `:bridge` and `:bridge-api` all compile; the
-three OCBM-only modules are removed. The app is still OCBM's client claiming USB itself — the bridge is
+three OCBM-only modules are removed; the inherited unit tests pass (271). The app is still OCBM's client claiming USB itself — the bridge is
 not yet wired as its transport. Next: make the bridge a raw OCBM bulk relay and give `:app` a
 socket-backed `RawBulkTransport`; then port Carlink2's cluster navigation. See `NOTICE.md` for provenance and the plan in Carlink2's
 `documents/design/ocbm_migration_plan.md`.
