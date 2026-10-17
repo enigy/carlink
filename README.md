@@ -20,9 +20,10 @@ Modules inherited from OCBM that this fork does **not** use and will remove: `:p
 
 ## Status
 
-**Seeded, not yet building as Carlink3.** The tree is OCBM's `host/CarlinkAndroid` plus Carlink2's bridge
-modules, each imported with history. Next: rename the app, wire the bridge as a raw relay, port
-Carlink2's cluster navigation. See `NOTICE.md` for provenance and the plan in Carlink2's
+**Scaffold builds.** `:app` (`com.enigy.carlink3`), `:bridge` and `:bridge-api` all compile; the
+three OCBM-only modules are removed. The app is still OCBM's client claiming USB itself — the bridge is
+not yet wired as its transport. Next: make the bridge a raw OCBM bulk relay and give `:app` a
+socket-backed `RawBulkTransport`; then port Carlink2's cluster navigation. See `NOTICE.md` for provenance and the plan in Carlink2's
 `documents/design/ocbm_migration_plan.md`.
 
 ## License

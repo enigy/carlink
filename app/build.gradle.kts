@@ -18,7 +18,7 @@ android {
         // the working, favored app against stock firmware and is the fallback while this one is
         // built; sharing an applicationId would install over it and leave no way back on a head
         // unit that is also the daily driver. Both can be installed side by side and A/B'd.
-        applicationId = "zeno.carlink.ocbm"
+        applicationId = "com.enigy.carlink3"
         minSdk = 32 // GM gminfo = Android 12L / API 32
         targetSdk = 36
         versionCode = 1

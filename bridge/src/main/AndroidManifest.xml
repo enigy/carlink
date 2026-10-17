@@ -17,7 +17,7 @@
         android:label="Carlink2 USB Bridge"
         tools:ignore="HardcodedText,MissingApplicationIcon">
 
-        <!-- Bound only by com.enigy.carlink2; BridgeService rejects every other caller. -->
+        <!-- Bound only by com.enigy.carlink3; BridgeService rejects every other caller. -->
         <service
             android:name=".BridgeService"
             android:exported="true"

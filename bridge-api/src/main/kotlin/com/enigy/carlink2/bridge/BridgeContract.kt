@@ -36,7 +36,7 @@ object BridgeContract {
     const val BRIDGE_SERVICE_CLASS = "com.enigy.carlink2.bridge.BridgeService"
 
     /** The only package the bridge serves. Play guarantees nobody else can publish it. */
-    const val DISPLAY_PACKAGE = "com.enigy.carlink2"
+    const val DISPLAY_PACKAGE = "com.enigy.carlink3"
 
     const val CLUSTER_ICON_AUTHORITY =
         "com.google.android.apps.automotive.templates.host.ClusterIconContentProvider"

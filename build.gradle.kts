@@ -4,6 +4,7 @@ plugins {
     // AGP 9.2: lifecycle 2.11.0 formally requires AGP >= 9.2.0 (this was the one
     // out-of-spec pairing in the build); Gradle 9.6.1 satisfies 9.2's floor.
     id("com.android.application") version "9.2.1" apply false
+    id("com.android.library") version "9.2.1" apply false // :bridge-api
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.10" apply false
     // ktlint-gradle 14.x: 12.x predates AGP 9 built-in-Kotlin support (added 14.1.0) —
     // the old plugin may not even have been scanning src/main/kotlin.
@@ -33,7 +34,7 @@ plugins {
 // Override with -Pcarlink.buildRoot=/some/path if ~/.cache is not writable.
 val buildRoot =
     (findProperty("carlink.buildRoot") as String?)
-        ?: "${System.getProperty("user.home")}/.cache/gradle-builds/carlink-android-ocbm"
+        ?: "${System.getProperty("user.home")}/.cache/gradle-builds/carlink3"
 
 allprojects {
     layout.buildDirectory.set(file("$buildRoot/${project.path.replace(':', '_').trim('_').ifEmpty { "root" }}"))

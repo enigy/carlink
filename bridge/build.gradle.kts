@@ -13,8 +13,8 @@ val keystoreProperties = Properties().also { props ->
 // SHA-256 fingerprints of display-app signing certificates the bridge accepts, comma-separated
 // (colons optional). Use the "App signing key certificate" fingerprint from Play Console →
 // Test and release → App integrity. Put it in ~/.gradle/gradle.properties or pass
-// -Pcarlink2.callerCerts=... . Empty = package-name check only.
-val callerCerts = (findProperty("carlink2.callerCerts") as String?).orEmpty().trim()
+// -Pcarlink3.callerCerts=... . Empty = package-name check only.
+val callerCerts = (findProperty("carlink3.callerCerts") as String?).orEmpty().trim()
 
 android {
     namespace = "com.enigy.carlink2.bridge"
