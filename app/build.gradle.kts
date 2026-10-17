@@ -131,6 +131,7 @@ detekt {
 }
 
 dependencies {
+    implementation(project(":bridge-api")) // AIDL stub + BridgeContract for the USB bridge transport
     // (Removed: detekt-formatting. Its embedded ktlint (~0.50) disagrees with the
     // standalone ktlint-gradle 14.x engine that now formats AND gates the build —
     // running both baselined ~70 entries of pure engine disagreement. One formatter,

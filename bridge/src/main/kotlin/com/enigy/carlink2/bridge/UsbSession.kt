@@ -158,57 +158,32 @@ internal class UsbSession(
         Log.i(TAG, "Closed ${session.deviceName}: $reason")
     }
 
+    /**
+     * Carlink3: a RAW relay. Each bulk IN read (up to [BridgeContract.READ_CHUNK_BYTES]) is written
+     * to the socket as-is; the bridge knows nothing about OCBM framing — the display app's OCBM
+     * client reassembles frames, exactly as it does over a direct USB connection. (Carlink2's
+     * bridge parsed the stock 16-byte 0x55AA55AA header here; that framing does not exist on an
+     * OCBM adapter.) `messagesIn` now counts chunks.
+     */
     private fun pump(session: Active) {
-        // Same priority the display app's read loop uses: this thread feeds audio AND video.
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY - 2)
         val out = FileOutputStream(session.sink.fileDescriptor)
-        val header = ByteArray(BridgeContract.HEADER_SIZE)
-        var message = ByteArray(INITIAL_MESSAGE_BUFFER)
+        val buf = ByteArray(BridgeContract.READ_CHUNK_BYTES)
         var reason = "pump stopped"
-
         try {
             while (session.running) {
-                val n = session.connection.bulkTransfer(session.inEndpoint, header, header.size, READ_TIMEOUT_MS)
+                val n = session.connection.bulkTransfer(session.inEndpoint, buf, buf.size, READ_TIMEOUT_MS)
                 if (n < 0) {
-                    // Timeout, or a transient fast failure. Detach and close() end the session;
-                    // the display app decides when silence means the adapter is gone.
+                    // Timeout (idle link) or a hard failure; bulkTransfer does not tell them apart.
+                    // closeLocked() flips `running` and closes the connection, so a dead device
+                    // exits here on the next iteration rather than spinning.
                     Thread.sleep(FAILED_READ_BACKOFF_MS)
                     continue
                 }
-                if (n != header.size) {
-                    BridgeStats.droppedHeaders.incrementAndGet()
-                    continue
-                }
-                val length = le32(header, 4)
-                if (le32(header, 0) != BridgeContract.PROTOCOL_MAGIC || length !in 0..BridgeContract.MAX_PAYLOAD_SIZE) {
-                    BridgeStats.droppedHeaders.incrementAndGet()
-                    continue
-                }
-
-                val total = header.size + length
-                if (message.size < total) message = ByteArray(maxOf(total, message.size * 2))
-                System.arraycopy(header, 0, message, 0, header.size)
-                var got = 0
-                while (got < length && session.running) {
-                    val r =
-                        session.connection.bulkTransfer(
-                            session.inEndpoint,
-                            message,
-                            header.size + got,
-                            minOf(length - got, MAX_CHUNK),
-                            READ_TIMEOUT_MS,
-                        )
-                    if (r <= 0) break
-                    got += r
-                }
-                if (got != length) {
-                    BridgeStats.droppedPartial.incrementAndGet()
-                    continue
-                }
-
-                out.write(message, 0, total)
+                if (n == 0) continue
+                out.write(buf, 0, n)
                 BridgeStats.messagesIn.incrementAndGet()
-                BridgeStats.bytesIn.addAndGet(total.toLong())
+                BridgeStats.bytesIn.addAndGet(n.toLong())
             }
         } catch (e: IOException) {
             reason = "display app stopped reading (${e.message})"
@@ -256,23 +231,12 @@ internal class UsbSession(
         }
     }
 
-    private fun le32(
-        buffer: ByteArray,
-        offset: Int,
-    ): Int =
-        (buffer[offset].toInt() and 0xFF) or
-            ((buffer[offset + 1].toInt() and 0xFF) shl 8) or
-            ((buffer[offset + 2].toInt() and 0xFF) shl 16) or
-            ((buffer[offset + 3].toInt() and 0xFF) shl 24)
-
     private companion object {
         const val TAG = "Carlink2Bridge"
 
         // Matches the display app's direct path (AdapterDriver readTimeout).
-        const val READ_TIMEOUT_MS = 30_000
+        const val READ_TIMEOUT_MS = 2_000 // short: a detached device is noticed within a backoff, not 30 s
         const val FAILED_READ_BACKOFF_MS = 200L
-        const val MAX_CHUNK = 16_384
-        const val INITIAL_MESSAGE_BUFFER = 256 * 1024
         const val SEND_BUFFER_BYTES = 4 * 1024 * 1024
     }
 }

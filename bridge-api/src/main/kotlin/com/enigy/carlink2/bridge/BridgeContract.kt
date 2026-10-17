@@ -17,11 +17,19 @@ package com.enigy.carlink2.bridge
  * display app.
  */
 object BridgeContract {
-    /** Bump when ICarlinkBridge gains methods; the display app checks [MIN_API_VERSION]. */
-    const val API_VERSION = 2
+    /** Bump when ICarlinkBridge gains methods or changes semantics; the display app checks [MIN_API_VERSION]. */
+    const val API_VERSION = 3
+
+    /**
+     * Carlink3: from this API the bridge relays the adapter's bulk stream RAW — chunks as read from
+     * the IN endpoint, no header parsing, no message boundaries. The display app's OCBM client does
+     * its own framing (`Reassembler`). Older bridges (Carlink2, API ≤ 2) parsed the stock 0x55AA55AA
+     * message framing and must not be used with an OCBM adapter.
+     */
+    const val RAW_STREAM_API_VERSION = 3
 
     /** Oldest bridge API the display app can drive. */
-    const val MIN_API_VERSION = 1
+    const val MIN_API_VERSION = 3
 
     /** First bridge API with ICarlinkBridge.requestPermission ([205]). */
     const val PERMISSION_PROMPT_API_VERSION = 2
@@ -41,14 +49,12 @@ object BridgeContract {
     const val CLUSTER_ICON_AUTHORITY =
         "com.google.android.apps.automotive.templates.host.ClusterIconContentProvider"
 
-    /** CPC200 framing the bridge relies on: 16-byte header, magic at 0, payload length at 4. */
-    const val HEADER_SIZE = 16
-    const val PROTOCOL_MAGIC = 0x55aa55aa
-    const val MAX_PAYLOAD_SIZE = 2 * 1024 * 1024
+    /** Bytes the bridge reads from the IN endpoint per bulkTransfer and writes to the socket as one chunk. */
+    const val READ_CHUNK_BYTES = 16 * 1024
 
     /**
-     * Largest single write() accepted. Binder transactions share a 1 MB buffer per process;
-     * the biggest message the display app sends today is the ~234 KB ARMiPhoneIAP2 upload.
+     * Largest single write() accepted. Binder transactions share a 1 MB buffer per process.
+     * The OCBM client writes ≤16 KiB chunks; this is headroom, not a target.
      */
     const val MAX_WRITE_BYTES = 512 * 1024
 }

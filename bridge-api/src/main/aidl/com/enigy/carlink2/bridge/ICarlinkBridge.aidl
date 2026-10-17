@@ -3,12 +3,13 @@ package com.enigy.carlink2.bridge;
 import android.os.ParcelFileDescriptor;
 
 /**
- * Display app (com.enigy.carlink2) -> USB bridge (android.car.usb.handler).
+ * Display app (com.enigy.carlink3) -> USB bridge (android.car.usb.handler).
  *
  * The bridge owns the CPC200 USB device. Inbound adapter traffic is not delivered over
- * Binder: open() returns the read end of a socket that carries complete protocol messages
- * (16-byte header + payload), back to back, in arrival order. Outbound traffic goes
- * through write(), one adapter message per call.
+ * Binder: open() returns the read end of a socket that carries the adapter's bulk stream RAW,
+ * in arrival order, chunked as read from the IN endpoint (API 3+; see
+ * BridgeContract.RAW_STREAM_API_VERSION). The display app does its own framing. Outbound
+ * traffic goes through write(), one bulk OUT transfer per call.
  *
  * Methods other than getApiVersion() throw SecurityException for callers that are not the
  * display app. Add new methods at the END only — transaction codes follow declaration order,
@@ -22,13 +23,13 @@ interface ICarlinkBridge {
     boolean hasPermission(String deviceName);
 
     /**
-     * Open deviceName, claim its bulk interface and start forwarding inbound messages.
+     * Open deviceName, claim its bulk interface and start forwarding inbound bytes.
      * Returns the read end of the message socket, or null on failure (reason in getStatus()).
      * A session that is already open is closed first. EOF on the socket means the session ended.
      */
     ParcelFileDescriptor open(String deviceName);
 
-    /** Bulk OUT transfer of one message. Returns bytes written, or -1 like bulkTransfer(). */
+    /** One bulk OUT transfer of data. Returns bytes written, or -1 like bulkTransfer(). */
     int write(in byte[] data, int timeoutMs);
 
     /** Close the current session, if any. */

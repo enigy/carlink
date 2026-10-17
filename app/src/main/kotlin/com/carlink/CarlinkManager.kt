@@ -31,11 +31,13 @@ import com.carlink.media.CarlinkMediaBrowserService
 import com.carlink.media.MediaSessionManager
 import com.carlink.media.NowPlayingInfo
 import com.carlink.ocbm.BinaryPlist
+import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
 import com.carlink.ocbm.OcbmClient
 import com.carlink.ocbm.OemIcon
+import com.carlink.ocbm.RawBulkTransport
 import com.carlink.ocbm.UsbBulkTransport
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
@@ -44,9 +46,12 @@ import com.carlink.protocol.AdapterConfig
 import com.carlink.protocol.MessageSerializer
 import com.carlink.protocol.MultiTouchAction
 import com.carlink.protocol.PhoneType
+import com.carlink.usb.CarlinkBridge
 import com.carlink.util.DisplayProfile
 import com.carlink.util.LogCallback
 import com.carlink.util.PanelGeometry
+import com.enigy.carlink2.bridge.BridgeContract
+import com.enigy.carlink2.bridge.ICarlinkBridge
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -135,6 +140,12 @@ class CarlinkManager(
             private set
 
         private const val USB_WAIT_PERIOD_MS = 3000L
+
+        private const val USB_FIND_ATTEMPTS = 10 // same budget findDevice() uses
+
+        private const val BRIDGE_PERMISSION_POLLS = 40 // 40 × 250 ms = 10 s for the one-tap prompt
+
+        private const val BRIDGE_PERMISSION_POLL_MS = 250L
 
         private const val MAX_RECONNECT_ATTEMPTS = 5
 
@@ -378,7 +389,7 @@ class CarlinkManager(
     // One transport + one client PER SESSION, by contract: OcbmClient.stop() is terminal and
     // UsbBulkTransport has no reopen, so reconnecting means constructing a fresh pair. Both are
     // cheap — neither holds a Context or native resources beyond the claimed interface.
-    private var transport: UsbBulkTransport? = null
+    private var transport: RawBulkTransport? = null
     private var client: OcbmClient? = null
 
     private val ocbmLog = ProbeLog.sub("ocbm")
@@ -902,7 +913,111 @@ class CarlinkManager(
      * attempt 0, schedules no retry. `release()` also cancels [scope], so the zombie's state
      * posts silently no-op and nothing on screen explains it.
      */
-    private suspend fun acquireTransport(): UsbBulkTransport? {
+    private suspend fun acquireTransport(): RawBulkTransport? {
+        if (CarlinkBridge.isInstalled(context)) return acquireBridgeTransport()
+        logInfo("[BRIDGE] USB bridge not installed — claiming the adapter in-process", tag = Logger.Tags.USB)
+        return acquireUsbTransport()
+    }
+
+    /**
+     * Carlink3: the preferred path. The sideloaded bridge (`android.car.usb.handler`, module
+     * `:bridge`) holds the USB permission the platform grants it silently on every attach and
+     * relays the raw bulk stream over a socket, so this app never asks for USB permission itself
+     * and stays Play-shippable. Device discovery only needs `UsbManager.deviceList`, which is
+     * readable without permission. A boot-time attach the platform never granted gets the
+     * bridge's one-tap prompt ([ICarlinkBridge.requestPermission]) and a short poll.
+     */
+    private suspend fun acquireBridgeTransport(): RawBulkTransport? {
+        val dev = awaitAdapterListed()
+        if (dev == null) {
+            logError("Failed to find the OCBM adapter", tag = Logger.Tags.USB)
+            handleFailedStart("Adapter not found")
+            return null
+        }
+        if (released) return null
+        val bridge = bindRawStreamBridge() ?: return null
+        if (!awaitBridgePermission(bridge, dev.deviceName)) {
+            handleFailedStart("USB permission denied")
+            return null
+        }
+        return openViaBridge(bridge, dev.deviceName)
+    }
+
+    /** The adapter from `UsbManager.deviceList` (no permission needed), polled with [findDevice]'s budget. */
+    private suspend fun awaitAdapterListed(): android.hardware.usb.UsbDevice? {
+        var attempts = 0
+        while (attempts < USB_FIND_ATTEMPTS) {
+            BridgeBulkTransport.findAdapter(context)?.let { return it }
+            attempts++
+            delay(USB_WAIT_PERIOD_MS)
+        }
+        return null
+    }
+
+    /** Bind the bridge and require the raw-stream API; reports the failure and returns null otherwise. */
+    private suspend fun bindRawStreamBridge(): ICarlinkBridge? {
+        val bridge = CarlinkBridge.connect(context)
+        if (bridge == null) {
+            logError("[BRIDGE] bind failed: ${CarlinkBridge.lastFailure}", tag = Logger.Tags.USB)
+            handleFailedStart("USB bridge isn't responding")
+            return null
+        }
+        val api = runCatching { bridge.apiVersion }.getOrDefault(-1)
+        if (api < BridgeContract.RAW_STREAM_API_VERSION) {
+            logError(
+                "[BRIDGE] API $api is older than the raw-stream API ${BridgeContract.RAW_STREAM_API_VERSION}",
+                tag = Logger.Tags.USB,
+            )
+            handleFailedStart("USB bridge is out of date")
+            return null
+        }
+        return bridge
+    }
+
+    /** True once the bridge holds USB permission for [name]; asks once (one-tap prompt) and polls. */
+    private suspend fun awaitBridgePermission(
+        bridge: ICarlinkBridge,
+        name: String,
+    ): Boolean {
+        if (bridge.hasPermission(name)) return true
+        val prompt = runCatching { bridge.requestPermission(name) }.getOrDefault(BridgeContract.PERMISSION_DENIED)
+        logInfo("[BRIDGE] no USB permission for $name — prompt result $prompt; waiting", tag = Logger.Tags.USB)
+        var waited = 0
+        while (!bridge.hasPermission(name) && waited < BRIDGE_PERMISSION_POLLS) {
+            delay(BRIDGE_PERMISSION_POLL_MS)
+            waited++
+        }
+        val granted = bridge.hasPermission(name)
+        if (!granted) {
+            logError("[BRIDGE] still no USB permission for $name — ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
+        }
+        return granted
+    }
+
+    /** Open [name] through the bridge and wrap the returned socket; null (reported) on failure or if released meanwhile. */
+    private fun openViaBridge(
+        bridge: ICarlinkBridge,
+        name: String,
+    ): RawBulkTransport? {
+        setStatusText("Adapter found — opening...")
+        val stream = runCatching { bridge.open(name) }.getOrNull()
+        if (stream == null) {
+            logError("[BRIDGE] open failed — ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
+            handleFailedStart("USB bridge could not open the adapter")
+            return null
+        }
+        val t = BridgeBulkTransport(bridge, stream, name, usbLog)
+        if (released) {
+            logWarn("[LIFECYCLE] released during bridge open — closing and abandoning", tag = Logger.Tags.ADAPTR)
+            t.stop()
+            return null
+        }
+        logInfo("[BRIDGE] ${t.bridgeStatus()}", tag = Logger.Tags.USB)
+        return t
+    }
+
+    /** Fallback when no bridge is installed (bench, emulator): claim USB in-process, prompting if needed. */
+    private suspend fun acquireUsbTransport(): UsbBulkTransport? {
         val t = UsbBulkTransport(context, usbLog)
 
         val dev = findDevice(t)

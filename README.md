@@ -20,10 +20,13 @@ grant — superseded by `:bridge`).
 
 ## Status
 
-**Scaffold builds.** `:app` (`com.enigy.carlink3`), `:bridge` and `:bridge-api` all compile; the
-three OCBM-only modules are removed; the inherited unit tests pass (271). The app is still OCBM's client claiming USB itself — the bridge is
-not yet wired as its transport. Next: make the bridge a raw OCBM bulk relay and give `:app` a
-socket-backed `RawBulkTransport`; then port Carlink2's cluster navigation. See `NOTICE.md` for provenance and the plan in Carlink2's
+**Bridge is the transport (compiled, not yet run on hardware).** `:app` (`com.enigy.carlink3`),
+`:bridge` and `:bridge-api` build; ktlint, detekt and the 271 inherited unit tests pass. The bridge
+relays the adapter's bulk stream raw (API 3) and the app reaches it through `BridgeBulkTransport`,
+an implementation of OCBM's `RawBulkTransport`; `OcbmClient` is unchanged. The app tries the
+bridge first (silent USB permission; one-tap prompt for a boot-time attach) and only claims USB
+in-process when no bridge is installed. Untested on a box: the first bench session (OCBM hello and
+heartbeat over the bridge) is the next milestone. After that: port Carlink2's cluster navigation. See `NOTICE.md` for provenance and the plan in Carlink2's
 `documents/design/ocbm_migration_plan.md`.
 
 ## License

@@ -144,6 +144,7 @@
     <ID>TooGenericExceptionCaught:MicrophoneCaptureManager.kt$MicrophoneCaptureManager.MicCaptureThread$e: Exception</ID>
     <ID>TooGenericExceptionCaught:OcbmAvLanes.kt$OcbmAvLanes$t: Throwable</ID>
     <ID>TooGenericExceptionCaught:PlatformDetector.kt$PlatformDetector$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:BridgeBulkTransport.kt$BridgeBulkTransport$t: Throwable</ID>
     <ID>TooGenericExceptionCaught:UsbBulkTransport.kt$UsbBulkTransport$t: Throwable</ID>
     <ID>TooGenericExceptionCaught:UsbDeviceWrapper.kt$UsbDeviceWrapper$e: Exception</ID>
     <ID>TooGenericExceptionCaught:VoiceRouter.kt$VoiceRouter$e: Exception</ID>
