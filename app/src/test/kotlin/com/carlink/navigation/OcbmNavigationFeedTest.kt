@@ -90,6 +90,18 @@ class OcbmNavigationFeedTest {
     }
 
     @Test
+    fun junctionGeometryFromTheBoxReachesTheManeuver() {
+        val m = maneuver(5, 30, "At the roundabout, take the third exit", "Elm St")
+        m.put("junctionAngles", org.json.JSONArray(listOf(-90, 0, 95, 180)))
+        m.put("junctionExitAngle", 95)
+        OcbmNavigationFeed.onManeuver(m)
+        OcbmNavigationFeed.onRouteGuidance(guidance(current = 5))
+        val s = NavigationStateManager.state.value
+        assertEquals(30, s.maneuverType)
+        assertEquals(95, s.exitAngle)
+    }
+
+    @Test
     fun endedRouteClearsEverything() {
         OcbmNavigationFeed.onManeuver(maneuver(0, 3, "Head north"))
         OcbmNavigationFeed.onRouteGuidance(guidance(current = 0))

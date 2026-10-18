@@ -20,9 +20,10 @@ import org.json.JSONObject
  * NaviJSON path (`NavigationStateManager.onNaviJson`), which read the stock box's pre-digested
  * fields. Maneuvers are held by index; the live one is whatever the last 0x5201 named.
  *
- * Not available from OCBM today, so left at Carlink2's defaults: junction spoke angles
- * (0x5202 params 10/11 — the composer falls back to the static glyph per maneuverType) and
- * roundabout exit counts (ManeuverMapper derives those from the type). `drivingSide` and
+ * Junction spoke angles (0x5202 params 10/11) arrive as `junctionAngles`/`junctionExitAngle` from
+ * a box built from the OCBM branch `route-guidance-exitinfo-angles`; without them the composer
+ * falls back to the static glyph per maneuverType. Roundabout exit counts come from the type
+ * (ManeuverMapper). `drivingSide` and
  * `junctionType` are Apple enums whose values are not yet confirmed against the Kit, so they are
  * carried on the maneuver record but not mapped onto [NavigationState.turnSide]/[NavigationState.junctionType]
  * until a capture pins them.
@@ -79,8 +80,11 @@ object OcbmNavigationFeed {
                     distanceUnitFlag = obj.optInt("distanceUnits", 0),
                     flag8 = obj.optInt("drivingSide", 0),
                     flag9 = obj.optInt("junctionType", 0),
-                    entryAngles = emptyList(),
-                    exitAngle = null,
+                    // Present once the box emits 0x5202 params 10/11 (OCBM branch
+                    // route-guidance-exitinfo-angles); absent on older box builds, which leaves the
+                    // composer on the static glyph per maneuver type.
+                    entryAngles = obj.optJSONArray("junctionAngles")?.let { arr -> List(arr.length()) { arr.optInt(it) } } ?: emptyList(),
+                    exitAngle = if (obj.has("junctionExitAngle")) obj.optInt("junctionExitAngle") else null,
                     exitInfo = obj.optString("exitInfo").takeIf { it.isNotEmpty() },
                 )
             val changed = maneuvers[index] != m
