@@ -99,7 +99,7 @@ fun SettingsScreen(
                 when (selectedTab) {
                     SettingsTab.PHONES -> PhonesPane(carlinkManager)
                     SettingsTab.CONTROL ->
-                        ControlTabContent(carlinkManager, connectionState, displayMode, actions.onDisplayModeSelected)
+                        ControlTabContent(carlinkManager, connectionState, displayMode, actions.onDisplayModeSelected, actions.onResetCluster)
                 }
             }
         }

@@ -19,6 +19,11 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Carlink3 cluster/HUD navigation (from Carlink2): the Templates Host route. Both are normal
+         permissions. NAVIGATION_TEMPLATES lets the CarAppService publish a navigation Trip;
+         ACCESS_SURFACE lets it draw into the host-provided cluster render surface. -->
+    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
+    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
     <!-- CallStyle call notifications: on Android 14+ a CallStyle card must belong to a foreground
          service or carry a fullScreenIntent, and the latter needs this. Normal permission on the
          12L target; on 14+ the OS grants it at install for a sideloaded app (Play is what revokes
@@ -46,6 +51,19 @@
     <uses-feature
         android:name="android.hardware.type.automotive"
         android:required="true" />
+    <!-- Car App Library Templates Host: binds and surface-provisions the cluster CarAppService.
+         required=false so a Play upload is not rejected on profiles that lack it. -->
+    <uses-feature
+        android:name="android.software.car.templates_host"
+        android:required="false" />
+
+    <!-- Package visibility (targetSdk 30+). Both lookups return null without this: binding the
+         sideloaded USB bridge's service (usb/CarlinkBridge) and resolving the cluster icon
+         authority it hosts (NavigationStateManager.initialize). -->
+    <queries>
+        <package android:name="android.car.usb.handler" />
+        <provider android:authorities="com.google.android.apps.automotive.templates.host.ClusterIconContentProvider" />
+    </queries>
 
     <application
         android:allowBackup="false"
@@ -154,6 +172,37 @@
             <meta-data
                 android:name="com.gm.homescreen.visibility"
                 android:value="HIDDEN" />
+        </service>
+
+        <!-- Hidden CarAppActivity — exists solely to trigger Templates Host binding (from Carlink2).
+             NOT a launcher. Separate task, excluded from recents, translucent; MainActivity makes its
+             window invisible and untouchable for the ~1 s it holds the front. -->
+        <activity
+            android:name="androidx.car.app.activity.CarAppActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.templates"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <meta-data
+                android:name="distractionOptimized"
+                android:value="true" />
+        </activity>
+
+        <!-- Cluster navigation CarAppService (headless; no UI on the main display). Disabled until
+             the user turns Cluster Navigation on (cluster/ClusterNavigation.applyComponentState). -->
+        <service
+            android:name=".cluster.CarlinkClusterService"
+            android:enabled="false"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.NAVIGATION" />
+                <category android:name="androidx.car.app.category.FEATURE_CLUSTER" />
+            </intent-filter>
+            <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="6" />
+            <meta-data android:name="com.gm.homescreen.visibility" android:value="HIDDEN" />
         </service>
 
         <!-- Siri on the hardware push-to-talk key — the only third-party route (WP1 tier 3).

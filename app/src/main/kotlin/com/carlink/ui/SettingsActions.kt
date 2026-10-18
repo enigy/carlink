@@ -14,6 +14,8 @@ import com.carlink.ui.settings.DisplayMode
 class SettingsActions(
     val onNavigateBack: () -> Unit,
     val onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome,
+    /** Carlink3: tear down and re-establish the Templates Host cluster binding (MainActivity). */
+    val onResetCluster: () -> Unit = {},
 )
 
 /** What happened to a display-mode choice (MacHost's mid-session rule, `OCBMClient.swift`). */

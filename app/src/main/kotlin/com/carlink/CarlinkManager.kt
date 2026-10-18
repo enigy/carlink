@@ -30,6 +30,9 @@ import com.carlink.logging.logWarn
 import com.carlink.media.CarlinkMediaBrowserService
 import com.carlink.media.MediaSessionManager
 import com.carlink.media.NowPlayingInfo
+import com.carlink.navigation.NavigationStateManager
+import com.carlink.navigation.OcbmNavigationFeed
+import com.carlink.navigation.compose.ComposedIconStore
 import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.HostInstanceNonce
@@ -127,6 +130,10 @@ class CarlinkManager(
 
     init {
         live = this
+        // Carlink3: cluster/HUD navigation (from Carlink2). Resolves the Templates Host icon
+        // authority the bridge hosts; the compose icon store renders maneuver bitmaps for it.
+        NavigationStateManager.initialize(context.applicationContext)
+        ComposedIconStore.setEnabled(true)
     }
 
     companion object {
@@ -1164,6 +1171,7 @@ class CarlinkManager(
         logDebug("[LIFECYCLE] stop()", tag = Logger.Tags.VIDEO)
         cancelDelayedKeyframe()
         cancelReconnect()
+        OcbmNavigationFeed.clear() // Carlink3: drop the route so the cluster does not show a stale trip
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
@@ -2312,6 +2320,24 @@ class CarlinkManager(
         rebuildDeviceList()
     }
 
+    /**
+     * Carlink3: route guidance (0x5201 summary, with the live maneuver index) and maneuver (0x5202,
+     * one per route step) records. The summary also claims/releases NAVIGATION app focus (the 3P way
+     * to tell AAOS the phone is now the navigator); both feed the cluster/HUD trip.
+     */
+    private fun onNavigationJson(obj: JSONObject) {
+        when (obj.optString("kind")) {
+            "routeGuidance" -> {
+                if (obj.has("routeGuidanceState")) {
+                    val active = obj.optInt("routeGuidanceState") != 0
+                    scope.launch { appFocusClaimer?.setNavigating(active) }
+                }
+                OcbmNavigationFeed.onRouteGuidance(obj)
+            }
+            "maneuver" -> OcbmNavigationFeed.onManeuver(obj)
+        }
+    }
+
     private fun onMetadata(
         marker: Int,
         payload: ByteArray,
@@ -2324,11 +2350,8 @@ class CarlinkManager(
                     "callState" -> CallState.fromJson(obj)?.let { cs -> scope.launch { onCallState(cs) } }
                     // 0 = no route. Claiming NAVIGATION app focus is the 3P way to tell AAOS the
                     // phone is now the navigator; a native maps app mid-route is told it lost it.
-                    "routeGuidance" ->
-                        if (obj.has("routeGuidanceState")) {
-                            val active = obj.optInt("routeGuidanceState") != 0
-                            scope.launch { appFocusClaimer?.setNavigating(active) }
-                        }
+                    // Carlink3: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
+                    "routeGuidance", "maneuver" -> onNavigationJson(obj)
                     else -> Unit
                 }
             }

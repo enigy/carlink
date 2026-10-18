@@ -60,6 +60,11 @@ object Logger {
         const val VIDEO_SURFACE = "VIDEO_SURFACE"
         const val VIDEO_PERF = "VIDEO_PERF"
         const val AUDIO_PERF = "AUDIO_PERF"
+
+        // Carlink3: cluster/HUD navigation, ported from Carlink2.
+        const val NAVI = "NAVI"
+        const val CLUSTER = "CLUSTER"
+        const val ICON_SHIM = "ICON_SHIM"
     }
 
     @Volatile
@@ -196,3 +201,6 @@ inline fun logVideoSurface(message: () -> String) = logDebugOnly(Logger.Tags.VID
 inline fun logVideoPerf(message: () -> String) = logDebugOnly(Logger.Tags.VIDEO_PERF, message)
 
 inline fun logAudioPerf(message: () -> String) = logDebugOnly(Logger.Tags.AUDIO_PERF, message)
+
+/** Debug-only nav pipeline logging (Carlink3, from Carlink2): zero cost in release builds. */
+inline fun logNavi(message: () -> String) = logDebugOnly(Logger.Tags.NAVI, message)

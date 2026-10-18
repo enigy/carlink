@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.PhoneDisabled
 import androidx.compose.material.icons.filled.PowerOff
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SettingsInputComponent
 import androidx.compose.material.icons.filled.Usb
@@ -40,10 +42,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
+import com.carlink.cluster.ClusterNavigation
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.ui.DisplayModeOutcome
@@ -66,6 +70,11 @@ private val REBOOT_ADAPTER = ControlAction("Reboot Adapter", Icons.Default.Resta
 private val DISCONNECT_ADAPTER = ControlAction("Disconnect Adapter", Icons.Default.PowerOff, ButtonSeverity.DESTRUCTIVE)
 private val RESET_DECODER = ControlAction("Reset Decoder", Icons.Default.VideoSettings, ButtonSeverity.WARNING)
 private val RESET_CONNECTION = ControlAction("Reset Connection", Icons.Default.Usb, ButtonSeverity.DESTRUCTIVE)
+
+// Carlink3 cluster/HUD navigation (from Carlink2): opt-in switch and the binding-chain restart.
+private val CLUSTER_NAV_ON = ControlAction("Cluster Navigation: On", Icons.Default.Dashboard, ButtonSeverity.WARNING)
+private val CLUSTER_NAV_OFF = ControlAction("Cluster Navigation: Off", Icons.Default.Dashboard, ButtonSeverity.WARNING)
+private val RESET_CLUSTER = ControlAction("Reset Cluster", Icons.Default.Refresh, ButtonSeverity.WARNING)
 
 /** Why Disconnect Phone is disabled on every box today — see [CarlinkManager.phoneDisconnectSupported]. */
 private const val DISCONNECT_PHONE_UNSUPPORTED = "Requires adapter firmware support"
@@ -91,6 +100,7 @@ internal fun ControlTabContent(
     connectionState: CarlinkManager.State,
     displayMode: DisplayMode,
     onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome,
+    onResetCluster: () -> Unit = {},
 ) {
     val window = rememberWindowLayoutInfo()
     val twoPane = DashboardLayout.arrangement(window) == DashboardArrangement.TWO_PANE
@@ -111,11 +121,11 @@ internal fun ControlTabContent(
             if (twoPane) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     AdapterCard(carlinkManager, connected, Modifier.weight(1f))
-                    AppControlCard(carlinkManager, connected, displayMode, onDisplayModeSelected, Modifier.weight(1f))
+                    AppControlCard(carlinkManager, connected, displayMode, onDisplayModeSelected, onResetCluster, Modifier.weight(1f))
                 }
             } else {
                 AdapterCard(carlinkManager, connected, Modifier.fillMaxWidth())
-                AppControlCard(carlinkManager, connected, displayMode, onDisplayModeSelected, Modifier.fillMaxWidth())
+                AppControlCard(carlinkManager, connected, displayMode, onDisplayModeSelected, onResetCluster, Modifier.fillMaxWidth())
             }
         }
     }
@@ -280,9 +290,12 @@ private fun AppControlCard(
     connected: Boolean,
     displayMode: DisplayMode,
     onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome,
+    onResetCluster: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var clusterNavOn by remember { mutableStateOf(ClusterNavigation.isEnabled(context)) }
     var showDeferredNotice by remember { mutableStateOf(false) }
     var showDisplayModeDialog by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
@@ -294,6 +307,20 @@ private fun AppControlCard(
         ControlButton(RESET_DECODER, enabled = !isRestarting, onClick = {
             logWarn("[UI_ACTION] Reset Decoder button clicked", tag = "UI")
             carlinkManager.resetVideoDecoder()
+        })
+        Spacer(modifier = Modifier.height(12.dp))
+        // Carlink3: cluster/HUD turn-by-turn through the Templates Host. Off by default; turning it
+        // on enables the CarAppService component and starts the binding on the next connect or reset.
+        ControlButton(if (clusterNavOn) CLUSTER_NAV_ON else CLUSTER_NAV_OFF, enabled = true, onClick = {
+            clusterNavOn = !clusterNavOn
+            logWarn("[UI_ACTION] Cluster Navigation -> ${if (clusterNavOn) "on" else "off"}", tag = "UI")
+            ClusterNavigation.setEnabled(context, clusterNavOn)
+            if (clusterNavOn) onResetCluster()
+        })
+        Spacer(modifier = Modifier.height(12.dp))
+        ControlButton(RESET_CLUSTER, enabled = clusterNavOn, onClick = {
+            logWarn("[UI_ACTION] Reset Cluster button clicked", tag = "UI")
+            onResetCluster()
         })
         Spacer(modifier = Modifier.height(12.dp))
         ControlButton(

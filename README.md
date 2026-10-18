@@ -20,13 +20,25 @@ grant — superseded by `:bridge`).
 
 ## Status
 
-**Bridge is the transport (compiled, not yet run on hardware).** `:app` (`com.enigy.carlink3`),
-`:bridge` and `:bridge-api` build; ktlint, detekt and the 271 inherited unit tests pass. The bridge
-relays the adapter's bulk stream raw (API 3) and the app reaches it through `BridgeBulkTransport`,
-an implementation of OCBM's `RawBulkTransport`; `OcbmClient` is unchanged. The app tries the
-bridge first (silent USB permission; one-tap prompt for a boot-time attach) and only claims USB
-in-process when no bridge is installed. Untested on a box: the first bench session (OCBM hello and
-heartbeat over the bridge) is the next milestone. After that: port Carlink2's cluster navigation. See `NOTICE.md` for provenance and the plan in Carlink2's
+**Milestones 1, 2 and 4 are in; nothing has run on a box yet.** `:app` (`com.enigy.carlink3`),
+`:bridge` and `:bridge-api` build; ktlint, detekt and 276 unit tests pass.
+
+- **Transport:** the bridge relays the adapter's bulk stream raw (API 3) and the app reaches it through
+  `BridgeBulkTransport`, an implementation of OCBM's `RawBulkTransport`; `OcbmClient` is unchanged. The
+  app tries the bridge first (silent USB permission; one-tap prompt for a boot-time attach) and only claims
+  USB in-process when no bridge is installed.
+- **Cluster/HUD navigation:** Carlink2's Templates Host pipeline (`cluster/`, `navigation/`, the compose
+  icon store) is ported verbatim. `navigation/OcbmNavigationFeed` turns the box's `routeGuidance` /
+  `maneuver` JSON (`CH_METADATA`) into the `NavigationState` it renders, including the exit label
+  ("Exit 273 · Wade Green Rd"). Off by default — Settings → Control → **Cluster Navigation**; **Reset
+  Cluster** restarts the host binding. Junction spoke angles are not in OCBM's JSON yet, so roundabout
+  icons use the static glyph per maneuver type until the Rust side emits params 10/11.
+- **Style gates:** files ported byte-identical from Carlink2 are excluded from ktlint in `.editorconfig`
+  (`ktlint = disabled` per file) and their detekt findings are baselined — Carlink2 ran ktlint with
+  `ignoreFailures=true`, so it never shaped them. Everything written for Carlink3 is gated.
+
+Next: the first bench session — OCBM hello/heartbeat over the bridge, then a CarPlay session, then a
+route on the cluster. See `NOTICE.md` for provenance and the plan in Carlink2's
 `documents/design/ocbm_migration_plan.md`.
 
 ## License

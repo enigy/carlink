@@ -34,3 +34,45 @@ indent_size = 4
 
 [*.md]
 trim_trailing_whitespace = false
+
+# Carlink3: verbatim ports from Carlink2 (kept byte-identical to stay diffable against it; Carlink2's
+# ktlint ran with ignoreFailures=true, so these files were never shaped by it). Excluded here rather
+# than reformatted. Files written for Carlink3 in these packages are NOT listed and stay gated.
+[**/navigation/compose/*.kt]
+ktlint = disabled
+
+[**/navigation/NavigationStateManager.kt]
+ktlint = disabled
+
+[**/navigation/ManeuverMapper.kt]
+ktlint = disabled
+
+[**/cluster/ClusterMainSession.kt]
+ktlint = disabled
+
+[**/cluster/ClusterBindingState.kt]
+ktlint = disabled
+
+[**/navigation/DistanceFormatter.kt]
+ktlint = disabled
+
+[**/navigation/Iap2ManeuverData.kt]
+ktlint = disabled
+
+[**/navigation/Iap2RouteParser.kt]
+ktlint = disabled
+
+[**/navigation/Iap2StateParser.kt]
+ktlint = disabled
+
+[**/navigation/ManeuverIconRenderer.kt]
+ktlint = disabled
+
+[**/navigation/TripBuilder.kt]
+ktlint = disabled
+
+[**/cluster/CarlinkClusterService.kt]
+ktlint = disabled
+
+[**/cluster/CarlinkClusterSession.kt]
+ktlint = disabled

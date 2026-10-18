@@ -116,8 +116,10 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 ktlint {
     android.set(true)
     outputToConsole.set(true)
-    // Enforcing (Tier 4): a ktlintFormat pass ran against the 14.x engine, so only NEW
-    // violations gate the build from here on.
+    // Carlink3: files ported verbatim from Carlink2 (whose ktlint ran with ignoreFailures=true and
+    // never shaped them) are excluded in .editorconfig with `ktlint = disabled` per glob — this
+    // plugin version does not apply `filter { exclude }` to Android source-set tasks. Files written
+    // for Carlink3 in the same packages stay gated.
     ignoreFailures.set(false)
 }
 
@@ -132,6 +134,10 @@ detekt {
 
 dependencies {
     implementation(project(":bridge-api")) // AIDL stub + BridgeContract for the USB bridge transport
+    // Cluster/HUD turn-by-turn through the AAOS Templates Host (Carlink3, from Carlink2). Public
+    // library + two normal permissions — the route an unprivileged app CAN use for the cluster.
+    implementation("androidx.car.app:app:1.7.0")
+    implementation("androidx.car.app:app-automotive:1.7.0")
     // (Removed: detekt-formatting. Its embedded ktlint (~0.50) disagrees with the
     // standalone ktlint-gradle 14.x engine that now formats AND gates the build —
     // running both baselined ~70 entries of pure engine disagreement. One formatter,

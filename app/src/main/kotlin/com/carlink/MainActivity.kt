@@ -1,6 +1,9 @@
 package com.carlink
 
 import android.Manifest
+import android.app.Activity
+import android.app.ActivityManager
+import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -14,6 +17,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
+import android.view.Window
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -38,6 +42,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import com.carlink.cluster.ClusterBindingState
+import com.carlink.cluster.ClusterNavigation
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
@@ -59,6 +65,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+
+// Carlink3 cluster binding (from Carlink2 [214]): the Car App Library activity that triggers the
+// Templates Host binding, and the pacing of launch / bring-back / retry / relaunch.
+private const val CAR_APP_ACTIVITY = "androidx.car.app.activity.CarAppActivity"
+private const val CLUSTER_LAUNCH_DELAY_MS = 1_500L
+private const val CLUSTER_BRING_BACK_MS = 1_000L
+private const val CLUSTER_RETRY_MS = 4_000L
+private const val CLUSTER_RELAUNCH_MS = 2_000L
 
 /**
  * Main Activity — Entry Point for Carlink Native.
@@ -197,6 +211,16 @@ class MainActivity : ComponentActivity() {
         // Initialize logging
         initializeLogging()
 
+        // Carlink3 cluster/HUD navigation (from Carlink2): mirror the switch onto the CarAppService
+        // component before the Templates Host can discover it, then start the binding chain.
+        ClusterNavigation.applyComponentState(this)
+        application.registerActivityLifecycleCallbacks(carAppActivityWindow)
+        if (ClusterNavigation.isEnabled(this)) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isDestroyed && !isFinishing) launchCarAppActivity()
+            }, CLUSTER_LAUNCH_DELAY_MS)
+        }
+
         // The persisted display mode is applied to the window before the display is detected, so
         // the content area DisplayProfile.detect() derives matches the bars actually on screen.
         displayModeStore = DisplayModeStore(this)
@@ -238,6 +262,8 @@ class MainActivity : ComponentActivity() {
                             carlinkManager = manager,
                             displayMode = displayMode,
                             onDisplayModeSelected = { onDisplayModeSelected(it) },
+                            onPhoneConnected = ::onPhoneConnectedRefreshCluster,
+                            onResetCluster = ::restartClusterBinding,
                         )
                     }
                 }
@@ -312,6 +338,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        application.unregisterActivityLifecycleCallbacks(carAppActivityWindow)
 
         // Unregister USB detachment receiver
         unregisterUsbDetachReceiver()
@@ -640,7 +667,10 @@ class MainActivity : ComponentActivity() {
      * content area the profile derives (`barInsets`), not by letting the decor fit it — that keeps
      * the surface, the pushed config and the touch basis one rectangle.
      */
-    private fun applyDisplayMode() {
+    private fun applyDisplayMode() = applyDisplayModeTo(window)
+
+    /** [214] The same bar/cutout setup for another window — CarAppActivity's while it holds the front. */
+    private fun applyDisplayModeTo(window: Window) {
         val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
         val lp = window.attributes
         // Draw edge-to-edge into the cutout (gminfo3.7 has none, so this is a no-op there).
@@ -684,6 +714,116 @@ class MainActivity : ComponentActivity() {
             logWarn("[USB_DETACH] Receiver already unregistered: ${e.message}", tag = "MAIN")
         }
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // Carlink3 cluster/HUD navigation — the Templates Host binding chain, ported from Carlink2.
+    // CarAppActivity (hidden, own task) is what makes the host bind our navigation CarAppService; the
+    // service then publishes the Trip the cluster and HUD render. The host rebinds per session, so
+    // the chain is restarted on every phone connect.
+    // ---------------------------------------------------------------------------------------------
+
+    private var clusterConnectCount = 0
+
+    /** Launch the hidden CarAppActivity; retried after 4 s if a previous session is still alive. */
+    private fun launchCarAppActivity() {
+        if (ClusterBindingState.sessionAlive) {
+            logInfo("[CLUSTER] Cluster session still alive — will retry after teardown", tag = "MAIN")
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isDestroyed && !isFinishing && !ClusterBindingState.sessionAlive) {
+                    logInfo("[CLUSTER] Old session torn down — retrying launch", tag = "MAIN")
+                    launchCarAppActivity()
+                }
+            }, CLUSTER_RETRY_MS)
+            return
+        }
+        try {
+            val intent =
+                Intent().apply {
+                    setClassName(this@MainActivity, CAR_APP_ACTIVITY)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                }
+            startActivity(intent)
+            logInfo("[CLUSTER] Launched CarAppActivity for Templates Host binding", tag = "MAIN")
+            // It only needs the front for the handshake; bring this activity back after ~1 s.
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isDestroyed && !isFinishing) {
+                    val bringBack =
+                        Intent(this@MainActivity, MainActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                        }
+                    startActivity(bringBack)
+                    logInfo("[CLUSTER] Brought MainActivity back to foreground", tag = "MAIN")
+                }
+            }, CLUSTER_BRING_BACK_MS)
+        } catch (e: Exception) {
+            logWarn("[CLUSTER] Failed to launch CarAppActivity: ${e.message}", tag = "MAIN")
+        }
+    }
+
+    /**
+     * [214] CarAppActivity is translucent and holds the front for about a second on every launch.
+     * Give its window our bar setup, make it fully transparent and let touches pass through, so the
+     * head unit shows no flash of bars or a dead frame.
+     */
+    private val carAppActivityWindow =
+        object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityStarted(activity: Activity) {
+                if (activity.javaClass.name != CAR_APP_ACTIVITY) return
+                val w = activity.window
+                applyDisplayModeTo(w)
+                w.attributes = w.attributes.apply { alpha = 0f }
+                w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+                logInfo("[CLUSTER] CarAppActivity window: bars ${appliedDisplayMode.name}, invisible, touches pass through", tag = "MAIN")
+            }
+
+            override fun onActivityCreated(
+                activity: Activity,
+                savedInstanceState: Bundle?,
+            ) = Unit
+
+            override fun onActivityResumed(activity: Activity) = Unit
+
+            override fun onActivityPaused(activity: Activity) = Unit
+
+            override fun onActivityStopped(activity: Activity) = Unit
+
+            override fun onActivitySaveInstanceState(
+                activity: Activity,
+                outState: Bundle,
+            ) = Unit
+
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+
+    /** Tear the binding chain down (finish CarAppActivity's task) and relaunch it after 2 s. */
+    fun restartClusterBinding() {
+        logWarn("[CLUSTER] restartClusterBinding() — tearing down and re-establishing binding chain", tag = "MAIN")
+        val am = getSystemService(ActivityManager::class.java)
+        for (appTask in am.appTasks) {
+            if (appTask.taskInfo?.baseActivity?.className == CAR_APP_ACTIVITY) {
+                logInfo("[CLUSTER] Finishing CarAppActivity task (taskId=${appTask.taskInfo?.taskId})", tag = "MAIN")
+                appTask.finishAndRemoveTask()
+                break
+            }
+        }
+        // The task is gone, so any prior session is dead; clear the flag even if the host never
+        // fired the session's destroy callback, or launchCarAppActivity() would keep deferring.
+        ClusterBindingState.sessionAlive = false
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!isDestroyed && !isFinishing) {
+                logInfo("[CLUSTER] Re-launching CarAppActivity after teardown", tag = "MAIN")
+                launchCarAppActivity()
+            }
+        }, CLUSTER_RELAUNCH_MS)
+    }
+
+    /** Each phone connect gets a fresh host binding; a no-op while Cluster Navigation is off. */
+    private fun onPhoneConnectedRefreshCluster() {
+        if (!ClusterNavigation.isEnabled(this)) return
+        clusterConnectCount++
+        logInfo("[CLUSTER] Phone connect #$clusterConnectCount — refreshing cluster binding for a fresh session", tag = "MAIN")
+        restartClusterBinding()
+    }
 }
 
 /**
@@ -698,9 +838,13 @@ fun CarlinkApp(
     carlinkManager: CarlinkManager,
     displayMode: DisplayMode = DisplayMode.DEFAULT,
     onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
+    /** Carlink3: fired once per phone connection (re-armed on disconnect) — refreshes the cluster binding. */
+    onPhoneConnected: () -> Unit = {},
+    onResetCluster: () -> Unit = {},
 ) {
     var showSettings by remember(carlinkManager) { mutableStateOf(false) }
     var connectionState by remember(carlinkManager) { mutableStateOf(CarlinkManager.State.DISCONNECTED) }
+    var connectNotified by remember(carlinkManager) { mutableStateOf(false) }
 
     val closeSettings = {
         logInfo(
@@ -723,7 +867,16 @@ fun CarlinkApp(
                 )
                 showSettings = true
             },
-            onStateChanged = { connectionState = it },
+            onStateChanged = {
+                connectionState = it
+                val connected = it == CarlinkManager.State.DEVICE_CONNECTED || it == CarlinkManager.State.STREAMING
+                if (connected && !connectNotified) {
+                    connectNotified = true
+                    onPhoneConnected()
+                } else if (it == CarlinkManager.State.DISCONNECTED) {
+                    connectNotified = false
+                }
+            },
         )
         AnimatedVisibility(
             visible = showSettings,
@@ -734,7 +887,12 @@ fun CarlinkApp(
                 carlinkManager = carlinkManager,
                 connectionState = connectionState,
                 displayMode = displayMode,
-                actions = SettingsActions(onNavigateBack = closeSettings, onDisplayModeSelected = onDisplayModeSelected),
+                actions =
+                    SettingsActions(
+                        onNavigateBack = closeSettings,
+                        onDisplayModeSelected = onDisplayModeSelected,
+                        onResetCluster = onResetCluster,
+                    ),
             )
         }
     }
