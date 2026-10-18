@@ -33,6 +33,10 @@ grant — superseded by `:bridge`).
   ("Exit 273 · Wade Green Rd"). Off by default — Settings → Control → **Cluster Navigation**; **Reset
   Cluster** restarts the host binding. Junction spoke angles are not in OCBM's JSON yet, so roundabout
   icons use the static glyph per maneuver type until the Rust side emits params 10/11.
+- **CI and protocol drift:** `.github/workflows/gate.yml` runs the same gate as local on every push and
+  PR, and first runs `tools/proto_check.py`, which compares the Kotlin `OcbmProto.kt` against the
+  reference copy of OCBM's canonical table in `proto/` (OCBM's own checker only sees clients inside its
+  repo). Refresh `proto/ocbm-proto.lib.rs` whenever the box is rebuilt from a newer OCBM.
 - **Style gates:** files ported byte-identical from Carlink2 are excluded from ktlint in `.editorconfig`
   (`ktlint = disabled` per file) and their detekt findings are baselined — Carlink2 ran ktlint with
   `ignoreFailures=true`, so it never shaped them. Everything written for Carlink3 is gated.
