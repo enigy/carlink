@@ -1,270 +1,337 @@
 package com.carlink.ui
 
-import android.app.Activity
-import android.content.pm.PackageManager
 import android.view.HapticFeedbackConstants
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.carlink.CarlinkManager
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
+import com.carlink.ui.adaptive.DashboardArrangement
+import com.carlink.ui.adaptive.DashboardLayout
 import com.carlink.ui.adaptive.asWindowInsets
-import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.adaptive.rememberWindowLayoutInfo
 import com.carlink.ui.components.FrostedGlassBackground
 import com.carlink.ui.components.LocalSettingsArrival
 import com.carlink.ui.components.settingsFlyIn
+import com.carlink.ui.settings.AdapterPane
 import com.carlink.ui.settings.BackgroundLogoStore
-import com.carlink.ui.settings.ControlTabContent
+import com.carlink.ui.settings.CallAudioStore
+import com.carlink.ui.settings.CallsPane
+import com.carlink.ui.settings.ClusterPane
 import com.carlink.ui.settings.DisplayMode
-import com.carlink.ui.settings.PhonesTabContent
-import com.carlink.ui.settings.SettingsTab
-import com.carlink.ui.theme.AutomotiveDimens
+import com.carlink.ui.settings.DisplayModeDeferredNotice
+import com.carlink.ui.settings.DisplayModeStore
+import com.carlink.ui.settings.DisplayPane
+import com.carlink.ui.settings.PhonesPane
+import com.carlink.ui.settings.SettingsCategory
+import com.carlink.ui.settings.SettingsLiveState
+import com.carlink.ui.settings.SettingsModel
+import com.carlink.ui.settings.SettingsStyle
+import com.carlink.ui.settings.TroubleshootPane
+import com.carlink.ui.settings.rememberSettingsLiveState
 import com.carlink.util.EdgeInsets
-import kotlinx.coroutines.launch
 
 /**
- * Settings screen: a navigation rail (back, Phones / Control tabs, close-app, version) beside the
- * selected tab's content. Composed OVER [MainScreen] so the video surface underneath survives;
- * closing it goes through [SettingsActions.onNavigateBack], which also nudges the decoder
- * (`CarlinkManager.recoverVideoFromOverlay`) so a frame that went stale under the overlay is
- * replaced without waiting for the next natural keyframe.
+ * Settings (design "Merged A"): one page with a top bar (back, title, the connected phone, close
+ * app), a category list whose rows carry live summaries, and the selected category's pane. It
+ * replaces the old Phones / Control tabs. Composed OVER [MainScreen] so the video surface underneath
+ * survives; closing it goes through [SettingsActions.onNavigateBack], which also nudges the decoder
+ * (`CarlinkManager.recoverVideoFromOverlay`) so a frame that went stale under the overlay is replaced.
+ *
+ * A wide landscape window shows the list and the pane side by side (the dashboard breakpoint,
+ * [DashboardLayout]); anything narrower shows the list, then the pane with a back row.
  */
 @Composable
 fun SettingsScreen(
     carlinkManager: CarlinkManager,
     connectionState: CarlinkManager.State,
-    displayMode: DisplayMode,
     actions: SettingsActions,
+    modifier: Modifier = Modifier,
 ) {
-    var selectedTab by remember { mutableStateOf(SettingsTab.PHONES) }
-
     LaunchedEffect(Unit) {
         logInfo("[UI_STATE] SettingsScreen opened - user is in app settings (NOT viewing CarPlay projection)", tag = "UI")
     }
-    LaunchedEffect(selectedTab) {
-        logInfo("[UI_STATE] Settings tab changed: $selectedTab", tag = "UI")
-    }
+    val live = rememberSettingsLiveState(carlinkManager, connectionState)
 
     // The detected safe area (cutout / waterfall / corner arcs) pads in addition to the live bars.
     val safeArea = carlinkManager.displayProfile?.safeAreaInsets ?: EdgeInsets.NONE
 
-    // Carlink2 [229]: frosted glass over the connecting screen's brand scene in place of a solid
-    // surface, frosting over as the page flies in from behind the driver. The Surface stays
-    // transparent but still sets LocalContentColor for every un-coloured Text.
+    // Carlink2 [229]: frosted glass over the connecting screen's brand scene, frosting over as the
+    // page flies in. The Surface stays transparent but sets LocalContentColor for un-coloured Text.
     val backgroundLogo by BackgroundLogoStore.get(LocalContext.current).flow.collectAsState()
     val arrival = LocalSettingsArrival.current
-    Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface) {
+    Surface(modifier = modifier.fillMaxSize(), color = Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface) {
         FrostedGlassBackground(backgroundLogo = backgroundLogo, progress = arrival)
-        Row(
+        Column(
             modifier =
                 Modifier
                     .fillMaxSize()
                     .settingsFlyIn(arrival)
                     .windowInsetsPadding(WindowInsets.safeDrawing.union(safeArea.asWindowInsets())),
         ) {
-            SettingsRail(
-                selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it },
-                onNavigateBack = actions.onNavigateBack,
+            SettingsTopBar(
+                phone = live.connectedPhone,
+                onBack = actions.onNavigateBack,
                 onCloseApp = {
                     logWarn("[UI_ACTION] Close App confirmed", tag = "UI")
-                    // Off the main thread (USB release + CT_STOP block), under the lifecycle
-                    // mutex; the button finishes the Activity only once this returns.
+                    // Off the main thread (USB release + CT_STOP block), under the lifecycle mutex;
+                    // the button finishes the Activity only once this returns.
                     carlinkManager.disconnect()
                 },
             )
-            Box(modifier = Modifier.fillMaxHeight().weight(1f)) {
-                when (selectedTab) {
-                    SettingsTab.PHONES -> PhonesPane(carlinkManager)
-                    SettingsTab.CONTROL ->
-                        ControlTabContent(carlinkManager, connectionState, displayMode, actions.onDisplayModeSelected, actions.onResetCluster)
-                }
-            }
+            SettingsBody(
+                panes =
+                    PaneContext(
+                        carlinkManager = carlinkManager,
+                        live = live,
+                        connected = connectionState != CarlinkManager.State.DISCONNECTED,
+                        actions = actions,
+                    ),
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
 
-/** The known-device grid, centred in the pane and scrolling when the pane is shorter than it. */
-@Composable
-private fun PhonesPane(carlinkManager: CarlinkManager) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp)) {
-            PhonesTabContent(carlinkManager)
-        }
-    }
-}
+/** What every pane may need, gathered so the composables between here and the panes stay short. */
+@Stable
+private class PaneContext(
+    val carlinkManager: CarlinkManager,
+    val live: SettingsLiveState,
+    val connected: Boolean,
+    val actions: SettingsActions,
+)
 
-/** Left column: back button, the tab rail (items centred), close-app button and the version. */
+/** List + pane, side by side on a wide window and one after the other on a narrow one. */
 @Composable
-private fun SettingsRail(
-    selectedTab: SettingsTab,
-    onTabSelected: (SettingsTab) -> Unit,
-    onNavigateBack: () -> Unit,
-    onCloseApp: suspend () -> Unit,
+private fun SettingsBody(
+    panes: PaneContext,
+    modifier: Modifier = Modifier,
 ) {
-    val view = LocalView.current
-    Column(modifier = Modifier.fillMaxHeight()) {
-        Box(modifier = Modifier.padding(vertical = 20.dp, horizontal = 12.dp)) {
-            FilledTonalIconButton(
-                onClick = {
-                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    onNavigateBack()
-                },
-                modifier = Modifier.size(AutomotiveDimens.ButtonMinHeight),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    modifier = Modifier.size(AutomotiveDimens.IconSize),
-                )
+    val context = LocalContext.current
+    val window = rememberWindowLayoutInfo()
+    val twoPane = DashboardLayout.arrangement(window) == DashboardArrangement.TWO_PANE
+    var selected by rememberSaveable { mutableStateOf(SettingsCategory.PHONES) }
+    var paneOpen by rememberSaveable { mutableStateOf(false) }
+    // The persisted mode, not the host's copy: a mode saved for the next connection is the choice.
+    var savedMode by remember { mutableStateOf(DisplayModeStore(context).get()) }
+    var showDeferredNotice by remember { mutableStateOf(false) }
+    val summaries = categorySummaries(panes, savedMode)
+
+    LaunchedEffect(selected) { logInfo("[UI_STATE] Settings category: $selected", tag = "UI") }
+    val pick: (SettingsCategory) -> Unit = {
+        selected = it
+        paneOpen = true
+    }
+    val applyMode: (DisplayMode) -> Unit = { mode ->
+        val outcome = panes.actions.onDisplayModeSelected(mode)
+        savedMode = mode
+        if (outcome == DisplayModeOutcome.DEFERRED) showDeferredNotice = true
+    }
+
+    Box(modifier = modifier.fillMaxWidth()) {
+        if (twoPane) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                CategoryList(selected, summaries, onSelect = pick, modifier = Modifier.width((window.widthDp * 0.33f).dp.coerceIn(360.dp, 780.dp)))
+                DetailPane(selected, modifier = Modifier.weight(1f)) { CategoryPane(selected, panes, savedMode, applyMode) }
+            }
+        } else if (!paneOpen) {
+            CategoryList(selected, summaries, onSelect = pick, modifier = Modifier.fillMaxWidth())
+        } else {
+            BackHandler { paneOpen = false }
+            DetailPane(selected, modifier = Modifier.fillMaxSize()) {
+                BackToCategories(onClick = { paneOpen = false })
+                CategoryPane(selected, panes, savedMode, applyMode)
             }
         }
-        NavigationRail(modifier = Modifier.weight(1f), containerColor = MaterialTheme.colorScheme.surface) {
-            Spacer(modifier = Modifier.weight(1f))
-            SettingsTab.entries.forEach { tab ->
-                NavigationRailItem(
-                    selected = selectedTab == tab,
-                    onClick = {
-                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                        onTabSelected(tab)
-                    },
-                    icon = { Icon(imageVector = tab.icon, contentDescription = tab.title) },
-                    label = { Text(tab.title) },
-                    modifier = Modifier.padding(vertical = 12.dp),
-                )
-            }
-            Spacer(modifier = Modifier.weight(1f))
-        }
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            CloseAppButton(onCloseApp)
-            Spacer(modifier = Modifier.height(8.dp))
-            VersionLabel()
+        if (showDeferredNotice) DisplayModeDeferredNotice(onDismiss = { showDeferredNotice = false })
+    }
+}
+
+@Composable
+private fun CategoryPane(
+    category: SettingsCategory,
+    panes: PaneContext,
+    savedMode: DisplayMode,
+    onApplyMode: (DisplayMode) -> Unit,
+) {
+    when (category) {
+        SettingsCategory.PHONES -> PhonesPane(panes.carlinkManager, panes.live)
+        SettingsCategory.DISPLAY -> DisplayPane(savedMode = savedMode, onApply = onApplyMode)
+        SettingsCategory.CALLS -> CallsPane()
+        SettingsCategory.CLUSTER -> ClusterPane(panes.live, onResetCluster = panes.actions.onResetCluster)
+        SettingsCategory.TROUBLESHOOT -> TroubleshootPane(panes.carlinkManager, connected = panes.connected)
+        SettingsCategory.ADAPTER -> AdapterPane(panes.carlinkManager, panes.live)
+    }
+}
+
+/** Each category's one-line live summary, so most questions are answered before a tap. */
+@Composable
+private fun categorySummaries(
+    panes: PaneContext,
+    savedMode: DisplayMode,
+): Map<SettingsCategory, String> {
+    val context = LocalContext.current
+    val logo by remember { BackgroundLogoStore.get(context) }.flow.collectAsState()
+    val callAudio = remember { CallAudioStore.get(context) }
+    val mic by callAudio.callMicFlow.collectAsState()
+    val buffer by callAudio.callBufferFlow.collectAsState()
+    val live = panes.live
+    return mapOf(
+        SettingsCategory.PHONES to SettingsModel.phonesSummary(live.connectedPhone, live.devices.size),
+        SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo),
+        SettingsCategory.CALLS to SettingsModel.callsSummary(mic, buffer),
+        SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn),
+        SettingsCategory.TROUBLESHOOT to "Reset video, wireless, connection or adapter",
+        SettingsCategory.ADAPTER to SettingsModel.adapterSummary(panes.carlinkManager.adapterName, live.box),
+    )
+}
+
+@Composable
+private fun CategoryList(
+    selected: SettingsCategory,
+    summaries: Map<SettingsCategory, String>,
+    onSelect: (SettingsCategory) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier =
+            modifier
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 40.dp, end = 32.dp, top = 4.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        SettingsCategory.entries.forEach { category ->
+            CategoryItem(category, summaries[category].orEmpty(), selected = category == selected, onClick = { onSelect(category) })
         }
     }
 }
 
-/**
- * Close-app button with its confirmation; [onCloseApp] tears the session down (a suspend call —
- * it runs off the main thread), and the Activity finishes once it has returned, so onDestroy's
- * own synchronous `release()` never overlaps a teardown still in flight.
- */
 @Composable
-private fun CloseAppButton(onCloseApp: suspend () -> Unit) {
+private fun CategoryItem(
+    category: SettingsCategory,
+    summary: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
     val view = LocalView.current
-    val context = LocalContext.current
-    val colorScheme = MaterialTheme.colorScheme
-    val scope = rememberCoroutineScope()
-    var showCloseConfirm by remember { mutableStateOf(false) }
-    var closing by remember { mutableStateOf(false) }
-
-    FilledTonalIconButton(
+    val fg = if (selected) colors.onPrimaryContainer else colors.onSurface
+    Surface(
+        selected = selected,
         onClick = {
             view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            showCloseConfirm = true
+            onClick()
         },
-        modifier = Modifier.size(AutomotiveDimens.ButtonMinHeight),
+        shape = RoundedCornerShape(28.dp),
+        color = if (selected) colors.primaryContainer else Color.Transparent,
+        contentColor = fg,
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Icon(
-            imageVector = Icons.Default.Close,
-            contentDescription = "Close App",
-            modifier = Modifier.size(AutomotiveDimens.IconSize),
-            tint = colorScheme.error,
-        )
-    }
-    if (showCloseConfirm) {
-        AlertDialog(
-            onDismissRequest = { showCloseConfirm = false },
-            title = {
-                DialogSystemBars()
-                Text("Close App?")
-            },
-            text = { Text("This will stop all connections and close the app.") },
-            confirmButton = {
-                TextButton(
-                    enabled = !closing,
-                    onClick = {
-                        closing = true
-                        scope.launch {
-                            try {
-                                onCloseApp()
-                            } finally {
-                                (context as? Activity)?.finishAffinity()
-                            }
-                        }
-                    },
-                ) {
-                    Text("Close", color = colorScheme.error)
+        Row(
+            modifier = Modifier.heightIn(min = 112.dp).padding(horizontal = 24.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Surface(
+                modifier = Modifier.size(64.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = if (selected) SELECTED_TILE else colors.surfaceContainerHigh,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(category.icon, contentDescription = null, modifier = Modifier.size(32.dp))
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCloseConfirm = false }) { Text("Cancel") }
-            },
-        )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(category.title, fontSize = 27.sp, style = SettingsStyle.RowTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    summary,
+                    style = SettingsStyle.RowSubtitle,
+                    fontSize = 21.sp,
+                    color = if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(30.dp))
+        }
+    }
+}
+
+/** The selected category's tile: one step lighter than the row's primary container. */
+private val SELECTED_TILE = Color(0xFF00687A)
+
+/** The right-hand pane: a lifted surface that scrolls, its scroll reset per category. */
+@Composable
+private fun DetailPane(
+    category: SettingsCategory,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxHeight(),
+        shape = RoundedCornerShape(topStart = 40.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f),
+    ) {
+        key(category) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 56.dp, vertical = 40.dp),
+                content = content,
+            )
+        }
     }
 }
 
 @Composable
-private fun VersionLabel() {
-    val context = LocalContext.current
-    val colorScheme = MaterialTheme.colorScheme
-    val appVersion =
-        remember {
-            try {
-                val pi = context.packageManager.getPackageInfo(context.packageName, 0)
-                "${pi.versionName}+${pi.longVersionCode}"
-            } catch (e: PackageManager.NameNotFoundException) {
-                logWarn("[SettingsScreen] Failed to get package info: ${e.message}", tag = "UI")
-                ""
-            }
-        }
-    Text(text = "Version:", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
-    Text(
-        text = appVersion.ifEmpty { "- - -" },
-        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-        color = if (appVersion.isEmpty()) colorScheme.onSurfaceVariant else colorScheme.onSurface,
-    )
+private fun BackToCategories(onClick: () -> Unit) {
+    TextButton(onClick = onClick, modifier = Modifier.heightIn(min = 64.dp).padding(bottom = 16.dp)) {
+        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(28.dp))
+        Text("All settings", style = SettingsStyle.Action, modifier = Modifier.padding(start = 12.dp))
+    }
 }

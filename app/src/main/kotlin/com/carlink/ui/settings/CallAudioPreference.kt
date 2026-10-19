@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** A choice with a label for its button on the Control tab. */
+/** A choice with a label for its segmented button on the settings screen. */
 interface Labelled {
     val label: String
 }

@@ -275,7 +275,6 @@ class MainActivity : ComponentActivity() {
                     if (manager != null) {
                         CarlinkApp(
                             carlinkManager = manager,
-                            displayMode = displayMode,
                             onDisplayModeSelected = { onDisplayModeSelected(it) },
                             cluster = ClusterHooks(onPhoneConnected = ::onPhoneConnectedRefreshCluster, onResetCluster = ::restartClusterBinding),
                             bridge = BridgeSetup(installed = bridgeInstalledState.value, onOpenFiles = ::openFilesForBridge),
@@ -887,7 +886,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun CarlinkApp(
     carlinkManager: CarlinkManager,
-    displayMode: DisplayMode = DisplayMode.DEFAULT,
     onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
     cluster: ClusterHooks = ClusterHooks(),
     /** Carlink2 [210]: whether the USB bridge is installed, and the connecting screen's Open Files button. */
@@ -934,7 +932,6 @@ fun CarlinkApp(
             visible = showSettings,
             carlinkManager = carlinkManager,
             connectionState = connectionState,
-            displayMode = displayMode,
             actions =
                 SettingsActions(
                     onNavigateBack = closeSettings,
@@ -964,7 +961,6 @@ private fun SettingsOverlay(
     visible: Boolean,
     carlinkManager: CarlinkManager,
     connectionState: CarlinkManager.State,
-    displayMode: DisplayMode,
     actions: SettingsActions,
 ) {
     AnimatedVisibility(
@@ -988,7 +984,6 @@ private fun SettingsOverlay(
             SettingsScreen(
                 carlinkManager = carlinkManager,
                 connectionState = connectionState,
-                displayMode = displayMode,
                 actions = actions,
             )
         }
