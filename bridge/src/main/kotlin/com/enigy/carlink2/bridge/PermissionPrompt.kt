@@ -1,5 +1,6 @@
 package com.enigy.carlink2.bridge
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -56,6 +57,10 @@ internal class PermissionPrompt(
             }
         }
 
+    // Pre-33 (minSdk 29) has no not-exported flag to pass, so the receiver is exported there by
+    // construction; onReceive compensates by reading the platform's permission state instead of
+    // trusting the broadcast's extras. Lint flags the flag-less overload regardless.
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     fun register() {
         val filter = IntentFilter(ACTION_RESULT)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
