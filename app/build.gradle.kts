@@ -124,9 +124,12 @@ android {
         // - UnsafeOptInUsageError (Media3 @UnstableApi tool disagreement — compiler
         //   treats it as non-opt-in, lint demands the opt-in) → path-scoped ignore in
         //   lint.xml covering only the media package. Re-test after AGP/Media3 bumps.
-        // - Instantiatable / InvalidUsesTagAttribute — their justifications
-        //   (CarAppActivity AAR, the "navigation" uses-tag) died with the cluster /
-        //   Car App Library removal; re-enabled.
+        // - Instantiatable: back on the disable list with the cluster port. The manifest registers
+        //   androidx.car.app.activity.CarAppActivity straight from the app-automotive AAR; lint's
+        //   release-time (lintVital) check cannot resolve it and fails the release build with
+        //   "CarAppActivity must extend android.app.Activity". Same false positive, same disable,
+        //   as Carlink2.
+        disable += "Instantiatable"
     }
 }
 
