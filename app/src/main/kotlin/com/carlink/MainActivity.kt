@@ -54,6 +54,8 @@ import com.carlink.media.MediaSessionManager
 import com.carlink.ocbm.Ocbm
 import com.carlink.protocol.AdapterConfig
 import com.carlink.protocol.KnownDevices
+import com.carlink.ui.BridgeSetup
+import com.carlink.ui.BridgeSetupNotification
 import com.carlink.ui.DisplayModeOutcome
 import com.carlink.ui.MainScreen
 import com.carlink.ui.SettingsActions
@@ -63,7 +65,9 @@ import com.carlink.ui.components.SettingsFlyIn
 import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.theme.CarlinkTheme
+import com.carlink.usb.CarlinkBridge
 import com.carlink.util.DisplayProfile
+import com.carlink.util.FilesLauncher
 import com.carlink.util.LogCallback
 import com.carlink.voice.VoiceKeys
 import kotlinx.coroutines.Dispatchers
@@ -112,6 +116,10 @@ class MainActivity : ComponentActivity() {
      */
     private lateinit var displayModeStore: DisplayModeStore
     private var displayMode: DisplayMode = DisplayMode.DEFAULT
+
+    /** Carlink2 [210]: is the USB bridge installed? Drives the connecting screen's setup panel. */
+    private val bridgeInstalledState = mutableStateOf(true)
+    private var lastBridgeInstalled: Boolean? = null
 
     /**
      * App-scope MediaSession reference. Owned and lifecycle-managed by
@@ -219,6 +227,7 @@ class MainActivity : ComponentActivity() {
         // Carlink3 cluster/HUD navigation (from Carlink2): mirror the switch onto the CarAppService
         // component before the Templates Host can discover it, then start the binding chain.
         ClusterNavigation.applyComponentState(this)
+        checkBridgeInstalled()
         application.registerActivityLifecycleCallbacks(carAppActivityWindow)
         if (ClusterNavigation.isEnabled(this)) {
             Handler(Looper.getMainLooper()).postDelayed({
@@ -267,8 +276,8 @@ class MainActivity : ComponentActivity() {
                             carlinkManager = manager,
                             displayMode = displayMode,
                             onDisplayModeSelected = { onDisplayModeSelected(it) },
-                            onPhoneConnected = ::onPhoneConnectedRefreshCluster,
-                            onResetCluster = ::restartClusterBinding,
+                            cluster = ClusterHooks(onPhoneConnected = ::onPhoneConnectedRefreshCluster, onResetCluster = ::restartClusterBinding),
+                            bridge = BridgeSetup(installed = bridgeInstalledState.value, onOpenFiles = ::openFilesForBridge),
                         )
                     }
                 }
@@ -280,6 +289,36 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Re-assert the display mode — the system may have shown bars while backgrounded.
         applyDisplayMode()
+        checkBridgeInstalled()
+        BridgeSetupNotification.cancel(this) // back from Files: the way-back note is done
+    }
+
+    /**
+     * Carlink2 [210]: is the USB bridge installed? Checked at start and on every resume, so coming
+     * back from installing it in Files hides the setup panel. Unlike Carlink2 nothing is held off
+     * meanwhile — Carlink3 connects in-process without the bridge; the next session picks it up.
+     */
+    private fun checkBridgeInstalled() {
+        val installed = CarlinkBridge.isInstalled(this)
+        bridgeInstalledState.value = installed
+        val previous = lastBridgeInstalled
+        lastBridgeInstalled = installed
+        if (previous == installed) return
+        if (!installed) {
+            logWarn("[BRIDGE_SETUP] USB bridge not installed — showing the setup panel", tag = "MAIN")
+        } else if (previous == false) {
+            logInfo("[BRIDGE_SETUP] USB bridge installed — the next session will use it", tag = "MAIN")
+        }
+    }
+
+    /**
+     * Carlink2 [212]: open Files from the bridge setup panel, and post the notification that leads
+     * back here (Files has no way back to Carlink3 of its own).
+     */
+    private fun openFilesForBridge(): Boolean {
+        val opened = FilesLauncher.open(this)
+        if (opened) BridgeSetupNotification.showWaiting(this)
+        return opened
     }
 
     override fun onStart() {
@@ -843,9 +882,9 @@ fun CarlinkApp(
     carlinkManager: CarlinkManager,
     displayMode: DisplayMode = DisplayMode.DEFAULT,
     onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
-    /** Carlink3: fired once per phone connection (re-armed on disconnect) — refreshes the cluster binding. */
-    onPhoneConnected: () -> Unit = {},
-    onResetCluster: () -> Unit = {},
+    cluster: ClusterHooks = ClusterHooks(),
+    /** Carlink2 [210]: whether the USB bridge is installed, and the connecting screen's Open Files button. */
+    bridge: BridgeSetup = BridgeSetup(),
 ) {
     var showSettings by remember(carlinkManager) { mutableStateOf(false) }
     var connectionState by remember(carlinkManager) { mutableStateOf(CarlinkManager.State.DISCONNECTED) }
@@ -877,11 +916,12 @@ fun CarlinkApp(
                 val connected = it == CarlinkManager.State.DEVICE_CONNECTED || it == CarlinkManager.State.STREAMING
                 if (connected && !connectNotified) {
                     connectNotified = true
-                    onPhoneConnected()
+                    cluster.onPhoneConnected()
                 } else if (it == CarlinkManager.State.DISCONNECTED) {
                     connectNotified = false
                 }
             },
+            bridge = bridge,
         )
         SettingsOverlay(
             visible = showSettings,
@@ -892,11 +932,20 @@ fun CarlinkApp(
                 SettingsActions(
                     onNavigateBack = closeSettings,
                     onDisplayModeSelected = onDisplayModeSelected,
-                    onResetCluster = onResetCluster,
+                    onResetCluster = cluster.onResetCluster,
                 ),
         )
     }
 }
+
+/**
+ * Carlink3's cluster/HUD navigation hooks for [CarlinkApp]: [onPhoneConnected] fires once per phone
+ * connection (re-armed on disconnect) and refreshes the cluster binding; [onResetCluster] restarts it.
+ */
+data class ClusterHooks(
+    val onPhoneConnected: () -> Unit = {},
+    val onResetCluster: () -> Unit = {},
+)
 
 /**
  * The settings page over the projection (Carlink2 [229]): it flies in from behind the driver while

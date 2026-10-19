@@ -5,6 +5,7 @@
     <ID>LongParameterList:ForestFogEffect.kt$( yMin: Float, yMax: Float, rMin: Float, rMax: Float, aMin: Float, aMax: Float, )</ID>
     <ID>LongParameterList:ForestFogEffect.kt$( puffs: List&lt;FogPuff&gt;, tint: Color, phase: Float, w: Float, bandTop: Float, bandH: Float, )</ID>
     <ID>TooGenericExceptionCaught:AudioRouteInfo.kt$AudioRouteInfo$e: Exception</ID>
+    <ID>SwallowedException:FilesLauncher.kt$FilesLauncher$e: ActivityNotFoundException</ID>
     <ID>ComplexCondition:MainScreen.kt$surfaceWidth == 0 || surfaceHeight == 0 || containerWidth == 0 || containerHeight == 0</ID>
     <ID>ComplexCondition:NavigationStateManager.kt$NavigationStateManager$routeV6 != null &amp;&amp; iap2 != null &amp;&amp; cursorV6 != null &amp;&amp; routeV6.endsAtStepCount(iap2.maneuverCount)</ID>
     <ID>CyclomaticComplexMethod:AlbumArtCache.kt$AlbumArtCache$fun put( bytes: ByteArray, maxPx: Int = DEFAULT_MAX_PX, ): Uri?</ID>

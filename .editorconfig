@@ -95,3 +95,6 @@ ktlint = disabled
 
 [**/audio/AudioRouteInfo.kt]
 ktlint = disabled
+
+[**/util/FilesLauncher.kt]
+ktlint = disabled

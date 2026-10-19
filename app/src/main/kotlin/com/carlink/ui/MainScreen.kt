@@ -67,6 +67,8 @@ import com.carlink.protocol.MultiTouchAction
 import com.carlink.protocol.PhoneType
 import com.carlink.ui.adaptive.asWindowInsets
 import com.carlink.ui.components.BoxStatusLine
+import com.carlink.ui.components.BridgeNotStartingPanel
+import com.carlink.ui.components.BridgeSetupPanel
 import com.carlink.ui.components.DialogSystemBars
 import com.carlink.ui.components.ForestFogEffect
 import com.carlink.ui.components.LoadingStatusView
@@ -76,6 +78,7 @@ import com.carlink.ui.components.rememberVideoSurfaceState
 import com.carlink.ui.settings.BackgroundLogoStore
 import com.carlink.ui.settings.ResetConnectionDialog
 import com.carlink.ui.theme.AutomotiveDimens
+import com.carlink.usb.CarlinkBridge
 import com.carlink.util.EdgeInsets
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -136,6 +139,7 @@ fun MainScreen(
     carlinkManager: CarlinkManager,
     onNavigateToSettings: () -> Unit,
     onStateChanged: (CarlinkManager.State) -> Unit = {},
+    bridge: BridgeSetup = BridgeSetup(),
 ) {
     val ui = remember(carlinkManager) { SessionUiState() }
     val surfaceState = rememberVideoSurfaceState()
@@ -159,7 +163,7 @@ fun MainScreen(
             Modifier.fillMaxSize().windowInsetsPadding(surfaceInsets.asWindowInsets()).clipToBounds(),
         )
         if (!ui.projecting) {
-            LoadingOverlay(carlinkManager, ui.statusText)
+            LoadingOverlay(carlinkManager, ui.statusText, bridge)
             TopActions(
                 onNavigateToSettings = onNavigateToSettings,
                 onResetConnection = { showResetConfirm = true },
@@ -396,8 +400,10 @@ private fun ProjectionSurface(
 private fun LoadingOverlay(
     carlinkManager: CarlinkManager,
     statusText: String,
+    bridge: BridgeSetup,
 ) {
-    val backgroundLogo by BackgroundLogoStore.get(LocalContext.current).flow.collectAsState()
+    val context = LocalContext.current
+    val backgroundLogo by BackgroundLogoStore.get(context).flow.collectAsState()
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // ContentScale.Crop fills the panel and centre-crops the overflow (the scene is ~2.49:1,
         // so almost nothing is cropped) — no stretching. Same scene for both logos.
@@ -420,9 +426,14 @@ private fun LoadingOverlay(
                 modifier = Modifier.height(220.dp),
             )
             Spacer(modifier = Modifier.height(24.dp))
-            // phoneConnected is folded into the status text here ("Phone connected", "Starting
-            // projection…"), so the classifier needs no second signal.
-            LoadingStatusView(statusText = statusText, phoneConnected = false, androidAuto = false)
+            when {
+                // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
+                !bridge.installed -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
+                statusText.startsWith(BRIDGE_TROUBLE_PREFIX) -> BridgeNotStartingPanel(onOpenAppInfo = { CarlinkBridge.openAppInfo(context) })
+                // phoneConnected is folded into the status text here ("Phone connected", "Starting
+                // projection…"), so the classifier needs no second signal.
+                else -> LoadingStatusView(statusText = statusText, phoneConnected = false, androidAuto = false)
+            }
         }
         BoxStatusLine(
             carlinkManager,
@@ -437,6 +448,18 @@ private fun LoadingOverlay(
 
 /** The box status line is for the bench, not the driver: present, but dimmed. */
 private const val BOX_STATUS_ALPHA = 0.55f
+
+/** Every bridge failure CarlinkManager reports starts this way ("USB bridge isn't responding", "… is out of date", "… could not open the adapter"). */
+private const val BRIDGE_TROUBLE_PREFIX = "USB bridge"
+
+/**
+ * Carlink2 [210]: whether the USB bridge is installed, and the connecting screen's way to install it
+ * (opens the head unit's Files app; returns false when none could be opened).
+ */
+data class BridgeSetup(
+    val installed: Boolean = true,
+    val onOpenFiles: () -> Boolean = { false },
+)
 
 /** Top-left "Settings" and "Reset Device" (full session rebuild) buttons of the loading overlay. */
 @Composable
