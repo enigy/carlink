@@ -21,7 +21,7 @@ grant — superseded by `:bridge`).
 ## Status
 
 **Milestones 1, 2 and 4 are in; nothing has run on a box yet.** `:app` (`com.enigy.carlink3`),
-`:bridge` and `:bridge-api` build; ktlint, detekt and 276 unit tests pass.
+`:bridge` and `:bridge-api` build; ktlint, detekt and 277 unit tests pass.
 
 - **Transport:** the bridge relays the adapter's bulk stream raw (API 3) and the app reaches it through
   `BridgeBulkTransport`, an implementation of OCBM's `RawBulkTransport`; `OcbmClient` is unchanged. The
@@ -31,8 +31,10 @@ grant — superseded by `:bridge`).
   icon store) is ported verbatim. `navigation/OcbmNavigationFeed` turns the box's `routeGuidance` /
   `maneuver` JSON (`CH_METADATA`) into the `NavigationState` it renders, including the exit label
   ("Exit 273 · Wade Green Rd"). Off by default — Settings → Control → **Cluster Navigation**; **Reset
-  Cluster** restarts the host binding. Junction spoke angles are not in OCBM's JSON yet, so roundabout
-  icons use the static glyph per maneuver type until the Rust side emits params 10/11.
+  Cluster** restarts the host binding. Junction spoke angles (`junctionAngles` / `junctionExitAngle`)
+  are consumed when the box emits them — that is the `patches/ocbm/` change, on the fork's
+  `route-guidance-exitinfo-angles` branch; against an unpatched box, roundabout icons fall back to the
+  static glyph per maneuver type.
 - **CI and protocol drift:** `.github/workflows/gate.yml` runs the same gate as local on every push and
   PR, and first runs `tools/proto_check.py`, which compares the Kotlin `OcbmProto.kt` against the
   reference copy of OCBM's canonical table in `proto/` (OCBM's own checker only sees clients inside its
@@ -44,6 +46,24 @@ grant — superseded by `:bridge`).
 Next: the first bench session — OCBM hello/heartbeat over the bridge, then a CarPlay session, then a
 route on the cluster. See `NOTICE.md` for provenance and the plan in Carlink2's
 `documents/design/ocbm_migration_plan.md`.
+
+## Releasing
+
+`.github/workflows/release.yml` is Carlink2's release pipeline with the names changed: it signs the
+`sideloadRelease` AAB and the bridge APK with the upload key from the `CARLINK_*` secrets, uploads
+the AAB to Google Play (`com.enigy.carlink3`) and attaches both to a GitHub Release.
+
+- **Version:** `appVersionCode` in `app/build.gradle.kts` is the only number to bump; `versionName`
+  derives from it and the release tag must be `v<appVersionCode>`.
+- **Tag push `vNNN`:** build, upload to Internal testing, GitHub Release. **Manual run** from main:
+  pick the track; untick *Upload* to build only. Runs from other branches never upload.
+- **Play Console, once:** create the app (`com.enigy.carlink3`), grant the existing service account
+  release rights to it, and upload the first AAB from the workflow artifact by hand — the API only
+  accepts drafts until an app has been rolled out once (the step then fails with
+  `status=completed`; rerun after the first manual rollout). Set the `CARLINK3_CALLER_CERTS`
+  variable to the app-signing certificate SHA-256 afterwards so the bridge pins its caller.
+- **Local release builds** need a `keystore.properties` next to `settings.gradle.kts` (gitignored,
+  same keys the workflow writes). Without it, release variants build unsigned and debug is unaffected.
 
 ## License
 

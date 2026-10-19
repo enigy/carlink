@@ -2,5 +2,8 @@
 build/
 app/build/
 local.properties
+# Signing: written by the release workflow from GitHub Secrets, or locally by hand. Never committed.
+keystore.properties
+*.jks
 .DS_Store
 .kotlin/

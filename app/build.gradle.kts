@@ -1,9 +1,19 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jlleitschuh.gradle.ktlint")
     id("io.gitlab.arturbosch.detekt")
 }
+
+// Signing credentials from keystore.properties (gitignored). Same file :bridge reads, so one
+// upload key signs both. Absent locally -> release builds are unsigned (debug builds unaffected).
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties =
+    Properties().also { props ->
+        if (keystorePropertiesFile.exists()) keystorePropertiesFile.inputStream().use { props.load(it) }
+    }
 
 android {
     namespace = "com.carlink"
@@ -21,8 +31,11 @@ android {
         applicationId = "com.enigy.carlink3"
         minSdk = 32 // GM gminfo = Android 12L / API 32
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-ocbm"
+        // versionCode is the single source of truth (Play requires a monotonic integer; it is also
+        // the release tag vNNN). versionName is DERIVED so the two can never drift: 1 -> "0.01".
+        val appVersionCode = 1
+        versionCode = appVersionCode
+        versionName = "%d.%02d".format(appVersionCode / 100, appVersionCode % 100)
 
 // ###############################################
 // ###############################################
@@ -35,8 +48,20 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -46,10 +71,10 @@ android {
         }
     }
 
-    // Sideload-only (cp-stripped): a single APK installed directly on the head unit, never
-    // uploaded to Play. The cluster-icon ContentProvider authority machinery + the `play`
-    // flavor were removed along with cluster navigation. The single flavor is retained so the
-    // build variant stays `sideloadDebug`/`sideloadRelease`.
+    // One flavor, kept so the variants stay `sideloadDebug`/`sideloadRelease` (the name is
+    // historical: the same variant ships to Play as an AAB via .github/workflows/release.yml and
+    // is sideloaded as an APK for bench testing). The cluster-icon ContentProvider authority
+    // lives in the sideloaded :bridge, so no distribution split is needed here.
     flavorDimensions += "distribution"
 
     productFlavors {
