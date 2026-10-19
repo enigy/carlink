@@ -24,22 +24,19 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterExitState
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -100,7 +97,7 @@ private const val CLUSTER_RELAUNCH_MS = 2_000L
  *    handling for faster disconnect detection than USB-transfer error paths provide.
  *  - Compose UI host: the top-level [CarlinkApp] composable keeps [MainScreen]
  *    continuously composed (to preserve the VideoSurface / HWC plane) and slides
- *    [SettingsScreen] on top via AnimatedVisibility rather than replacing it.
+ *    [SettingsScreen] on top (SettingsOverlay) rather than replacing it.
  */
 class MainActivity : ComponentActivity() {
     // Nullable to prevent UninitializedPropertyAccessException if Activity
@@ -953,8 +950,11 @@ data class ClusterHooks(
 
 /**
  * The settings page over the projection: it slides in from the left edge and back out to it, its
- * frosted glass moving with it. AnimatedVisibility only keeps the composable alive
- * through the exit; the motion itself is one progress value the page reads in its layer phase.
+ * frosted glass moving with it. The motion is one progress value the page reads in its layer phase.
+ *
+ * The page is composed at progress 0 (fully off the left edge) and drawn for [SETTLE_FRAMES] frames
+ * before it starts to move. Building the page is the expensive frame; a slide that starts on it
+ * drops its first frames and visibly jumps. On close the page stays composed until it is gone.
  */
 @Composable
 private fun SettingsOverlay(
@@ -963,33 +963,28 @@ private fun SettingsOverlay(
     connectionState: CarlinkManager.State,
     actions: SettingsActions,
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = EnterTransition.None,
-        exit = ExitTransition.None,
-    ) {
-        val arrivalState =
-            transition.animateFloat(
-                transitionSpec = {
-                    if (targetState == EnterExitState.Visible) {
-                        tween(SettingsSlideIn.ENTER_MS, easing = EmphasizedDecelerate)
-                    } else {
-                        tween(SettingsSlideIn.EXIT_MS, easing = EmphasizedAccelerate)
-                    }
-                },
-                label = "settingsArrival",
-            ) { state -> if (state == EnterExitState.Visible) 1f else 0f }
-        val arrival = remember(arrivalState) { { arrivalState.value } }
-        CompositionLocalProvider(LocalSettingsArrival provides arrival) {
-            SettingsScreen(
-                carlinkManager = carlinkManager,
-                connectionState = connectionState,
-                actions = actions,
-            )
+    val progress = remember { Animatable(0f) }
+    var composed by remember { mutableStateOf(visible) }
+    LaunchedEffect(visible) {
+        if (visible) {
+            composed = true
+            repeat(SETTLE_FRAMES) { withFrameNanos { } }
+            progress.animateTo(1f, tween(SettingsSlideIn.ENTER_MS, easing = SettingsSlideIn.EASING))
+        } else {
+            progress.animateTo(0f, tween(SettingsSlideIn.EXIT_MS, easing = SettingsSlideIn.EASING))
+            composed = false
         }
+    }
+    if (!composed) return
+    val arrival = remember(progress) { { progress.value } }
+    CompositionLocalProvider(LocalSettingsArrival provides arrival) {
+        SettingsScreen(
+            carlinkManager = carlinkManager,
+            connectionState = connectionState,
+            actions = actions,
+        )
     }
 }
 
-// Material 3 "emphasized" easings for the settings slide: decelerate in, accelerate out.
-private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
-private val EmphasizedAccelerate = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
+/** Frames the settings page is drawn off-screen before its slide starts (see [SettingsOverlay]). */
+private const val SETTLE_FRAMES = 2
