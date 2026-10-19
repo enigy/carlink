@@ -22,6 +22,7 @@ import com.carlink.device.KnownDevice
 import com.carlink.device.KnownDeviceSnapshot
 import com.carlink.device.KnownDeviceStore
 import com.carlink.device.mergeDeviceList
+import com.carlink.logging.LogExport
 import com.carlink.logging.Logger
 import com.carlink.logging.ProbeLog
 import com.carlink.logging.logDebug
@@ -158,6 +159,9 @@ class CarlinkManager(
         private const val BRIDGE_PERMISSION_POLL_MS = 250L
 
         private const val MAX_RECONNECT_ATTEMPTS = 5
+
+        /** The box daemon's log (ocbmd stdout/stderr, tools/run_ocbmd.sh); tmpfs, so RAM-only. */
+        private const val BOX_LOG_PATH = "/tmp/box.log"
 
         // Wake lock: safety timeout per acquire, and how often the refresh job renews it.
         // Refresh at half the timeout so a missed tick still leaves a full margin.
@@ -1258,6 +1262,26 @@ class CarlinkManager(
         scope.launch(Dispatchers.IO) { c.disconnectPhone() }
         return true
     }
+
+    /**
+     * Settings → Adapter → Save Logs: pull the box's `/tmp/box.log` over the live link (it lives in
+     * RAM on the box and is gone at power-off, so this is the only way to keep it after a drive) and
+     * save it next to this process's own logcat under Downloads/Carlink3. Returns where they went.
+     */
+    suspend fun saveLogs(): Result<String> =
+        withContext(Dispatchers.IO) {
+            val c = client ?: return@withContext Result.failure(IllegalStateException("Adapter not connected"))
+            val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+            logInfo("[LOGS] pulling $BOX_LOG_PATH", tag = Logger.Tags.ADAPTR)
+            val box = c.pullFile(BOX_LOG_PATH).getOrElse { return@withContext Result.failure(it) }
+            val saved = ArrayList<String>(2)
+            saved += LogExport.save(context, "carlink3-box-$stamp.log", box).getOrElse { return@withContext Result.failure(it) }
+            LogExport.appLogcat()?.let { app ->
+                saved += LogExport.save(context, "carlink3-app-$stamp.log", app).getOrElse { return@withContext Result.failure(it) }
+            }
+            logInfo("[LOGS] saved ${saved.joinToString(", ")} (box log ${box.size} bytes)", tag = Logger.Tags.ADAPTR)
+            Result.success(saved.joinToString(" and "))
+        }
 
     /**
      * `MGMT_RESTART_WIRELESS`: bounce the box's wireless stack (btd + radios; the box re-advertises).

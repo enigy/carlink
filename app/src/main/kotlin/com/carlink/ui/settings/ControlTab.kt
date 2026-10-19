@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.PhoneDisabled
 import androidx.compose.material.icons.filled.PowerOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SettingsInputComponent
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.VideoSettings
@@ -77,6 +78,7 @@ private val DISCONNECT_PHONE = ControlAction("Disconnect Phone", Icons.Default.P
 private val RESTART_WIRELESS = ControlAction("Restart Wireless", Icons.Default.Wifi, ButtonSeverity.WARNING)
 private val REBOOT_ADAPTER = ControlAction("Reboot Adapter", Icons.Default.RestartAlt, ButtonSeverity.WARNING)
 private val DISCONNECT_ADAPTER = ControlAction("Disconnect Adapter", Icons.Default.PowerOff, ButtonSeverity.DESTRUCTIVE)
+private val SAVE_LOGS = ControlAction("Save Logs", Icons.Default.Save, ButtonSeverity.WARNING)
 private val RESET_DECODER = ControlAction("Reset Decoder", Icons.Default.VideoSettings, ButtonSeverity.WARNING)
 private val RESET_CONNECTION = ControlAction("Reset Connection", Icons.Default.Usb, ButtonSeverity.DESTRUCTIVE)
 
@@ -151,6 +153,8 @@ private fun AdapterCard(
     modifier: Modifier = Modifier,
 ) {
     var confirm by remember { mutableStateOf<AdapterConfirm?>(null) }
+    var savingLogs by remember { mutableStateOf(false) }
+    var saveLogsResult by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     // Read once per composition; the box cannot gain the capability mid-session (it is a
     // HELLO_ACK caps bit), and `connected` recomposes this card on every session edge anyway.
@@ -188,6 +192,29 @@ private fun AdapterCard(
         ControlButton(REBOOT_ADAPTER, enabled = true, onClick = { confirm = AdapterConfirm.REBOOT })
         Spacer(modifier = Modifier.height(12.dp))
         ControlButton(DISCONNECT_ADAPTER, enabled = connected, onClick = { confirm = AdapterConfirm.DISCONNECT_ADAPTER })
+        Spacer(modifier = Modifier.height(12.dp))
+        // The box's /tmp/box.log is RAM-only and gone at power-off; this is how it survives a drive.
+        ControlButton(SAVE_LOGS, enabled = connected, isProcessing = savingLogs, onClick = {
+            logWarn("[UI_ACTION] Save Logs button clicked", tag = "UI")
+            savingLogs = true
+            saveLogsResult = null
+            scope.launch {
+                saveLogsResult =
+                    carlinkManager.saveLogs().fold(
+                        onSuccess = { "Saved to $it" },
+                        onFailure = { "Could not save logs: ${it.message}" },
+                    )
+                savingLogs = false
+            }
+        })
+        saveLogsResult?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
     }
 
     AdapterConfirmDialog(confirm, carlinkManager, scope, onDone = { confirm = null })

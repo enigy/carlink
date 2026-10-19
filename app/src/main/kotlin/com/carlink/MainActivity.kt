@@ -883,39 +883,58 @@ fun CarlinkApp(
                 }
             },
         )
-        // Carlink2 [229]: the page flies in from behind the driver while its glass frosts over the
-        // screen underneath. AnimatedVisibility only keeps the composable alive through the exit;
-        // the motion itself is one progress value the page reads in its layer phase.
-        AnimatedVisibility(
+        SettingsOverlay(
             visible = showSettings,
-            enter = EnterTransition.None,
-            exit = ExitTransition.None,
-        ) {
-            val arrivalState =
-                transition.animateFloat(
-                    transitionSpec = {
-                        if (targetState == EnterExitState.Visible) {
-                            tween(SettingsFlyIn.ENTER_MS, easing = EmphasizedDecelerate)
-                        } else {
-                            tween(SettingsFlyIn.EXIT_MS, easing = EmphasizedAccelerate)
-                        }
-                    },
-                    label = "settingsArrival",
-                ) { state -> if (state == EnterExitState.Visible) 1f else 0f }
-            val arrival = remember(arrivalState) { { arrivalState.value } }
-            CompositionLocalProvider(LocalSettingsArrival provides arrival) {
-                SettingsScreen(
-                    carlinkManager = carlinkManager,
-                    connectionState = connectionState,
-                    displayMode = displayMode,
-                    actions =
-                        SettingsActions(
-                            onNavigateBack = closeSettings,
-                            onDisplayModeSelected = onDisplayModeSelected,
-                            onResetCluster = onResetCluster,
-                        ),
-                )
-            }
+            carlinkManager = carlinkManager,
+            connectionState = connectionState,
+            displayMode = displayMode,
+            actions =
+                SettingsActions(
+                    onNavigateBack = closeSettings,
+                    onDisplayModeSelected = onDisplayModeSelected,
+                    onResetCluster = onResetCluster,
+                ),
+        )
+    }
+}
+
+/**
+ * The settings page over the projection (Carlink2 [229]): it flies in from behind the driver while
+ * its glass frosts over the screen underneath. AnimatedVisibility only keeps the composable alive
+ * through the exit; the motion itself is one progress value the page reads in its layer phase.
+ */
+@Composable
+private fun SettingsOverlay(
+    visible: Boolean,
+    carlinkManager: CarlinkManager,
+    connectionState: CarlinkManager.State,
+    displayMode: DisplayMode,
+    actions: SettingsActions,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = EnterTransition.None,
+        exit = ExitTransition.None,
+    ) {
+        val arrivalState =
+            transition.animateFloat(
+                transitionSpec = {
+                    if (targetState == EnterExitState.Visible) {
+                        tween(SettingsFlyIn.ENTER_MS, easing = EmphasizedDecelerate)
+                    } else {
+                        tween(SettingsFlyIn.EXIT_MS, easing = EmphasizedAccelerate)
+                    }
+                },
+                label = "settingsArrival",
+            ) { state -> if (state == EnterExitState.Visible) 1f else 0f }
+        val arrival = remember(arrivalState) { { arrivalState.value } }
+        CompositionLocalProvider(LocalSettingsArrival provides arrival) {
+            SettingsScreen(
+                carlinkManager = carlinkManager,
+                connectionState = connectionState,
+                displayMode = displayMode,
+                actions = actions,
+            )
         }
     }
 }

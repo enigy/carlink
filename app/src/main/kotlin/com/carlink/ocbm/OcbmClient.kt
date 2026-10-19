@@ -1,9 +1,13 @@
 package com.carlink.ocbm
 
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.zip.CRC32
 
 /**
  * The OCBM host client — the Kotlin equivalent of `ocbm-host`'s `Link` and the macOS
@@ -31,6 +35,7 @@ class OcbmClient(
     private val ctrlQ = LinkedBlockingQueue<ByteArray>()
     private val mfiQ = LinkedBlockingQueue<ByteArray>()
     private val mgmtQ = LinkedBlockingQueue<ByteArray>()
+    private val fileQ = LinkedBlockingQueue<ByteArray>()
 
     @Volatile var helloAcked = false
         private set
@@ -352,8 +357,7 @@ class OcbmClient(
     private fun dispatch(f: OcbmFrame) {
         when (f.channel) {
             Ocbm.CH_CTRL -> handleCtrl(f.payload)
-            Ocbm.CH_MFI -> mfiQ.offer(f.payload)
-            Ocbm.CH_MGMT -> mgmtQ.offer(f.payload)
+            Ocbm.CH_MFI, Ocbm.CH_MGMT, Ocbm.CH_FILE -> replyQueue(f.channel).offer(f.payload)
             Ocbm.CH_VIDEO -> lanes?.feedVideo(f.payload) ?: dropAv(f)
             Ocbm.CH_MEDIA_AUDIO -> lanes?.feedMedia(f.payload) ?: dropAv(f)
             Ocbm.CH_ALT_AUDIO -> lanes?.feedVoice(f.payload) ?: dropAv(f)
@@ -364,6 +368,14 @@ class OcbmClient(
             else -> dropAv(f)
         }
     }
+
+    /** The request/reply channels each park their replies on a queue the blocking caller polls. */
+    private fun replyQueue(channel: Int): LinkedBlockingQueue<ByteArray> =
+        when (channel) {
+            Ocbm.CH_MFI -> mfiQ
+            Ocbm.CH_MGMT -> mgmtQ
+            else -> fileQ
+        }
 
     @Volatile var altVideoFrames = 0L
         private set
@@ -1058,6 +1070,65 @@ class OcbmClient(
         return null
     }
 
+    // ---- CH_FILE --------------------------------------------------------------------------------
+
+    /**
+     * Fetch a file from the box — the mirror of `ocbm-host pull`: `[FILE_PULL][path]` out, a run of
+     * `FILE_DATA` sub-frames back, then one `FILE_ACK(status, crc32, size)` that the reassembled bytes
+     * are verified against. Blocking; call off the main thread. Shares the link with everything else,
+     * so a live session's A/V keeps flowing while this drains.
+     *
+     * Failure cases are spelled out in the exception message: the box's own status (bad path, not
+     * found), a CRC/size mismatch, or a timeout with the byte count reached.
+     */
+    fun pullFile(
+        path: String,
+        timeoutMs: Long = 30_000,
+    ): Result<ByteArray> {
+        fileQ.clear()
+        val pathBytes = path.toByteArray(Charsets.US_ASCII)
+        val req = ByteArray(1 + pathBytes.size)
+        req[0] = Ocbm.FILE_PULL
+        System.arraycopy(pathBytes, 0, req, 1, pathBytes.size)
+        if (!send(Ocbm.CH_FILE, req)) return Result.failure(IllegalStateException("pull $path: request send failed"))
+        val out = ByteArrayOutputStream()
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val pl = fileQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
+            if (pl.isEmpty()) continue
+            when (pl[0]) {
+                Ocbm.FILE_DATA -> out.write(pl, 1, pl.size - 1)
+                Ocbm.FILE_ACK -> if (pl.size >= FILE_ACK_LEN) return verifyPull(path, pl, out.toByteArray())
+                else -> Unit
+            }
+        }
+        return Result.failure(IllegalStateException("pull $path: timeout after ${out.size()} bytes"))
+    }
+
+    private fun verifyPull(
+        path: String,
+        ack: ByteArray,
+        data: ByteArray,
+    ): Result<ByteArray> {
+        val status = ack[1]
+        if (status != Ocbm.FILE_OK) return Result.failure(IllegalStateException("pull $path: box says ${Ocbm.fileStatusName(status)}"))
+        val bb = ByteBuffer.wrap(ack, 2, 8).order(ByteOrder.LITTLE_ENDIAN)
+        val boxCrc = bb.int.toLong() and 0xFFFF_FFFFL
+        val boxSize = bb.int.toLong() and 0xFFFF_FFFFL
+        val crc32 = CRC32()
+        crc32.update(data)
+        val crc = crc32.value
+        if (crc != boxCrc || data.size.toLong() != boxSize) {
+            return Result.failure(
+                IllegalStateException(
+                    "pull $path: verify failed — got crc=0x%08x size=%d, box says crc=0x%08x size=%d".format(crc, data.size, boxCrc, boxSize),
+                ),
+            )
+        }
+        log.i("pull $path: ${data.size} bytes, crc32=0x%08x".format(crc))
+        return Result.success(data)
+    }
+
     // ---- teardown -------------------------------------------------------------------------------
 
     /**
@@ -1128,3 +1199,6 @@ class OcbmClient(
             "altVid=$altVideoFrames" +
             (lanes?.let { " ${it.statsLine()}" } ?: "")
 }
+
+/** `[FILE_ACK][status u8][crc32 u32 LE][size u32 LE]` — the terminal sub-frame of a pull. */
+private const val FILE_ACK_LEN = 10
