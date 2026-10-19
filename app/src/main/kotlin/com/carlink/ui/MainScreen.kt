@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -35,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -45,8 +47,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,10 +67,12 @@ import com.carlink.protocol.MultiTouchAction
 import com.carlink.protocol.PhoneType
 import com.carlink.ui.adaptive.asWindowInsets
 import com.carlink.ui.components.BoxStatusLine
-import com.carlink.ui.components.LoadingSpinner
+import com.carlink.ui.components.ForestFogEffect
+import com.carlink.ui.components.LoadingStatusView
 import com.carlink.ui.components.VideoSurface
 import com.carlink.ui.components.VideoSurfaceState
 import com.carlink.ui.components.rememberVideoSurfaceState
+import com.carlink.ui.settings.BackgroundLogoStore
 import com.carlink.ui.settings.ResetConnectionDialog
 import com.carlink.ui.theme.AutomotiveDimens
 import com.carlink.util.EdgeInsets
@@ -375,35 +382,57 @@ private fun ProjectionSurface(
     }
 }
 
-/** Scrim + logo + spinner + "[ status ]" + box status, centred, while no session streams. */
+/**
+ * The connecting screen, from Carlink2: the brand scene (Settings → App Control → Background),
+ * drifting fog over its forest, the logo, and the status folded into three ethereal steps with a
+ * plain action line when the driver has to do something. The box's own status line sits at the
+ * bottom edge, dimmed, for the bench. Shown while no session streams.
+ */
 @Composable
 private fun LoadingOverlay(
     carlinkManager: CarlinkManager,
     statusText: String,
 ) {
-    val colorScheme = MaterialTheme.colorScheme
-    Box(
-        modifier = Modifier.fillMaxSize().background(colorScheme.scrim.copy(alpha = 0.7f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    val backgroundLogo by BackgroundLogoStore.get(LocalContext.current).flow.collectAsState()
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        // ContentScale.Crop fills the panel and centre-crops the overflow (the scene is ~2.49:1,
+        // so almost nothing is cropped) — no stretching. Same scene for both logos.
+        Image(
+            painter = painterResource(id = backgroundLogo.drawableRes),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        ForestFogEffect()
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            // Half an inch below dead-centre, so the icon and words sit lower over the scene.
+            modifier = Modifier.offset(y = 80.dp),
+        ) {
             Image(
                 painter = painterResource(id = R.drawable.ic_phone_projection),
                 contentDescription = "Carlink",
                 modifier = Modifier.height(220.dp),
             )
             Spacer(modifier = Modifier.height(24.dp))
-            LoadingSpinner(color = colorScheme.primary)
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "[ $statusText ]",
-                style = MaterialTheme.typography.bodyLarge,
-                color = Color(0xFFDDE4E5), // Fixed light color for dark overlay
-            )
-            BoxStatusLine(carlinkManager, Modifier.padding(top = 8.dp))
+            // phoneConnected is folded into the status text here ("Phone connected", "Starting
+            // projection…"), so the classifier needs no second signal.
+            LoadingStatusView(statusText = statusText, phoneConnected = false, androidAuto = false)
         }
+        BoxStatusLine(
+            carlinkManager,
+            Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(bottom = 16.dp)
+                .alpha(BOX_STATUS_ALPHA),
+        )
     }
 }
+
+/** The box status line is for the bench, not the driver: present, but dimmed. */
+private const val BOX_STATUS_ALPHA = 0.55f
 
 /** Top-left "Settings" and "Reset Device" (full session rebuild) buttons of the loading overlay. */
 @Composable

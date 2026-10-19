@@ -3,6 +3,7 @@ package com.carlink.audio
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -111,6 +112,13 @@ class MicrophoneCaptureManager(
     private val logCallback: LogCallback,
 ) {
     private var audioRecord: AudioRecord? = null
+
+    /**
+     * The input this capture is pinned to, or null for the OS/HAL's choice (Carlink2 [225]: the
+     * car's Voice_Uplink bus for phone calls when Settings → Call Mic says so). Applied to every
+     * AudioRecord of the session, including one rebuilt after a DEAD_OBJECT.
+     */
+    @Volatile private var preferredInput: AudioDeviceInfo? = null
     private var micBuffer: AudioRingBuffer? = null
     private var currentFormat: MicFormatConfig? = null
     private var captureThread: MicCaptureThread? = null
@@ -188,12 +196,14 @@ class MicrophoneCaptureManager(
     fun start(
         decodeType: Int,
         codec: Int,
+        input: AudioDeviceInfo? = null,
     ): Boolean {
         synchronized(lock) {
             if (isRunning.get()) {
                 log("[MIC] Already capturing")
                 return true
             }
+            preferredInput = input
             if (!hasPermission()) {
                 log("[MIC] ERROR: RECORD_AUDIO permission not granted")
                 return false
@@ -254,6 +264,13 @@ class MicrophoneCaptureManager(
      * future mic capture (Siri/phone calls), so every failure path releases before returning.
      * AudioRecord.release() is unconditionally safe per AOSP source.
      */
+    /** Pin [record] to [preferredInput] when one is set; a refusal is logged, not fatal (the OS path still works). */
+    private fun applyPreferredInput(record: AudioRecord) {
+        val input = preferredInput ?: return
+        val ok = runCatching { record.setPreferredDevice(input) }.getOrDefault(false)
+        log("[MIC] preferred input ${AudioRouteInfo.device(input)}: ${if (ok) "set" else "REFUSED — OS choice"}")
+    }
+
     private fun openRecord(format: MicFormatConfig): AudioRecord? {
         var record: AudioRecord? = null
         try {
@@ -277,6 +294,7 @@ class MicrophoneCaptureManager(
                 record.release()
                 return null
             }
+            applyPreferredInput(record)
             record.startRecording()
             log("[MIC] AudioRecord opened: ${format.sampleRate}Hz ${format.channelCount}ch buffer=${minBufferSize * 3}B")
             return record
@@ -626,6 +644,7 @@ class MicrophoneCaptureManager(
                     record.release()
                     return null
                 }
+                applyPreferredInput(record)
                 record.startRecording()
 
                 // Resurrection guard: AudioRecord construction/startRecording can block >1s

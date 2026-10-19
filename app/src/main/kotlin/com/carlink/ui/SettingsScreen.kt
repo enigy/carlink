@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +50,10 @@ import com.carlink.CarlinkManager
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.ui.adaptive.asWindowInsets
+import com.carlink.ui.components.FrostedGlassBackground
+import com.carlink.ui.components.LocalSettingsArrival
+import com.carlink.ui.components.settingsFlyIn
+import com.carlink.ui.settings.BackgroundLogoStore
 import com.carlink.ui.settings.ControlTabContent
 import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.PhonesTabContent
@@ -82,8 +88,20 @@ fun SettingsScreen(
     // The detected safe area (cutout / waterfall / corner arcs) pads in addition to the live bars.
     val safeArea = carlinkManager.displayProfile?.safeAreaInsets ?: EdgeInsets.NONE
 
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Row(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.union(safeArea.asWindowInsets()))) {
+    // Carlink2 [229]: frosted glass over the connecting screen's brand scene in place of a solid
+    // surface, frosting over as the page flies in from behind the driver. The Surface stays
+    // transparent but still sets LocalContentColor for every un-coloured Text.
+    val backgroundLogo by BackgroundLogoStore.get(LocalContext.current).flow.collectAsState()
+    val arrival = LocalSettingsArrival.current
+    Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface) {
+        FrostedGlassBackground(backgroundLogo = backgroundLogo, progress = arrival)
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .settingsFlyIn(arrival)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.union(safeArea.asWindowInsets())),
+        ) {
             SettingsRail(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it },

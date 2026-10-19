@@ -55,6 +55,12 @@ class VoiceRouter(
     private val ctx: Context,
     private val onDuck: (Boolean) -> Unit,
     private val onAssistant: (Boolean) -> Unit = {},
+    /**
+     * Settings → Call Buffer: how many platform-minimum buffers the CALL track is opened with (every
+     * other purpose uses [DEFAULT_BUFFER_MULTIPLIER]). Read when the call sink opens its track, so a
+     * change applies on the next call.
+     */
+    private val callBufferMultiplier: () -> Int = { DEFAULT_BUFFER_MULTIPLIER },
 ) {
     private val log = ProbeLog.sub("voice")
     private val running = AtomicBoolean(false)
@@ -124,7 +130,13 @@ class VoiceRouter(
         ),
     }
 
+    /** Is a phone call's downlink currently open? Settings → Call Mic only forces an input for calls. */
+    fun isCallActive(): Boolean = synchronized(sinks) { sinks[Purpose.CALL]?.isConfigured == true }
+
     private companion object {
+        /** AudioTrack size for voice purposes, in platform-minimum buffers. */
+        const val DEFAULT_BUFFER_MULTIPLIER = 4
+
         /** Never re-attempt configure per access unit — that drains the codec pool in seconds. */
         const val CONFIGURE_RETRY_MS = 5_000L
 
@@ -636,9 +648,11 @@ class VoiceRouter(
                         .setChannelMask(mask)
                         .build(),
                 )
-                // 4x minimum. AUDIO_OUTPUT_FLAG_FAST is denied to third-party apps on this head
-                // unit, so PERFORMANCE_MODE_LOW_LATENCY buys nothing and can add jitter.
-                .setBufferSizeInBytes(maxOf(minBuf, 4096) * 4)
+                // 4x minimum (the CALL track follows Settings → Call Buffer: caller audio arrives at
+                // the rate it plays, so a backlog never drains and a smaller track caps how late it
+                // can get). AUDIO_OUTPUT_FLAG_FAST is denied to third-party apps on this head unit,
+                // so PERFORMANCE_MODE_LOW_LATENCY buys nothing and can add jitter.
+                .setBufferSizeInBytes(maxOf(minBuf, 4096) * if (p == Purpose.CALL) callBufferMultiplier() else DEFAULT_BUFFER_MULTIPLIER)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
                 .also { t ->

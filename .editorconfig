@@ -76,3 +76,22 @@ ktlint = disabled
 
 [**/cluster/CarlinkClusterSession.kt]
 ktlint = disabled
+
+# Connecting-screen and settings-glass components ported verbatim from Carlink2 (2026-10-19).
+[**/ui/components/ForestFogEffect.kt]
+ktlint = disabled
+
+[**/ui/components/EtherealStatus.kt]
+ktlint = disabled
+
+[**/ui/components/LoadingSteps.kt]
+ktlint = disabled
+
+[**/ui/components/FrostedGlassBackground.kt]
+ktlint = disabled
+
+[**/ui/components/SettingsFlyIn.kt]
+ktlint = disabled
+
+[**/audio/AudioRouteInfo.kt]
+ktlint = disabled

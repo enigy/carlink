@@ -1,5 +1,7 @@
 package com.carlink.ui.settings
 
+import android.content.Context
+import android.media.AudioManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DisplaySettings
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PhoneDisabled
 import androidx.compose.material.icons.filled.PowerOff
 import androidx.compose.material.icons.filled.Refresh
@@ -26,6 +30,7 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SettingsInputComponent
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.VideoSettings
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
@@ -34,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
+import com.carlink.audio.AudioRouteInfo
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
@@ -59,6 +66,7 @@ import com.carlink.ui.components.ButtonSeverity
 import com.carlink.ui.components.ControlAction
 import com.carlink.ui.components.ControlButton
 import com.carlink.ui.components.ControlCard
+import com.carlink.ui.components.OptionButton
 import com.carlink.ui.theme.AutomotiveDimens
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -304,6 +312,8 @@ private fun AppControlCard(
     ControlCard(title = "App Control", icon = Icons.Default.DisplaySettings, modifier = modifier) {
         TonalActionButton(label = "Display Mode", icon = displayMode.icon, onClick = { showDisplayModeDialog = true })
         Spacer(modifier = Modifier.height(12.dp))
+        AppearanceAndCallChoices(context)
+        Spacer(modifier = Modifier.height(12.dp))
         ControlButton(RESET_DECODER, enabled = !isRestarting, onClick = {
             logWarn("[UI_ACTION] Reset Decoder button clicked", tag = "UI")
             carlinkManager.resetVideoDecoder()
@@ -362,6 +372,77 @@ private fun AppControlCard(
     }
 
     if (showDeferredNotice) DisplayModeDeferredNotice(onDismiss = { showDeferredNotice = false })
+}
+
+/**
+ * The app-only choices brought over from Carlink2, applied the moment they are tapped: the brand on
+ * the connecting screen ([216]), the input a phone call records from ([225]) and the call track's
+ * size ([226]). "Car call path" is offered only when the car lists its Voice_Uplink bus.
+ */
+@Composable
+private fun AppearanceAndCallChoices(context: Context) {
+    val backgroundStore = remember { BackgroundLogoStore.get(context) }
+    val backgroundLogo by backgroundStore.flow.collectAsState()
+    val callAudio = remember { CallAudioStore.get(context) }
+    val callMic by callAudio.callMicFlow.collectAsState()
+    val callBuffer by callAudio.callBufferFlow.collectAsState()
+    val carListsUplink =
+        remember {
+            (context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.let { AudioRouteInfo.uplinkBus(it) } != null
+        }
+
+    ChoiceRow(title = "Background", icon = Icons.Default.Wallpaper, options = BackgroundLogoConfig.entries, selected = backgroundLogo) {
+        logWarn("[UI_ACTION] Background -> ${it.name}", tag = "UI")
+        backgroundStore.set(it)
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+    ChoiceRow(
+        title = if (carListsUplink) "Call Mic" else "Call Mic (this car has no separate call path)",
+        icon = Icons.Default.Mic,
+        options = if (carListsUplink) CallMicConfig.entries else listOf(CallMicConfig.AUTOMATIC),
+        selected = callMic,
+    ) {
+        logWarn("[UI_ACTION] Call Mic -> ${it.name}", tag = "UI")
+        callAudio.setCallMic(it)
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+    ChoiceRow(
+        title = "Call Buffer (takes effect on the next call)",
+        icon = Icons.Default.GraphicEq,
+        options = CallBufferConfig.entries,
+        selected = callBuffer,
+    ) {
+        logWarn("[UI_ACTION] Call Buffer -> ${it.name}", tag = "UI")
+        callAudio.setCallBuffer(it)
+    }
+}
+
+/** A labelled row of equal-width [OptionButton]s, one selected. */
+@Composable
+private fun <T : Labelled> ChoiceRow(
+    title: String,
+    icon: ImageVector,
+    options: List<T>,
+    selected: T,
+    onSelect: (T) -> Unit,
+) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = 6.dp),
+    )
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        options.forEach { option ->
+            OptionButton(
+                label = option.label,
+                icon = icon,
+                isSelected = option == selected,
+                onClick = { onSelect(option) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
 }
 
 /** Shown when a display-mode choice was persisted but held back by a live phone session. */

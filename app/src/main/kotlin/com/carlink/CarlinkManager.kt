@@ -5,6 +5,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Surface
+import com.carlink.audio.AudioRouteInfo
 import com.carlink.audio.MicProfile
 import com.carlink.audio.MicrophoneCaptureManager
 import com.carlink.av.MediaAudioPlayer
@@ -49,6 +50,8 @@ import com.carlink.protocol.AdapterConfig
 import com.carlink.protocol.MessageSerializer
 import com.carlink.protocol.MultiTouchAction
 import com.carlink.protocol.PhoneType
+import com.carlink.ui.settings.CallAudioStore
+import com.carlink.ui.settings.CallMicConfig
 import com.carlink.usb.CarlinkBridge
 import com.carlink.util.DisplayProfile
 import com.carlink.util.LogCallback
@@ -2068,6 +2071,8 @@ class CarlinkManager(
                 context,
                 onDuck = { ducked -> player.setDucked(ducked) },
                 onAssistant = { speaking -> player.setAssistantSpeaking(speaking) },
+                // Settings → Call Buffer, read when the call track opens so a change takes the next call.
+                callBufferMultiplier = { CallAudioStore.get(context).callBuffer.bufferMultiplier },
             ).also { it.start() }
         voiceRouter = router
 
@@ -2144,7 +2149,8 @@ class CarlinkManager(
         if (r != rate || c != channels) {
             logWarn("[MIC] gate said ${rate}Hz ${channels}ch but codec $codec captures ${r}Hz ${c}ch", tag = Logger.Tags.MIC)
         }
-        if (!mgr.start(captureProfileFor(r, c), codec)) {
+        val input = callMicInput()
+        if (!mgr.start(captureProfileFor(r, c), codec, input)) {
             logError("[MIC] Capture failed to start", tag = Logger.Tags.MIC)
             return
         }
@@ -2172,6 +2178,27 @@ class CarlinkManager(
             }, 0, MicProfile.TICK_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
 
         logInfo("[MIC] Capture started at ${r}Hz ${c}ch codec=$codec (drain ${chunkSize}B/tick)", tag = Logger.Tags.MIC)
+    }
+
+    /**
+     * Settings → Call Mic (Carlink2 [225]/[235]): the input a phone call records from. GM's
+     * Voice_Uplink bus (the car's processed call mic, what GM's own CarPlay records) when the car
+     * lists it, a call's downlink is open and the driver chose "Car call path"; otherwise null, so
+     * VOICE_COMMUNICATION and the OS/HAL pick the device and processing. Siri always takes null.
+     * One [CALL_AUDIO] line per capture names the choice, so logs from different GM builds compare.
+     */
+    private fun callMicInput(): android.media.AudioDeviceInfo? {
+        val pref = CallAudioStore.get(context).callMic
+        val callActive = voiceRouter?.isCallActive() == true
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+        val bus = am?.let { AudioRouteInfo.uplinkBus(it) }
+        val input = if (callActive && pref == CallMicConfig.VOICE_UPLINK) bus else null
+        logInfo(
+            "[CALL_AUDIO] callMic=$pref callActive=$callActive carListsVoiceUplink=${bus != null} " +
+                "input=${input?.let { AudioRouteInfo.device(it) } ?: "OS choice"} os=${android.os.Build.DISPLAY}",
+            tag = Logger.Tags.MIC,
+        )
+        return input
     }
 
     /**

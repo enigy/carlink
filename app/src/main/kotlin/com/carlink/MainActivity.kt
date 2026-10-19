@@ -25,14 +25,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +58,8 @@ import com.carlink.ui.DisplayModeOutcome
 import com.carlink.ui.MainScreen
 import com.carlink.ui.SettingsActions
 import com.carlink.ui.SettingsScreen
+import com.carlink.ui.components.LocalSettingsArrival
+import com.carlink.ui.components.SettingsFlyIn
 import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.theme.CarlinkTheme
@@ -878,22 +883,43 @@ fun CarlinkApp(
                 }
             },
         )
+        // Carlink2 [229]: the page flies in from behind the driver while its glass frosts over the
+        // screen underneath. AnimatedVisibility only keeps the composable alive through the exit;
+        // the motion itself is one progress value the page reads in its layer phase.
         AnimatedVisibility(
             visible = showSettings,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
         ) {
-            SettingsScreen(
-                carlinkManager = carlinkManager,
-                connectionState = connectionState,
-                displayMode = displayMode,
-                actions =
-                    SettingsActions(
-                        onNavigateBack = closeSettings,
-                        onDisplayModeSelected = onDisplayModeSelected,
-                        onResetCluster = onResetCluster,
-                    ),
-            )
+            val arrivalState =
+                transition.animateFloat(
+                    transitionSpec = {
+                        if (targetState == EnterExitState.Visible) {
+                            tween(SettingsFlyIn.ENTER_MS, easing = EmphasizedDecelerate)
+                        } else {
+                            tween(SettingsFlyIn.EXIT_MS, easing = EmphasizedAccelerate)
+                        }
+                    },
+                    label = "settingsArrival",
+                ) { state -> if (state == EnterExitState.Visible) 1f else 0f }
+            val arrival = remember(arrivalState) { { arrivalState.value } }
+            CompositionLocalProvider(LocalSettingsArrival provides arrival) {
+                SettingsScreen(
+                    carlinkManager = carlinkManager,
+                    connectionState = connectionState,
+                    displayMode = displayMode,
+                    actions =
+                        SettingsActions(
+                            onNavigateBack = closeSettings,
+                            onDisplayModeSelected = onDisplayModeSelected,
+                            onResetCluster = onResetCluster,
+                        ),
+                )
+            }
         }
     }
 }
+
+// Material 3 "emphasized" easings for the settings page's arrival (Carlink2 [229]).
+private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+private val EmphasizedAccelerate = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
