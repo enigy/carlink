@@ -57,6 +57,9 @@ the AAB to Google Play (`com.enigy.carlink3`) and attaches both to a GitHub Rele
   derives from it and the release tag must be `v<appVersionCode>`.
 - **Tag push `vNNN`:** build, upload to Internal testing, GitHub Release. **Manual run** from main:
   pick the track; untick *Upload* to build only. Runs from other branches never upload.
+- **Naming a release:** the bump commit carries the summary (`[7] Connecting screen, call-audio
+  choices`, not `Bump appVersionCode`), since it is the workflow run's title; the annotated tag's
+  message becomes the GitHub Release title and intro (`git tag -a v7 -m "Carlink3 v7: …"`).
 - **Play Console, once:** create the app (`com.enigy.carlink3`), grant the existing service account
   release rights to it, and upload the first AAB from the workflow artifact by hand — the API only
   accepts drafts until an app has been rolled out once (the step then fails with

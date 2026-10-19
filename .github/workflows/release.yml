@@ -187,10 +187,25 @@ jobs:
           track: ${{ inputs.track || 'internal' }}
           status: completed
 
+      # The release is titled from the annotated tag: `git tag -a v3 -m "Carlink3 v3: what changed"`
+      # gives "Carlink3 v3: what changed" as the title and any further tag-message lines as the
+      # body, above the generated commit list. A lightweight tag falls back to "Carlink3 vNNN".
+      - name: Title the release from the tag message
+        if: github.ref_type == 'tag'
+        id: tagmeta
+        run: |
+          subject=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")
+          body=$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME")
+          [ -n "$subject" ] || subject="Carlink3 $GITHUB_REF_NAME"
+          echo "title=$subject" >> "$GITHUB_OUTPUT"
+          { echo 'body<<EOF'; printf '%s\n' "$body"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ steps.tagmeta.outputs.title }}
+          body: ${{ steps.tagmeta.outputs.body }}
           files: |
             dist/*.aab
             dist/*.apk
