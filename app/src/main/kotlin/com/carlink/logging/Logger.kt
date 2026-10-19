@@ -149,9 +149,12 @@ object Logger {
                 level.priority >= Level.WARN.priority ||
                 tag == Tags.PROTO_UNKNOWN ||
                 (releaseVerbose && level.priority >= Level.INFO.priority)
+        val formattedMessage = if (tag != null) "[$tag] $message" else message
+        // The in-process trail (LogTrail) keeps INFO and above regardless of the logcat filter, so
+        // Save Logs always has the [CLUSTER]/[NAVI]/[BRIDGE] story even when logcat shows WARN only.
+        if (level.priority >= Level.INFO.priority) LogTrail.record(level, formattedMessage, throwable)
         if (!emit) return
 
-        val formattedMessage = if (tag != null) "[$tag] $message" else message
         when (level) {
             Level.VERBOSE -> Log.v(TAG, formattedMessage, throwable)
             Level.DEBUG -> Log.d(TAG, formattedMessage, throwable)

@@ -18,11 +18,13 @@ import com.carlink.callui.CallRoster
 import com.carlink.callui.CallState
 import com.carlink.car.AppFocusClaimer
 import com.carlink.car.DriveStateMonitor
+import com.carlink.cluster.ClusterNavigation
 import com.carlink.device.KnownDevice
 import com.carlink.device.KnownDeviceSnapshot
 import com.carlink.device.KnownDeviceStore
 import com.carlink.device.mergeDeviceList
 import com.carlink.logging.LogExport
+import com.carlink.logging.LogTrail
 import com.carlink.logging.Logger
 import com.carlink.logging.ProbeLog
 import com.carlink.logging.logDebug
@@ -1274,12 +1276,21 @@ class CarlinkManager(
             val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
             logInfo("[LOGS] pulling $BOX_LOG_PATH", tag = Logger.Tags.ADAPTR)
             val box = c.pullFile(BOX_LOG_PATH).getOrElse { return@withContext Result.failure(it) }
-            val saved = ArrayList<String>(2)
+            val saved = ArrayList<String>(3)
             saved += LogExport.save(context, "carlink3-box-$stamp.log", box).getOrElse { return@withContext Result.failure(it) }
+            // The app's own INFO+ trail, independent of logcat and its filters (Logger.recordTrail).
+            // Stamped with the flag states so a thin logcat file can be told from a filter problem.
+            logWarn(
+                "[LOGS] saving trail: verboseInRelease=${Logger.isReleaseVerbose()} debugLogging=${Logger.isDebugLoggingEnabled()} " +
+                    "clusterNav=${ClusterNavigation.isEnabled(context)} state=$state",
+                tag = Logger.Tags.ADAPTR,
+            )
+            val trail = LogTrail.snapshot().toByteArray(Charsets.UTF_8)
+            saved += LogExport.save(context, "carlink3-trail-$stamp.log", trail).getOrElse { return@withContext Result.failure(it) }
             LogExport.appLogcat()?.let { app ->
                 saved += LogExport.save(context, "carlink3-app-$stamp.log", app).getOrElse { return@withContext Result.failure(it) }
             }
-            logInfo("[LOGS] saved ${saved.joinToString(", ")} (box log ${box.size} bytes)", tag = Logger.Tags.ADAPTR)
+            logInfo("[LOGS] saved ${saved.joinToString(", ")} (box log ${box.size} bytes, trail ${trail.size} bytes)", tag = Logger.Tags.ADAPTR)
             Result.success(saved.joinToString(" and "))
         }
 
