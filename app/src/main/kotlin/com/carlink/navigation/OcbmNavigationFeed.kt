@@ -1,5 +1,7 @@
 package com.carlink.navigation
 
+import android.os.Handler
+import android.os.Looper
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logNavi
@@ -32,6 +34,27 @@ import org.json.JSONObject
  */
 object OcbmNavigationFeed {
     private val lock = Any()
+
+    /**
+     * End-of-guidance grace. The 2026-10-19 wired drive showed `routeGuidanceState=0` records
+     * arriving every few seconds in the middle of a live route, each followed within a second by a
+     * fresh full maneuver list. Clearing on every 0 made the cluster trip flap (clear, refocus,
+     * recompose 24 maneuvers, repeat) and the HUD never settled. Now a 0 only arms a timer; the
+     * trip is cleared if nothing positive follows within [END_GRACE_MS]. A real end still clears.
+     */
+    private const val END_GRACE_MS = 6_000L
+    private val main = Handler(Looper.getMainLooper())
+    private var endPending = false
+    private var zeroRecords = 0L
+    private val endRunnable =
+        Runnable {
+            synchronized(lock) {
+                if (!endPending) return@Runnable
+                endPending = false
+                logInfo("[NAVI] OCBM route guidance ended — clearing (no update for ${END_GRACE_MS / 1000}s)", tag = Logger.Tags.NAVI)
+                clearLocked()
+            }
+        }
     private val maneuvers = sortedMapOf<Int, Iap2ManeuverData>()
     private var currentIndex: Int? = null
     private var guidance = NavigationState()
@@ -43,9 +66,19 @@ object OcbmNavigationFeed {
         synchronized(lock) {
             val active = obj.optInt("routeGuidanceState", -1)
             if (active == 0) {
-                logInfo("[NAVI] OCBM route guidance ended — clearing", tag = Logger.Tags.NAVI)
-                clearLocked()
+                // Logged once per run of zeros, not per record: the drive showed them every ~4 s.
+                if (!endPending) logInfo("[NAVI] OCBM route guidance state 0 — clearing in ${END_GRACE_MS / 1000}s unless guidance resumes", tag = Logger.Tags.NAVI)
+                zeroRecords++
+                endPending = true
+                main.removeCallbacks(endRunnable)
+                main.postDelayed(endRunnable, END_GRACE_MS)
                 return
+            }
+            if (endPending) {
+                logInfo("[NAVI] OCBM route guidance resumed (state=$active) after $zeroRecords zero record(s) — keeping the trip", tag = Logger.Tags.NAVI)
+                endPending = false
+                zeroRecords = 0
+                main.removeCallbacks(endRunnable)
             }
             if (obj.has("currentManeuverIndex")) currentIndex = obj.optInt("currentManeuverIndex")
             guidance =
@@ -112,6 +145,9 @@ object OcbmNavigationFeed {
     fun describe(): String = synchronized(lock) { "maneuvers=${maneuvers.size} current=$currentIndex published=$published" }
 
     private fun clearLocked() {
+        endPending = false
+        zeroRecords = 0
+        main.removeCallbacks(endRunnable)
         maneuvers.clear()
         currentIndex = null
         guidance = NavigationState()

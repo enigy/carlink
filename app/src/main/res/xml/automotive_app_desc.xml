@@ -1,14 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     AAOS enumerates apps by the <uses name="..."/> entries here.
-    - media : required so AAOS Media Center lists Carlink as a selectable source
-              (the MediaBrowserService intent-filter is necessary but not sufficient)
-
-    (Removed in cp-stripped: `template` and `navigation` — they belonged to the
-    Car App Library cluster sessions / CarlinkClusterService, which this variant
-    deleted. Stale capability declarations feed GM's app-classification heuristics
-    — e.g. MediaSource.isMediaTemplate() — so they must not outlive the feature.)
+    - media      : required so AAOS Media Center lists Carlink as a selectable source
+                   (the MediaBrowserService intent-filter is necessary but not sufficient)
+    - template   : Car App Library template surfaces used by the cluster sessions. The Templates
+                   Host only considers apps that declare it: without this line it never bound
+                   CarlinkClusterService (two drives, 2026-10-19, with the service enabled and
+                   CarAppActivity launched each time), so the cluster stayed empty.
+    - navigation : CarlinkClusterService declares androidx.car.app.category.NAVIGATION
+                   (cluster-only via FEATURE_CLUSTER; does not conflict with Maps on the main display)
+    Upstream (CarlinkAndroid) had removed template/navigation along with its cluster code.
 -->
 <automotiveApp>
     <uses name="media"/>
+    <uses name="template"/>
+    <uses name="navigation"/>
 </automotiveApp>

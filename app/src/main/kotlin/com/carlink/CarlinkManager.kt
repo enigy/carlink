@@ -165,6 +165,9 @@ class CarlinkManager(
         /** The box daemon's log (ocbmd stdout/stderr, tools/run_ocbmd.sh); tmpfs, so RAM-only. */
         private const val BOX_LOG_PATH = "/tmp/box.log"
 
+        /** The other daemons' logs Save Logs also pulls (ocbmd's LOG_SRC table), with the file label each gets. */
+        private val BOX_DAEMON_LOGS = listOf("/tmp/iap2d.log" to "iap2d", "/tmp/carplayd.log" to "carplayd", "/tmp/supervisor.log" to "supervisor")
+
         // Wake lock: safety timeout per acquire, and how often the refresh job renews it.
         // Refresh at half the timeout so a missed tick still leaves a full margin.
         private const val WAKE_LOCK_TIMEOUT_MS = 2 * 60 * 60 * 1000L // 2h
@@ -1276,8 +1279,14 @@ class CarlinkManager(
             val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
             logInfo("[LOGS] pulling $BOX_LOG_PATH", tag = Logger.Tags.ADAPTR)
             val box = c.pullFile(BOX_LOG_PATH).getOrElse { return@withContext Result.failure(it) }
-            val saved = ArrayList<String>(3)
+            val saved = ArrayList<String>(6)
             saved += LogExport.save(context, "carlink3-box-$stamp.log", box).getOrElse { return@withContext Result.failure(it) }
+            // The per-daemon logs, best effort: a daemon that never ran has no file, which is fine.
+            for ((path, label) in BOX_DAEMON_LOGS) {
+                val pulled = c.pullFile(path, timeoutMs = 10_000)
+                pulled.onSuccess { bytes -> LogExport.save(context, "carlink3-$label-$stamp.log", bytes).onSuccess { saved += it } }
+                pulled.onFailure { logInfo("[LOGS] $path: ${it.message}", tag = Logger.Tags.ADAPTR) }
+            }
             // The app's own INFO+ trail, independent of logcat and its filters (Logger.recordTrail).
             // Stamped with the flag states so a thin logcat file can be told from a filter problem.
             logWarn(

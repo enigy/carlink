@@ -1,5 +1,6 @@
 package com.carlink.navigation
 
+import android.os.Looper
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -8,6 +9,8 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import java.time.Duration
 
 /**
  * The OCBM box's route-guidance JSON (`iap2-core/src/metadata.rs`) → the [NavigationState] the
@@ -102,14 +105,27 @@ class OcbmNavigationFeedTest {
     }
 
     @Test
-    fun endedRouteClearsEverything() {
+    fun endedRouteClearsEverythingAfterTheGrace() {
         OcbmNavigationFeed.onManeuver(maneuver(0, 3, "Head north"))
         OcbmNavigationFeed.onRouteGuidance(guidance(current = 0))
         assertEquals(3, NavigationStateManager.state.value.maneuverType)
         OcbmNavigationFeed.onRouteGuidance(guidance(current = 0, state = 0))
+        // A zero alone does not clear: the box was seen sending one every ~4 s mid-route.
+        assertEquals(3, NavigationStateManager.state.value.maneuverType)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(7))
         val s = NavigationStateManager.state.value
         assertEquals(0, s.status)
         assertEquals(0, s.maneuverType)
         assertNull(s.roadName)
+    }
+
+    @Test
+    fun aZeroFollowedByGuidanceKeepsTheTrip() {
+        OcbmNavigationFeed.onManeuver(maneuver(0, 3, "Head north"))
+        OcbmNavigationFeed.onRouteGuidance(guidance(current = 0))
+        OcbmNavigationFeed.onRouteGuidance(guidance(current = 0, state = 0))
+        OcbmNavigationFeed.onRouteGuidance(guidance(current = 0))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(7))
+        assertEquals(3, NavigationStateManager.state.value.maneuverType)
     }
 }
