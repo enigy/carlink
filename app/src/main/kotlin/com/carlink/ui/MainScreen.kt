@@ -67,6 +67,7 @@ import com.carlink.protocol.MultiTouchAction
 import com.carlink.protocol.PhoneType
 import com.carlink.ui.adaptive.asWindowInsets
 import com.carlink.ui.components.BoxStatusLine
+import com.carlink.ui.components.DialogSystemBars
 import com.carlink.ui.components.ForestFogEffect
 import com.carlink.ui.components.LoadingStatusView
 import com.carlink.ui.components.VideoSurface
@@ -208,7 +209,10 @@ private fun PairingCodeDialog(
     val colorScheme = MaterialTheme.colorScheme
     AlertDialog(
         onDismissRequest = {},
-        title = { Text("Pair with iPhone?") },
+        title = {
+            DialogSystemBars()
+            Text("Pair with iPhone?")
+        },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Text("Confirm that this code matches the one shown on the iPhone.")

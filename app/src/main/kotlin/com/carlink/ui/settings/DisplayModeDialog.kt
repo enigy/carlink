@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.carlink.ui.components.DialogSystemBars
 import com.carlink.ui.components.OptionButton
 import com.carlink.ui.components.OptionCard
 
@@ -111,6 +112,8 @@ internal fun DisplayModeDialog(
     val dialogMaxWidth = (containerWidthDp * 0.6f).coerceIn(320.dp, 600.dp)
 
     Dialog(onDismissRequest = cancel) {
+        // While this dialog has focus, its window decides the bars: preview there too.
+        DialogSystemBars(mode = selectedMode)
         Surface(
             shape = MaterialTheme.shapes.extraLarge,
             color = colorScheme.surfaceContainerHigh,

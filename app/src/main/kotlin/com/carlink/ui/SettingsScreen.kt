@@ -50,6 +50,7 @@ import com.carlink.CarlinkManager
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.ui.adaptive.asWindowInsets
+import com.carlink.ui.components.DialogSystemBars
 import com.carlink.ui.components.FrostedGlassBackground
 import com.carlink.ui.components.LocalSettingsArrival
 import com.carlink.ui.components.settingsFlyIn
@@ -217,7 +218,10 @@ private fun CloseAppButton(onCloseApp: suspend () -> Unit) {
     if (showCloseConfirm) {
         AlertDialog(
             onDismissRequest = { showCloseConfirm = false },
-            title = { Text("Close App?") },
+            title = {
+                DialogSystemBars()
+                Text("Close App?")
+            },
             text = { Text("This will stop all connections and close the app.") },
             confirmButton = {
                 TextButton(

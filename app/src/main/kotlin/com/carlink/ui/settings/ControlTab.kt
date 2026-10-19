@@ -66,6 +66,7 @@ import com.carlink.ui.components.ButtonSeverity
 import com.carlink.ui.components.ControlAction
 import com.carlink.ui.components.ControlButton
 import com.carlink.ui.components.ControlCard
+import com.carlink.ui.components.DialogSystemBars
 import com.carlink.ui.components.OptionButton
 import com.carlink.ui.theme.AutomotiveDimens
 import kotlinx.coroutines.CoroutineScope
@@ -284,7 +285,10 @@ private fun ConfirmDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(imageVector = spec.icon, contentDescription = null, tint = colorScheme.tertiary) },
-        title = { Text(spec.title) },
+        title = {
+            DialogSystemBars() // keep the head unit's bars hidden while this window has focus
+            Text(spec.title)
+        },
         text = { Text(spec.text) },
         confirmButton = { TextButton(onClick = onConfirm) { Text(spec.confirmLabel, color = colorScheme.error) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
@@ -451,7 +455,10 @@ private fun DisplayModeDeferredNotice(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(imageVector = Icons.Default.DisplaySettings, contentDescription = null) },
-        title = { Text("Display mode saved") },
+        title = {
+            DialogSystemBars()
+            Text("Display mode saved")
+        },
         text = {
             Text(
                 "A phone session is active, so the new display mode applies at the next connection. " +
