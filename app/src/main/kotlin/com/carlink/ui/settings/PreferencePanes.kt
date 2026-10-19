@@ -76,7 +76,7 @@ internal fun CallsPane(modifier: Modifier = Modifier) {
 }
 
 /**
- * Cluster: CarPlay turn-by-turn on the driver display through the Templates Host. Off by default;
+ * Cluster: CarPlay turn-by-turn on the driver display through the Templates Host. On by default;
  * turning it on enables the CarAppService component and starts the binding at once ([onResetCluster]),
  * and Reconnect restarts that binding when the cluster stops updating.
  */

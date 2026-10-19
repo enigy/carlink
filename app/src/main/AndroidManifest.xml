@@ -198,11 +198,11 @@
                 android:value="true" />
         </activity>
 
-        <!-- Cluster navigation CarAppService (headless; no UI on the main display). Disabled until
-             the user turns Cluster Navigation on (cluster/ClusterNavigation.applyComponentState). -->
+        <!-- Cluster navigation CarAppService (headless; no UI on the main display). Enabled by default;
+             the Directions on cluster switch turns it off (cluster/ClusterNavigation.applyComponentState). -->
         <service
             android:name=".cluster.CarlinkClusterService"
-            android:enabled="false"
+            android:enabled="true"
             android:exported="true"
             tools:ignore="ExportedService">
             <intent-filter>
@@ -253,6 +253,14 @@
         <meta-data
             android:name="androidx.car.app.TintableAttributionIcon"
             android:resource="@drawable/ic_carlink_attribution" />
+
+        <!-- Required at APPLICATION level: the Car App library reads minCarApiLevel from the app's
+             meta-data only (AppInfo.retrieveMinCarAppApiLevel). Declared only on the service (as up
+             to v10), the host's getAppInfo call throws and the cluster never gets a session. The
+             service keeps its own copy, as in Carlink2. -->
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="6" />
 
         <!-- APPLICATION-LEVEL DISTRACTION OPTIMIZATION DECLARATION -->
         <meta-data

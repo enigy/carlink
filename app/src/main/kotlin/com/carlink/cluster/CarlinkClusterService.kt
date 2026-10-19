@@ -22,10 +22,24 @@ import com.carlink.logging.logInfo
  * MainActivity remains the sole LAUNCHER and owns all USB/video/audio pipelines.
  * This service does NOT initialize CarlinkManager, video, audio, or USB.
  *
- * Ships android:enabled="false" in the manifest; the component is toggled on at runtime
- * by AdapterConfigPreference.applyClusterComponentState() when cluster support is enabled.
+ * Ships android:enabled="true" in the manifest (cluster navigation is on by default);
+ * [ClusterNavigation.applyComponentState] turns the component off when the user does.
+ *
+ * Lifecycle is logged so a drive's trail shows how far the host got: "Service created" means the
+ * Templates Host bound us; "Creating session" means it accepted our AppInfo and handshake. Created
+ * without a session points at the handshake (for example a missing app-level minCarApiLevel).
  */
 class CarlinkClusterService : CarAppService() {
+    override fun onCreate() {
+        super.onCreate()
+        logInfo("[CLUSTER_SVC] Service created — the Templates Host is binding", tag = Logger.Tags.CLUSTER)
+    }
+
+    override fun onDestroy() {
+        logInfo("[CLUSTER_SVC] Service destroyed", tag = Logger.Tags.CLUSTER)
+        super.onDestroy()
+    }
+
     override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
 
     // Deprecated pre-SessionInfo overload; kept for hosts that bind without SessionInfo.
