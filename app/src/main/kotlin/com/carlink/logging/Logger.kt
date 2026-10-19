@@ -70,6 +70,15 @@ object Logger {
     @Volatile
     private var debugLoggingEnabled = true
 
+    /** Release builds: also emit INFO (Settings → Verbose Logs). No effect on DEBUG builds, which emit everything. */
+    @Volatile private var releaseVerbose = false
+
+    fun setReleaseVerbose(enabled: Boolean) {
+        releaseVerbose = enabled
+    }
+
+    fun isReleaseVerbose(): Boolean = releaseVerbose
+
     private val enabledTags = ConcurrentHashMap<String, Boolean>()
 
     /** Enable/disable debug logging. When disabled (release builds), the verbose pipeline tags
@@ -133,9 +142,13 @@ object Logger {
         message: String,
         throwable: Throwable? = null,
     ) {
-        // DEBUG builds: emit everything. RELEASE builds: WARN/ERROR only, plus PROTO_UNKNOWN.
+        // DEBUG builds: emit everything. RELEASE builds: WARN/ERROR only, plus PROTO_UNKNOWN — unless
+        // Settings → Verbose Logs lifted the filter (VerboseLogging), which lets INFO through too.
         val emit =
-            BuildConfig.DEBUG || level.priority >= Level.WARN.priority || tag == Tags.PROTO_UNKNOWN
+            BuildConfig.DEBUG ||
+                level.priority >= Level.WARN.priority ||
+                tag == Tags.PROTO_UNKNOWN ||
+                (releaseVerbose && level.priority >= Level.INFO.priority)
         if (!emit) return
 
         val formattedMessage = if (tag != null) "[$tag] $message" else message

@@ -48,6 +48,7 @@ import androidx.lifecycle.lifecycleScope
 import com.carlink.cluster.ClusterBindingState
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.logging.Logger
+import com.carlink.logging.VerboseLogging
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.media.MediaSessionManager
@@ -406,9 +407,15 @@ class MainActivity : ComponentActivity() {
         // in this build — `adb logcat` is the only sink.
         val isDebugBuild = BuildConfig.DEBUG
         Logger.setDebugLoggingEnabled(isDebugBuild)
+        // Settings → App Control → Verbose Logs: lets INFO through in a release build (Save Logs then has the trail).
+        VerboseLogging.apply(this)
 
         logInfo("Carlink Native starting - version $appVersion", tag = "MAIN")
-        logInfo("[LOGGING] Debug logging: ${if (isDebugBuild) "ENABLED" else "DISABLED (release build)"}", tag = "MAIN")
+        logInfo(
+            "[LOGGING] Debug logging: ${if (isDebugBuild) "ENABLED" else "DISABLED (release build)"}; " +
+                "verbose-in-release: ${Logger.isReleaseVerbose()}",
+            tag = "MAIN",
+        )
     }
 
     private fun initializeCarlinkManager() {

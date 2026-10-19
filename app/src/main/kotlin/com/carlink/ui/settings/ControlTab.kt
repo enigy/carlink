@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.audio.AudioRouteInfo
 import com.carlink.cluster.ClusterNavigation
+import com.carlink.logging.VerboseLogging
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.ui.DisplayModeOutcome
@@ -86,6 +87,10 @@ private val RESET_CONNECTION = ControlAction("Reset Connection", Icons.Default.U
 private val CLUSTER_NAV_ON = ControlAction("Cluster Navigation: On", Icons.Default.Dashboard, ButtonSeverity.WARNING)
 private val CLUSTER_NAV_OFF = ControlAction("Cluster Navigation: Off", Icons.Default.Dashboard, ButtonSeverity.WARNING)
 private val RESET_CLUSTER = ControlAction("Reset Cluster", Icons.Default.Refresh, ButtonSeverity.WARNING)
+
+// Lifts the release build's WARN-only logcat filter so Save Logs captures the INFO trail.
+private val VERBOSE_LOGS_ON = ControlAction("Verbose Logs: On", Icons.Default.Save, ButtonSeverity.WARNING)
+private val VERBOSE_LOGS_OFF = ControlAction("Verbose Logs: Off", Icons.Default.Save, ButtonSeverity.WARNING)
 
 /** Why Disconnect Phone is disabled on every box today — see [CarlinkManager.phoneDisconnectSupported]. */
 private const val DISCONNECT_PHONE_UNSUPPORTED = "Requires adapter firmware support"
@@ -335,6 +340,7 @@ private fun AppControlCard(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var clusterNavOn by remember { mutableStateOf(ClusterNavigation.isEnabled(context)) }
+    var verboseLogs by remember { mutableStateOf(VerboseLogging.isEnabled(context)) }
     var showDeferredNotice by remember { mutableStateOf(false) }
     var showDisplayModeDialog by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
@@ -362,6 +368,12 @@ private fun AppControlCard(
         ControlButton(RESET_CLUSTER, enabled = clusterNavOn, onClick = {
             logWarn("[UI_ACTION] Reset Cluster button clicked", tag = "UI")
             onResetCluster()
+        })
+        Spacer(modifier = Modifier.height(12.dp))
+        ControlButton(if (verboseLogs) VERBOSE_LOGS_ON else VERBOSE_LOGS_OFF, enabled = true, onClick = {
+            verboseLogs = !verboseLogs
+            logWarn("[UI_ACTION] Verbose Logs -> ${if (verboseLogs) "on" else "off"}", tag = "UI")
+            VerboseLogging.setEnabled(context, verboseLogs)
         })
         Spacer(modifier = Modifier.height(12.dp))
         ControlButton(
