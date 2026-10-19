@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.graphics.BlurEffect
@@ -16,6 +17,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -28,6 +30,9 @@ import kotlin.random.Random
 // Blur over the background scene. Large enough that the mountains read as color and light
 // only, small enough that the sunset and the logo still show through as shapes.
 private val GLASS_BLUR_RADIUS = 28.dp
+
+/** The glass is blurred at 1/BLUR_DOWNSCALE of the screen size, then scaled back up. */
+private const val BLUR_DOWNSCALE = 4f
 
 // Dark tint over the blurred scene so the settings text keeps its contrast. Below API 31
 // Modifier.blur is a no-op (no RenderEffect), so the sharp scene gets a heavier tint instead.
@@ -65,13 +70,18 @@ fun FrostedGlassBackground(
     val grain = remember { ShaderBrush(ImageShader(grainTile(), TileMode.Repeated, TileMode.Repeated)) }
 
     Box(modifier = modifier.fillMaxSize()) {
+        // Blurred at 1/BLUR_DOWNSCALE size, then scaled up: the blur pass touches 1/16 of the
+        // pixels, and a blurred image has no detail for the upscale to lose.
         Image(
             painter = painterResource(id = backgroundLogo.drawableRes),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier =
-                Modifier.fillMaxSize().graphicsLayer {
-                    val radius = GLASS_BLUR_RADIUS.toPx()
+                Modifier.align(Alignment.TopStart).fillMaxSize(1f / BLUR_DOWNSCALE).graphicsLayer {
+                    transformOrigin = TransformOrigin(0f, 0f)
+                    scaleX = BLUR_DOWNSCALE
+                    scaleY = BLUR_DOWNSCALE
+                    val radius = GLASS_BLUR_RADIUS.toPx() / BLUR_DOWNSCALE
                     renderEffect = BlurEffect(radius, radius, TileMode.Clamp)
                     clip = true
                 },

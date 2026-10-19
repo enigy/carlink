@@ -64,15 +64,17 @@ private const val POLL_MS = 1000L
 internal fun rememberSettingsLiveState(
     carlinkManager: CarlinkManager,
     connectionState: CarlinkManager.State,
+    active: Boolean = true,
 ): SettingsLiveState {
     val context = LocalContext.current
     val live =
         remember(carlinkManager) {
             SettingsLiveState(ClusterNavigation.isEnabled(context), VerboseLogging.isEnabled(context))
         }
-    LaunchedEffect(carlinkManager) { carlinkManager.refreshDeviceList() }
-    LaunchedEffect(carlinkManager, connectionState) {
-        while (true) {
+    // The page stays composed while closed; it only asks the box and polls while open.
+    LaunchedEffect(carlinkManager, active) { if (active) carlinkManager.refreshDeviceList() }
+    LaunchedEffect(carlinkManager, connectionState, active) {
+        while (active) {
             live.phone = PhoneSnapshot(carlinkManager.currentPhoneType, carlinkManager.currentWifi ?: -1, carlinkManager.connectedBtMac)
             live.devices = carlinkManager.pairedDevices
             live.box =

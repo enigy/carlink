@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.components.OnSettingsHidden
 import com.carlink.ui.settings.ConnectedPhone
 import com.carlink.ui.settings.SettingsStyle
 import kotlinx.coroutines.launch
@@ -97,6 +98,7 @@ private fun CloseAppButton(onCloseApp: suspend () -> Unit) {
     val activity = LocalActivity.current
     val scope = rememberCoroutineScope()
     var showConfirm by remember { mutableStateOf(false) }
+    OnSettingsHidden { showConfirm = false }
     var closing by remember { mutableStateOf(false) }
 
     OutlinedButton(

@@ -30,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
@@ -44,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,8 +58,11 @@ import com.carlink.ui.adaptive.asWindowInsets
 import com.carlink.ui.adaptive.rememberWindowLayoutInfo
 import com.carlink.ui.components.FrostedGlassBackground
 import com.carlink.ui.components.LocalSettingsArrival
+import com.carlink.ui.components.LocalSettingsVisible
+import com.carlink.ui.components.OnSettingsHidden
 import com.carlink.ui.components.settingsSlideIn
 import com.carlink.ui.settings.AdapterPane
+import com.carlink.ui.settings.BackgroundLogoConfig
 import com.carlink.ui.settings.BackgroundLogoStore
 import com.carlink.ui.settings.CallAudioStore
 import com.carlink.ui.settings.CallsPane
@@ -91,11 +96,12 @@ fun SettingsScreen(
     connectionState: CarlinkManager.State,
     actions: SettingsActions,
     modifier: Modifier = Modifier,
+    visible: Boolean = true,
 ) {
-    LaunchedEffect(Unit) {
-        logInfo("[UI_STATE] SettingsScreen opened - user is in app settings (NOT viewing CarPlay projection)", tag = "UI")
+    LaunchedEffect(visible) {
+        if (visible) logInfo("[UI_STATE] SettingsScreen opened - user is in app settings (NOT viewing CarPlay projection)", tag = "UI")
     }
-    val live = rememberSettingsLiveState(carlinkManager, connectionState)
+    val live = rememberSettingsLiveState(carlinkManager, connectionState, active = visible)
 
     // The detected safe area (cutout / waterfall / corner arcs) pads in addition to the live bars.
     val safeArea = carlinkManager.displayProfile?.safeAreaInsets ?: EdgeInsets.NONE
@@ -104,8 +110,28 @@ fun SettingsScreen(
     // from the left. The Surface stays transparent but sets LocalContentColor for un-coloured Text.
     val backgroundLogo by BackgroundLogoStore.get(LocalContext.current).flow.collectAsState()
     val arrival = LocalSettingsArrival.current
+    // Parked off-screen while closed: keep it out of accessibility too.
+    val hiddenSemantics = if (visible) Modifier else Modifier.clearAndSetSemantics {}
+    CompositionLocalProvider(LocalSettingsVisible provides visible) {
+        SettingsPage(
+            panes = PaneContext(carlinkManager, live, connectionState != CarlinkManager.State.DISCONNECTED, actions),
+            backgroundLogo = backgroundLogo,
+            safeArea = safeArea,
+            modifier = modifier.fillMaxSize().settingsSlideIn(arrival).then(hiddenSemantics),
+        )
+    }
+}
+
+/** The page itself: frosted glass under the top bar and the list + pane body. */
+@Composable
+private fun SettingsPage(
+    panes: PaneContext,
+    backgroundLogo: BackgroundLogoConfig,
+    safeArea: EdgeInsets,
+    modifier: Modifier = Modifier,
+) {
     Surface(
-        modifier = modifier.fillMaxSize().settingsSlideIn(arrival),
+        modifier = modifier,
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
@@ -117,25 +143,16 @@ fun SettingsScreen(
                     .windowInsetsPadding(WindowInsets.safeDrawing.union(safeArea.asWindowInsets())),
         ) {
             SettingsTopBar(
-                phone = live.connectedPhone,
-                onBack = actions.onNavigateBack,
+                phone = panes.live.connectedPhone,
+                onBack = panes.actions.onNavigateBack,
                 onCloseApp = {
                     logWarn("[UI_ACTION] Close App confirmed", tag = "UI")
                     // Off the main thread (USB release + CT_STOP block), under the lifecycle mutex;
                     // the button finishes the Activity only once this returns.
-                    carlinkManager.disconnect()
+                    panes.carlinkManager.disconnect()
                 },
             )
-            SettingsBody(
-                panes =
-                    PaneContext(
-                        carlinkManager = carlinkManager,
-                        live = live,
-                        connected = connectionState != CarlinkManager.State.DISCONNECTED,
-                        actions = actions,
-                    ),
-                modifier = Modifier.weight(1f),
-            )
+            SettingsBody(panes = panes, modifier = Modifier.weight(1f))
         }
     }
 }
@@ -163,6 +180,11 @@ private fun SettingsBody(
     // The persisted mode, not the host's copy: a mode saved for the next connection is the choice.
     var savedMode by remember { mutableStateOf(DisplayModeStore(context).get()) }
     var showDeferredNotice by remember { mutableStateOf(false) }
+    val visible = LocalSettingsVisible.current
+    OnSettingsHidden {
+        showDeferredNotice = false
+        paneOpen = false
+    }
     val summaries = categorySummaries(panes, savedMode)
 
     LaunchedEffect(selected) { logInfo("[UI_STATE] Settings category: $selected", tag = "UI") }
@@ -185,7 +207,7 @@ private fun SettingsBody(
         } else if (!paneOpen) {
             CategoryList(selected, summaries, onSelect = pick, modifier = Modifier.fillMaxWidth())
         } else {
-            BackHandler { paneOpen = false }
+            BackHandler(enabled = visible) { paneOpen = false }
             DetailPane(selected, modifier = Modifier.fillMaxSize()) {
                 BackToCategories(onClick = { paneOpen = false })
                 CategoryPane(selected, panes, savedMode, applyMode)

@@ -44,6 +44,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.components.OnSettingsHidden
 
 /** Display modes in the order the pane lists them (two by two on a wide pane). */
 private val MODE_ORDER =
@@ -70,6 +71,7 @@ internal fun DisplayPane(
 ) {
     val window = LocalActivity.current?.window
     var pending by remember(savedMode) { mutableStateOf(savedMode) }
+    OnSettingsHidden { pending = savedMode } // the LaunchedEffect below then restores the bars
     val preview = remember(window) { BarPreview(window) }
     val latestSaved by rememberUpdatedState(savedMode)
 

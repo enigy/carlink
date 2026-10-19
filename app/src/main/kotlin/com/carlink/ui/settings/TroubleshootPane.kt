@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.logging.logWarn
 import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.components.OnSettingsHidden
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -53,6 +54,7 @@ internal fun TroubleshootPane(
     modifier: Modifier = Modifier,
 ) {
     var confirm by remember { mutableStateOf<Fix?>(null) }
+    OnSettingsHidden { confirm = null }
     var resetting by remember(carlinkManager) { mutableStateOf(carlinkManager.resetInFlight) }
 
     Column(modifier = modifier.widthIn(max = 1300.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {

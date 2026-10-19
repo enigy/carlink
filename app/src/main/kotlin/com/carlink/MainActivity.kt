@@ -36,7 +36,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -952,9 +951,14 @@ data class ClusterHooks(
  * The settings page over the projection: it slides in from the left edge and back out to it, its
  * frosted glass moving with it. The motion is one progress value the page reads in its layer phase.
  *
- * The page is composed at progress 0 (fully off the left edge) and drawn for [SETTLE_FRAMES] frames
- * before it starts to move. Building the page is the expensive frame; a slide that starts on it
- * drops its first frames and visibly jumps. On close the page stays composed until it is gone.
+ * The page is composed once and then kept, parked off the left edge while closed. Building it
+ * (decoding and blurring the glass, laying out every row) is the expensive part, and a slide that
+ * starts on that work drops its first frames; now opening only moves an image that is already
+ * drawn. While closed the page stops polling, ignores Back, hides from accessibility and drops any
+ * open dialog ([com.carlink.ui.components.LocalSettingsVisible]).
+ *
+ * Each slide logs its frame timing to the trail (`[SETTINGS_ANIM]`), so Save Logs shows whether a
+ * slide on the head unit dropped frames and where.
  */
 @Composable
 private fun SettingsOverlay(
@@ -964,27 +968,25 @@ private fun SettingsOverlay(
     actions: SettingsActions,
 ) {
     val progress = remember { Animatable(0f) }
-    var composed by remember { mutableStateOf(visible) }
     LaunchedEffect(visible) {
-        if (visible) {
-            composed = true
-            repeat(SETTLE_FRAMES) { withFrameNanos { } }
-            progress.animateTo(1f, tween(SettingsSlideIn.ENTER_MS, easing = SettingsSlideIn.EASING))
-        } else {
-            progress.animateTo(0f, tween(SettingsSlideIn.EXIT_MS, easing = SettingsSlideIn.EASING))
-            composed = false
-        }
+        val target = if (visible) 1f else 0f
+        if (progress.value == target) return@LaunchedEffect
+        val spec =
+            if (visible) {
+                tween<Float>(SettingsSlideIn.ENTER_MS, easing = SettingsSlideIn.ENTER_EASING)
+            } else {
+                tween(SettingsSlideIn.EXIT_MS, easing = SettingsSlideIn.EXIT_EASING)
+            }
+        val frames = SettingsSlideIn.measureFrames { progress.animateTo(target, spec) }
+        logInfo("[SETTINGS_ANIM] ${if (visible) "open" else "close"}: $frames", tag = "UI")
     }
-    if (!composed) return
     val arrival = remember(progress) { { progress.value } }
     CompositionLocalProvider(LocalSettingsArrival provides arrival) {
         SettingsScreen(
             carlinkManager = carlinkManager,
             connectionState = connectionState,
             actions = actions,
+            visible = visible,
         )
     }
 }
-
-/** Frames the settings page is drawn off-screen before its slide starts (see [SettingsOverlay]). */
-private const val SETTLE_FRAMES = 2

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.logging.logWarn
 import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.components.OnSettingsHidden
 
 /**
  * Phones: the connected phone first, then the known list (the USB port and the adapter's bonded
@@ -57,6 +58,7 @@ internal fun PhonesPane(
 ) {
     val view = LocalView.current
     var deviceToRemove by remember { mutableStateOf<CarlinkManager.DeviceInfo?>(null) }
+    OnSettingsHidden { deviceToRemove = null }
     val connected = live.connectedPhone
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(24.dp)) {
