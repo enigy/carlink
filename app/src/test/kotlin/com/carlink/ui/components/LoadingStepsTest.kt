@@ -20,14 +20,28 @@ class LoadingStepsTest {
     }
 
     @Test
+    fun replayedBluetoothAuthPhaseAtBootStaysOnTheFirstStep() {
+        // The box re-emits its last BT phase on SUBSCRIBE; at boot that is "Authenticated" with no
+        // phone anywhere near (truck 2026-10-19, box health still at rootfs-ok).
+        listOf("Authenticating...", "Authenticated").forEach { assertEquals(it, LoadingStep.ADAPTER, step(it)) }
+    }
+
+    @Test
     fun phonePhaseMessagesAreTheSecondStep() {
-        listOf("Waiting for phone...", "Phone found — linking...", "Phone identified", "Identifying...", "Pairing...", "Pairing code: 123456")
-            .forEach { assertEquals(it, LoadingStep.PHONE, step(it)) }
+        listOf(
+            "Waiting for phone...",
+            "Phone found — linking...",
+            "Phone identified",
+            "Identifying...",
+            "Handing off to Wi-Fi...",
+            "Pairing...",
+            "Pairing code: 123456",
+        ).forEach { assertEquals(it, LoadingStep.PHONE, step(it)) }
     }
 
     @Test
     fun sessionStartMessagesAndAConnectedPhoneAreTheThirdStep() {
-        listOf("Phone connected", "Starting projection...", "Authenticating...", "Handing off to Wi-Fi...")
+        listOf("Phone connected", "Starting projection...", "Re-establishing session...")
             .forEach { assertEquals(it, LoadingStep.START, step(it)) }
         assertEquals(LoadingStep.START, step("Waiting for phone...", phoneConnected = true))
     }

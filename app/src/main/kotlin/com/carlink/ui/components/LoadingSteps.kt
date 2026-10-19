@@ -32,12 +32,18 @@ internal object LoadingSteps {
             "usb permission denied",
         )
 
-    // The phone answered: CarPlay is starting. Checked before PHONE_WORDS.
-    private val START_WORDS =
-        listOf("phone connected", "starting projection", "authenticat", "handing off", "re-establishing")
+    // The session itself is starting. Checked before PHONE_WORDS. The Bluetooth handshake texts
+    // ("Authenticating…", "Handing off to Wi-Fi…") are NOT here: the box replays its last BT phase on
+    // every SUBSCRIBE, so at boot — box health still at rootfs-ok — "Authenticated" arrives before any
+    // phone is near, and showing "Starting CarPlay" for it was wrong (truck 2026-10-19).
+    private val START_WORDS = listOf("phone connected", "starting projection", "re-establishing")
 
+    // Once the phone is actually in play: BT link up, identified, handed off, or waited for.
     private val PHONE_WORDS =
-        listOf("waiting for phone", "phone found", "phone identified", "identifying", "pairing", "phone not", "disconnecting phone")
+        listOf("waiting for phone", "phone found", "phone identified", "identifying", "handing off", "pairing", "phone not", "disconnecting phone")
+
+    // "Authenticating…" / "Authenticated" stay on the first step: at boot they are the replayed
+    // phase above, and during a real handshake the link-up text has already moved the dots on.
 
     fun classify(
         statusText: String,
