@@ -62,7 +62,7 @@ import com.carlink.ui.MainScreen
 import com.carlink.ui.SettingsActions
 import com.carlink.ui.SettingsScreen
 import com.carlink.ui.components.LocalSettingsArrival
-import com.carlink.ui.components.SettingsFlyIn
+import com.carlink.ui.components.SettingsSlideIn
 import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.theme.CarlinkTheme
@@ -952,8 +952,8 @@ data class ClusterHooks(
 )
 
 /**
- * The settings page over the projection (Carlink2 [229]): it flies in from behind the driver while
- * its glass frosts over the screen underneath. AnimatedVisibility only keeps the composable alive
+ * The settings page over the projection: it slides in from the left edge and back out to it, its
+ * frosted glass moving with it. AnimatedVisibility only keeps the composable alive
  * through the exit; the motion itself is one progress value the page reads in its layer phase.
  */
 @Composable
@@ -972,9 +972,9 @@ private fun SettingsOverlay(
             transition.animateFloat(
                 transitionSpec = {
                     if (targetState == EnterExitState.Visible) {
-                        tween(SettingsFlyIn.ENTER_MS, easing = EmphasizedDecelerate)
+                        tween(SettingsSlideIn.ENTER_MS, easing = EmphasizedDecelerate)
                     } else {
-                        tween(SettingsFlyIn.EXIT_MS, easing = EmphasizedAccelerate)
+                        tween(SettingsSlideIn.EXIT_MS, easing = EmphasizedAccelerate)
                     }
                 },
                 label = "settingsArrival",
@@ -990,6 +990,6 @@ private fun SettingsOverlay(
     }
 }
 
-// Material 3 "emphasized" easings for the settings page's arrival (Carlink2 [229]).
+// Material 3 "emphasized" easings for the settings slide: decelerate in, accelerate out.
 private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
 private val EmphasizedAccelerate = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)

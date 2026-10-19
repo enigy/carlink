@@ -56,7 +56,7 @@ import com.carlink.ui.adaptive.asWindowInsets
 import com.carlink.ui.adaptive.rememberWindowLayoutInfo
 import com.carlink.ui.components.FrostedGlassBackground
 import com.carlink.ui.components.LocalSettingsArrival
-import com.carlink.ui.components.settingsFlyIn
+import com.carlink.ui.components.settingsSlideIn
 import com.carlink.ui.settings.AdapterPane
 import com.carlink.ui.settings.BackgroundLogoStore
 import com.carlink.ui.settings.CallAudioStore
@@ -100,17 +100,20 @@ fun SettingsScreen(
     // The detected safe area (cutout / waterfall / corner arcs) pads in addition to the live bars.
     val safeArea = carlinkManager.displayProfile?.safeAreaInsets ?: EdgeInsets.NONE
 
-    // Carlink2 [229]: frosted glass over the connecting screen's brand scene, frosting over as the
-    // page flies in. The Surface stays transparent but sets LocalContentColor for un-coloured Text.
+    // Frosted glass over the connecting screen's brand scene; glass and content slide in together
+    // from the left. The Surface stays transparent but sets LocalContentColor for un-coloured Text.
     val backgroundLogo by BackgroundLogoStore.get(LocalContext.current).flow.collectAsState()
     val arrival = LocalSettingsArrival.current
-    Surface(modifier = modifier.fillMaxSize(), color = Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface) {
-        FrostedGlassBackground(backgroundLogo = backgroundLogo, progress = arrival)
+    Surface(
+        modifier = modifier.fillMaxSize().settingsSlideIn(arrival),
+        color = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
+        FrostedGlassBackground(backgroundLogo = backgroundLogo)
         Column(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .settingsFlyIn(arrival)
                     .windowInsetsPadding(WindowInsets.safeDrawing.union(safeArea.asWindowInsets())),
         ) {
             SettingsTopBar(

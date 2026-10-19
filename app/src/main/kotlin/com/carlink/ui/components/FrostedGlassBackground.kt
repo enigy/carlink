@@ -52,28 +52,26 @@ private const val GRAIN_SEED = 220L
  * through it. The scene is a static image (no fog animation), so the blurred layer is drawn once
  * and reused.
  *
- * [229] [progress] is the settings page's arrival ([SettingsFlyIn]): the glass fades in over the
- * CarPlay screen while its frost thickens. Read in the layer phase, so the animation redraws the
- * layer without recomposing.
+ * It slides in and out with the rest of the settings page ([settingsSlideIn]); the frost itself
+ * is constant.
  */
 @Composable
 fun FrostedGlassBackground(
     backgroundLogo: BackgroundLogoConfig,
     modifier: Modifier = Modifier,
-    progress: () -> Float = { 1f },
 ) {
     val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val tint = MaterialTheme.colorScheme.surface.copy(alpha = if (blurSupported) GLASS_TINT_ALPHA else GLASS_TINT_ALPHA_NO_BLUR)
     val grain = remember { ShaderBrush(ImageShader(grainTile(), TileMode.Repeated, TileMode.Repeated)) }
 
-    Box(modifier = modifier.fillMaxSize().graphicsLayer { alpha = SettingsFlyIn.glassAlpha(progress()) }) {
+    Box(modifier = modifier.fillMaxSize()) {
         Image(
             painter = painterResource(id = backgroundLogo.drawableRes),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier =
                 Modifier.fillMaxSize().graphicsLayer {
-                    val radius = SettingsFlyIn.glassBlurDp(progress(), GLASS_BLUR_RADIUS.value).dp.toPx()
+                    val radius = GLASS_BLUR_RADIUS.toPx()
                     renderEffect = BlurEffect(radius, radius, TileMode.Clamp)
                     clip = true
                 },
