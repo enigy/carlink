@@ -43,14 +43,19 @@
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />
-    <!-- AAOS-only distribution per developer.android.com/training/cars/distribute:
-         media apps on the Android Automotive OS Play track must declare
-         android.hardware.type.automotive as required=true (or unset). Setting it false
-         would let the same APK install on phones/tablets where the AAOS-specific
-         services have no host. -->
+    <!-- Upstream (CarlinkAndroid) declares this required=true for the dedicated Android Automotive
+         OS Play track, which needs Google's automotive approval. Play rejects required=true on
+         every other track:
+           "APKs and bundles must not require following features: android.hardware.type.automotive.
+            Some features can only be required in dedicated tracks."
+         Like Carlink2, this fork ships to a standard track for on-truck testing, so the feature is
+         declared (documents the dependency; AAOS still matches it) but not required for install.
+         Runtime behaviour is unchanged; the theoretical downside (a phone could install it) does
+         not matter on a controlled test track. Flip back to required=true only if/when moving to
+         the Automotive OS track. -->
     <uses-feature
         android:name="android.hardware.type.automotive"
-        android:required="true" />
+        android:required="false" />
     <!-- Car App Library Templates Host: binds and surface-provisions the cluster CarAppService.
          required=false so a Play upload is not rejected on profiles that lack it. -->
     <uses-feature
