@@ -72,6 +72,7 @@ import com.carlink.ui.settings.DisplayModeDeferredNotice
 import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.settings.DisplayPane
 import com.carlink.ui.settings.PhonesPane
+import com.carlink.ui.settings.ScrollColumn
 import com.carlink.ui.settings.SettingsCategory
 import com.carlink.ui.settings.SettingsLiveState
 import com.carlink.ui.settings.SettingsModel
@@ -332,7 +333,7 @@ private fun CategoryItem(
 /** The selected category's tile: one step lighter than the row's primary container. */
 private val SELECTED_TILE = Color(0xFF00687A)
 
-/** The right-hand pane: a lifted surface that scrolls, its scroll reset per category. */
+/** The right-hand pane: a lifted surface that scrolls, its scroll reset per category, with [ScrollColumn] beside it. */
 @Composable
 private fun DetailPane(
     category: SettingsCategory,
@@ -345,10 +346,19 @@ private fun DetailPane(
         color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f),
     ) {
         key(category) {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 56.dp, vertical = 40.dp),
-                content = content,
-            )
+            val scroll = rememberScrollState()
+            Row {
+                Column(
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .verticalScroll(scroll)
+                            .padding(start = 56.dp, end = 32.dp, top = 40.dp, bottom = 40.dp),
+                    content = content,
+                )
+                // Scroll cue 2: page buttons and a thumb, only when the page is taller than the pane.
+                ScrollColumn(scroll)
+            }
         }
     }
 }
