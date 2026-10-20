@@ -14,7 +14,7 @@
          screen at every attach, which GM covers with the driving overlay (PR lvalen91/carlink#15). -->
     <application
         android:allowBackup="false"
-        android:label="Carlink2 USB Bridge"
+        android:label="Carlink3 USB Bridge"
         tools:ignore="HardcodedText,MissingApplicationIcon">
 
         <!-- Bound only by com.enigy.carlink3; BridgeService rejects every other caller. -->
