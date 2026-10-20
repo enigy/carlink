@@ -8,20 +8,30 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Brand logo on the connecting screen's background scene (Carlink2 [216]). App-only: the box never
+ * The connecting screen's background scene (Carlink2 [216]): a brand scene or a brand-free photo. App-only: the box never
  * sees it, so a change applies on the spot with no reconnect. Persisted by [code], never ordinal.
  */
 enum class BackgroundLogoConfig(
     val code: String,
     override val label: String,
-    /** The background scene with this logo: the connecting screen and the settings glass. */
-    @DrawableRes val drawableRes: Int,
+    /** The scene shown on the connecting screen and under the settings glass; null = gradient only. */
+    @DrawableRes val drawableRes: Int?,
 ) : Labelled {
     /** The original background (res/drawable/loading_bg.webp). */
     GMC("gmc", "GMC", R.drawable.loading_bg),
 
     /** res/drawable-nodpi/loading_bg_chevrolet.jpg — same scene with the Chevrolet bowtie. */
     CHEVROLET("chevrolet", "CHEVROLET", R.drawable.loading_bg_chevrolet),
+
+    // Brand-free scenes for either truck: CC0 photos (Unsplash, pre-2017, via Wikimedia Commons),
+    // credited in NOTICE.md. 2400 px wide in res/drawable-nodpi; ContentScale.Crop fits the panel.
+    MOUNTAIN_ROAD("mountain_road", "Mountain road", R.drawable.loading_bg_mountain_road),
+    BOATHOUSE("boathouse", "Mountain lake", R.drawable.loading_bg_boathouse),
+    LAKESIDE_CABIN("lakeside_cabin", "Lakeside cabin", R.drawable.loading_bg_lakeside_cabin),
+    WORKSHOP("workshop", "Workshop", R.drawable.loading_bg_workshop),
+
+    /** No picture: the plain dark gradient that sits behind every scene ([NO_BACKGROUND_BRUSH]). */
+    NONE("none", "No background", null),
     ;
 
     companion object {

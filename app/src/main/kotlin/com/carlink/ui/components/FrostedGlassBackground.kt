@@ -21,7 +21,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import com.carlink.ui.settings.BackgroundLogoConfig
 import kotlin.random.Random
@@ -72,20 +72,25 @@ fun FrostedGlassBackground(
     Box(modifier = modifier.fillMaxSize()) {
         // Blurred at 1/BLUR_DOWNSCALE size, then scaled up: the blur pass touches 1/16 of the
         // pixels, and a blurred image has no detail for the upscale to lose.
-        Image(
-            painter = painterResource(id = backgroundLogo.drawableRes),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier =
-                Modifier.align(Alignment.TopStart).fillMaxSize(1f / BLUR_DOWNSCALE).graphicsLayer {
-                    transformOrigin = TransformOrigin(0f, 0f)
-                    scaleX = BLUR_DOWNSCALE
-                    scaleY = BLUR_DOWNSCALE
-                    val radius = GLASS_BLUR_RADIUS.toPx() / BLUR_DOWNSCALE
-                    renderEffect = BlurEffect(radius, radius, TileMode.Clamp)
-                    clip = true
-                },
-        )
+        val glassWidth = (LocalWindowInfo.current.containerSize.width / BLUR_DOWNSCALE).toInt()
+        val scene = rememberScene(backgroundLogo.drawableRes, glassWidth.coerceAtLeast(1))
+        Box(modifier = Modifier.fillMaxSize().background(NO_BACKGROUND_BRUSH))
+        if (scene != null) {
+            Image(
+                bitmap = scene,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier =
+                    Modifier.align(Alignment.TopStart).fillMaxSize(1f / BLUR_DOWNSCALE).graphicsLayer {
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = BLUR_DOWNSCALE
+                        scaleY = BLUR_DOWNSCALE
+                        val radius = GLASS_BLUR_RADIUS.toPx() / BLUR_DOWNSCALE
+                        renderEffect = BlurEffect(radius, radius, TileMode.Clamp)
+                        clip = true
+                    },
+            )
+        }
         Box(modifier = Modifier.fillMaxSize().background(tint))
         Box(modifier = Modifier.fillMaxSize().background(grain))
     }

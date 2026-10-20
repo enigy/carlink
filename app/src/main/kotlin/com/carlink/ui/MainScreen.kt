@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -72,8 +73,10 @@ import com.carlink.ui.components.BridgeSetupPanel
 import com.carlink.ui.components.DialogSystemBars
 import com.carlink.ui.components.ForestFogEffect
 import com.carlink.ui.components.LoadingStatusView
+import com.carlink.ui.components.NO_BACKGROUND_BRUSH
 import com.carlink.ui.components.VideoSurface
 import com.carlink.ui.components.VideoSurfaceState
+import com.carlink.ui.components.rememberScene
 import com.carlink.ui.components.rememberVideoSurfaceState
 import com.carlink.ui.settings.BackgroundLogoStore
 import com.carlink.ui.settings.ResetConnectionDialog
@@ -407,12 +410,19 @@ private fun LoadingOverlay(
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // ContentScale.Crop fills the panel and centre-crops the overflow (the scene is ~2.49:1,
         // so almost nothing is cropped) — no stretching. Same scene for both logos.
-        Image(
-            painter = painterResource(id = backgroundLogo.drawableRes),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
+        // Decoded at panel width off the main thread (the photo scenes ship as large originals). The
+        // gradient underneath is "No background", and covers a photo's first frames while it decodes.
+        val panelWidth = LocalWindowInfo.current.containerSize.width
+        val scene = rememberScene(backgroundLogo.drawableRes, panelWidth.coerceAtLeast(1))
+        Box(modifier = Modifier.fillMaxSize().background(NO_BACKGROUND_BRUSH))
+        if (scene != null) {
+            Image(
+                bitmap = scene,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         ForestFogEffect()
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,

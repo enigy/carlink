@@ -90,7 +90,7 @@ object SettingsModel {
     fun displaySummary(
         mode: DisplayMode,
         logo: BackgroundLogoConfig,
-    ): String = "${mode.label} · ${logo.brandName} loading screen"
+    ): String = "${mode.label} · " + if (logo == BackgroundLogoConfig.NONE) "plain loading screen" else "${logo.brandName} loading screen"
 
     fun callsSummary(
         mic: CallMicConfig,
@@ -147,10 +147,11 @@ object SettingsModel {
     private fun isCarPlay(type: PhoneType): Boolean = type == PhoneType.CARPLAY || type == PhoneType.CARPLAY_WIRELESS
 }
 
-/** The brand as a word, for the Loading screen choice and its summary ("Chevrolet", not "CHEVROLET"). */
+/** The scene as words, for the Loading screen choice and its summary ("Chevrolet", not "CHEVROLET"). */
 val BackgroundLogoConfig.brandName: String
     get() =
         when (this) {
             BackgroundLogoConfig.GMC -> "GMC"
             BackgroundLogoConfig.CHEVROLET -> "Chevrolet"
+            else -> label
         }

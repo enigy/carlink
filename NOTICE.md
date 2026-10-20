@@ -26,3 +26,16 @@ table in `ocbm/crates/ocbm-proto/src/lib.rs`. They must track OCBM box releases.
 - `CPC200-CCPA_resources` (lvalen91) — community documentation of the stock Carlinkit firmware.
 
 Upstream remotes used for tracking: `upstream-ocbm` → `lvalen91/ocbm`, `carlink2` → `enigy/Carlink2`.
+
+## Loading screen photos
+
+Four Loading screen scenes are photographs dedicated to the public domain under CC0 1.0 (published on
+Unsplash before its 5 June 2017 licence change, mirrored on Wikimedia Commons). No attribution is
+required; credited here anyway.
+
+| File (`app/src/main/res/drawable-nodpi/`) | Photo | Photographer | Source |
+|---|---|---|---|
+| `loading_bg_mountain_road.jpg` | Mountain road in the evening | Linhao Zhang | https://commons.wikimedia.org/wiki/File:Mountain_road_in_the_evening_(Unsplash).jpg |
+| `loading_bg_boathouse.jpg` | Boathouse on a mountain lake (Lago di Braies) | Luca Bravo | https://commons.wikimedia.org/wiki/File:Boathouse_on_a_mountain_lake_(Unsplash).jpg |
+| `loading_bg_lakeside_cabin.jpg` | Lakeside cabin (Piburger See) | Paul Gilmore | https://commons.wikimedia.org/wiki/File:Lakeside_cabin_(Unsplash).jpg |
+| `loading_bg_workshop.jpg` | Woodworking workshop | Unsplash contributor "s w" (2015) | https://commons.wikimedia.org/wiki/File:Woodworking_workshop_(Unsplash).jpg |
