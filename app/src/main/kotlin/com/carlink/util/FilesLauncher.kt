@@ -3,6 +3,8 @@ package com.carlink.util
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.os.Environment
+import android.provider.DocumentsContract
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
@@ -27,25 +29,62 @@ object FilesLauncher {
             "com.google.android.documentsui" to "com.android.documentsui.LauncherActivity",
         )
 
+    private const val EXTERNAL_STORAGE = "com.android.externalstorage.documents"
+    private const val DOWNLOADS_PROVIDER = "com.android.providers.downloads.documents"
+
     /** Starts Files and returns true, or returns false if no candidate could be started. */
-    fun open(context: Context): Boolean {
+    fun open(
+        context: Context,
+        logTag: String = "[BRIDGE_SETUP]",
+    ): Boolean {
         val pm = context.packageManager
         val candidates =
             PACKAGES.mapNotNull { pm.getLaunchIntentForPackage(it) } +
                 ACTIVITIES.map { (pkg, cls) -> Intent().setClassName(pkg, cls) }
+        if (startFirst(context, candidates, logTag)) return true
+        logWarn("$logTag No Files app could be opened (tried ${ACTIVITIES.size + PACKAGES.size} targets)", tag = Logger.Tags.USB)
+        return false
+    }
+
+    /**
+     * Files opened on the folder the logs are written to (`Downloads/<subdir>`), so the driver can
+     * select them and Copy to a USB drive. DocumentsUI browses a directory from ACTION_VIEW with the
+     * directory MIME type (Android 10+); failing that, the Downloads root; failing that, Files' home.
+     */
+    fun openFolder(
+        context: Context,
+        subdir: String,
+        logTag: String,
+    ): Boolean {
+        val folder = DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE, "primary:${Environment.DIRECTORY_DOWNLOADS}/$subdir")
+        val downloads = DocumentsContract.buildRootUri(DOWNLOADS_PROVIDER, "downloads")
+        val views =
+            PACKAGES.flatMap { pkg ->
+                listOf(
+                    Intent(Intent.ACTION_VIEW).setDataAndType(folder, DocumentsContract.Document.MIME_TYPE_DIR).setPackage(pkg),
+                    Intent(Intent.ACTION_VIEW).setDataAndType(downloads, DocumentsContract.Root.MIME_TYPE_ITEM).setPackage(pkg),
+                )
+            }
+        return startFirst(context, views, logTag) || open(context, logTag)
+    }
+
+    private fun startFirst(
+        context: Context,
+        candidates: List<Intent>,
+        logTag: String,
+    ): Boolean {
         for (intent in candidates) {
-            val target = intent.component?.flattenToShortString() ?: intent.`package`
+            val target = intent.component?.flattenToShortString() ?: listOfNotNull(intent.`package`, intent.data).joinToString(" ")
             try {
                 context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                logInfo("[BRIDGE_SETUP] Opened Files ($target)", tag = Logger.Tags.USB)
+                logInfo("$logTag Opened Files ($target)", tag = Logger.Tags.USB)
                 return true
             } catch (e: ActivityNotFoundException) {
                 // Not on this head unit; try the next one.
             } catch (e: SecurityException) {
-                logWarn("[BRIDGE_SETUP] Files ($target) refused: ${e.message}", tag = Logger.Tags.USB)
+                logWarn("$logTag Files ($target) refused: ${e.message}", tag = Logger.Tags.USB)
             }
         }
-        logWarn("[BRIDGE_SETUP] No Files app could be opened (tried ${ACTIVITIES.size + PACKAGES.size} targets)", tag = Logger.Tags.USB)
         return false
     }
 }

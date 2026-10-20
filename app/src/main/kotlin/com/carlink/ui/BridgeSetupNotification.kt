@@ -25,6 +25,7 @@ import com.carlink.R
 object BridgeSetupNotification {
     private const val WAITING_CHANNEL_ID = "bridge_setup_waiting"
     private const val INSTALLED_CHANNEL_ID = "bridge_setup_installed"
+    private const val LOGS_CHANNEL_ID = "logs_copy_waiting"
     private const val NOTIFICATION_ID = 2120
 
     fun showWaiting(context: Context) =
@@ -33,6 +34,17 @@ object BridgeSetupNotification {
             NotificationCompat
                 .Builder(context, WAITING_CHANNEL_ID)
                 .setContentTitle("Installing the USB bridge")
+                .setContentText("Tap to return to Carlink3")
+                .setPriority(NotificationCompat.PRIORITY_LOW),
+        )
+
+    /** Settings → Troubleshoot → Copy logs to USB opened Files: the same way back. */
+    fun showCopyingLogs(context: Context) =
+        post(
+            context,
+            NotificationCompat
+                .Builder(context, LOGS_CHANNEL_ID)
+                .setContentTitle("Copying logs")
                 .setContentText("Tap to return to Carlink3")
                 .setPriority(NotificationCompat.PRIORITY_LOW),
         )
@@ -58,6 +70,9 @@ object BridgeSetupNotification {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(WAITING_CHANNEL_ID, "USB bridge setup", NotificationManager.IMPORTANCE_LOW),
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(LOGS_CHANNEL_ID, "Copying logs", NotificationManager.IMPORTANCE_LOW),
         )
         // HIGH so it pops up over Files when the install finishes.
         manager.createNotificationChannel(
