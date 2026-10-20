@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Save
@@ -118,6 +119,22 @@ private fun LogsGroup(
                 live.verboseLogs = on
                 logWarn("[UI_ACTION] Verbose Logs -> ${if (on) "on" else "off"}", tag = "UI")
                 VerboseLogging.setEnabled(context, on)
+            },
+        )
+        GroupDivider()
+        SwitchRow(
+            title = "Record drive logs",
+            subtitle =
+                if (live.driveLog) {
+                    "Recording to ${live.driveLogFile ?: "Downloads/Carlink3"}"
+                } else {
+                    "Writes app and adapter logs to Downloads/Carlink3 as you drive, kept 7 days"
+                },
+            checked = live.driveLog,
+            icon = Icons.Default.FiberManualRecord,
+            onCheckedChange = { on ->
+                live.driveLog = on
+                carlinkManager.setDriveLogging(on)
             },
         )
         GroupDivider()

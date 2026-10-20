@@ -46,6 +46,8 @@ data class VehicleConfigSpec(
     val drawUIOutsideSafeArea: Boolean = false,
     val wireless: Boolean = true,
     val pairing: String = "just_works",
+    /** CarPlay `/info rightHandDrive`: puts CarPlay's dock and status bar on the driver's side. */
+    val rightHandDrive: Boolean = false,
     val enablesHevc: Boolean = true,
     /** Steering-wheel media keys reach CarPlay through this HID, not a steering-wheel device. */
     val mediaButtonsSupport: Boolean = true,
@@ -250,7 +252,7 @@ object VehicleConfigYaml {
         line("wireless: ${s.wireless}")
         line("hot_handover: false")
         line("pairing: ${s.pairing}")
-        line("rightHandDrive: false")
+        line("rightHandDrive: ${s.rightHandDrive}")
         // Emitted for shape parity with the pinned fixture; the box does not read it. Night mode is a
         // runtime /command (CMD_NIGHT_MODE), not a config value.
         line("nightMode: false")

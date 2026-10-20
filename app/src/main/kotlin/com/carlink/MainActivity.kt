@@ -43,6 +43,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.carlink.cluster.ClusterBindingState
 import com.carlink.cluster.ClusterNavigation
+import com.carlink.logging.DriveLogging
 import com.carlink.logging.Logger
 import com.carlink.logging.VerboseLogging
 import com.carlink.logging.logInfo
@@ -404,6 +405,7 @@ class MainActivity : ComponentActivity() {
         Logger.setDebugLoggingEnabled(isDebugBuild)
         // Settings → App Control → Verbose Logs: lets INFO through in a release build (Save Logs then has the trail).
         VerboseLogging.apply(this)
+        DriveLogging.apply(this)
 
         logInfo("Carlink Native starting - version $appVersion", tag = "MAIN")
         logInfo(

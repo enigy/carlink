@@ -297,4 +297,12 @@ metadata:
         // The BEL is stripped (Cc is rejected at the YAML stream level), the quote is escaped.
         assertTrue("label not escaped as expected:\n$doc", doc.contains("""  label: "Owners \"Car\""""))
     }
+
+    /** Settings → Display → Driver's seat: right puts CarPlay's dock on the right. */
+    @Test
+    fun `right-hand drive is emitted when chosen`() {
+        val doc = VehicleConfigYaml.render(VehicleConfigSpec(rightHandDrive = true))
+        assertTrue("rightHandDrive line missing:\n$doc", doc.lines().contains("rightHandDrive: true"))
+        assertFalse(doc.contains("rightHandDrive: false"))
+    }
 }

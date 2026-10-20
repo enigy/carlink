@@ -26,6 +26,7 @@ object LogTrail {
             if (lines.size >= CAPACITY) lines.removeFirst()
             lines.addLast(line)
         }
+        DriveLog.appLine(line)
     }
 
     /** The trail so far, oldest first, one line each. */

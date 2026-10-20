@@ -65,6 +65,11 @@ private val URI_GRANT_CONSUMERS =
         "com.android.car.cluster",
         "com.android.car.cluster.home",
         "com.android.systemui",
+        // The system uid (1000). Every drive log showed a reader at uid 1201000 (user 12, app id
+        // 1000: a GM media component running as the system uid, new pid per track) refused with
+        // "requires the provider be exported, or grantUriPermission()". URI grants are checked by
+        // uid, so granting to the uid-1000 package covers whichever system-uid process reads it.
+        "android",
     )
 
 /**

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DisplaySettings
@@ -101,6 +102,7 @@ internal fun DisplayPane(
                 modifier = Modifier.weight(1f),
             )
         }
+        DriveSideChoice()
         SectionLabel("Loading screen", modifier = Modifier.padding(top = 8.dp))
         LoadingScreenChoice()
     }
@@ -149,6 +151,29 @@ private fun ModeCard(
             }
         }
     }
+}
+
+/** Driver's seat (Carlink2's Drive Side): CarPlay puts its dock on this side. Next connection. */
+@Composable
+private fun DriveSideChoice() {
+    val context = LocalContext.current
+    val store = remember { DriveSideStore.get(context) }
+    val side by store.flow.collectAsState()
+    SectionLabel("Driver's seat", modifier = Modifier.padding(top = 8.dp))
+    ChoiceRow(
+        options = DriveSide.entries,
+        selected = side,
+        onSelect = {
+            logWarn("[UI_ACTION] Drive side -> ${it.name}", tag = "UI")
+            store.set(it)
+        },
+        modifier = Modifier.widthIn(max = 760.dp),
+    )
+    Text(
+        "CarPlay puts its dock and status bar on the driver's side. Applies at the next connection.",
+        style = SettingsStyle.RowSubtitle,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

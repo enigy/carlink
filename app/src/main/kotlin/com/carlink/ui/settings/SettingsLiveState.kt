@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import com.carlink.CarlinkManager
 import com.carlink.cluster.ClusterNavigation
+import com.carlink.logging.DriveLog
 import com.carlink.logging.VerboseLogging
 import kotlinx.coroutines.delay
 
@@ -48,6 +49,10 @@ internal class SettingsLiveState(
     var box by mutableStateOf(BoxSnapshot())
     var clusterOn by mutableStateOf(clusterOn)
     var verboseLogs by mutableStateOf(verboseLogs)
+
+    /** Drive logging: on, and the file it is writing (from [com.carlink.logging.DriveLog]). */
+    var driveLog by mutableStateOf(false)
+    var driveLogFile by mutableStateOf<String?>(null)
 
     val connectedPhone: ConnectedPhone? get() = SettingsModel.connectedPhone(phone, devices)
 }
@@ -85,6 +90,8 @@ internal fun rememberSettingsLiveState(
                     healthKnown = carlinkManager.boxHealthKnown,
                     raw = carlinkManager.boxStatusText(),
                 )
+            live.driveLog = DriveLog.recording
+            live.driveLogFile = DriveLog.currentFile
             delay(POLL_MS)
         }
     }

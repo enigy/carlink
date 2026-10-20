@@ -60,6 +60,20 @@ class OcbmClient(
 
     val hasMfi: Boolean get() = (caps and Ocbm.CAP_MFI) != 0
 
+    /** Receives the box's CH_LOG lines once [setBoxLogStream] armed them. Runs on the transport read thread. */
+    @Volatile var onBoxLog: ((List<BoxLogEntry>) -> Unit)? = null
+
+    /**
+     * Arm or disarm the box's live log stream (CT_LOG_CTL). Enabling replays `/tmp/box.log` from the
+     * start (everything since boot), then follows it, plus the per-daemon logs. The box resets it to
+     * off at CT_STOP / host loss, so a session re-arms after SUBSCRIBE. No reply is sent.
+     */
+    fun setBoxLogStream(enabled: Boolean): Boolean {
+        val pl = byteArrayOf(Ocbm.CT_LOG_CTL, (if (enabled) 1 else 0).toByte(), 0, 0) // cap_kb 0 = box default
+        log.i(">> CT_LOG_CTL enabled=$enabled")
+        return send(Ocbm.CH_CTRL, pl)
+    }
+
     /** Config blob last sent with CT_SUBSCRIBE; re-sent verbatim if the box drops us. */
     @Volatile private var configBlob: ByteArray = ByteArray(0)
 
@@ -365,6 +379,8 @@ class OcbmClient(
             // No cluster display is advertised (altVideoStreams: []), so the box never encodes this.
             // Counted rather than decoded, so a surprise stream is visible instead of a log flood.
             Ocbm.CH_ALT_VIDEO -> altVideoFrames++
+            // Box log stream, armed by CT_LOG_CTL (drive logging). Parsed here, written elsewhere.
+            Ocbm.CH_LOG -> onBoxLog?.invoke(BoxLogEntries.parse(f.payload))
             else -> dropAv(f)
         }
     }

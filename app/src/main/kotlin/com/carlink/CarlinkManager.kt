@@ -23,6 +23,8 @@ import com.carlink.device.KnownDevice
 import com.carlink.device.KnownDeviceSnapshot
 import com.carlink.device.KnownDeviceStore
 import com.carlink.device.mergeDeviceList
+import com.carlink.logging.DriveLog
+import com.carlink.logging.DriveLogging
 import com.carlink.logging.LogExport
 import com.carlink.logging.LogTrail
 import com.carlink.logging.Logger
@@ -55,6 +57,8 @@ import com.carlink.protocol.MultiTouchAction
 import com.carlink.protocol.PhoneType
 import com.carlink.ui.settings.CallAudioStore
 import com.carlink.ui.settings.CallMicConfig
+import com.carlink.ui.settings.DriveSide
+import com.carlink.ui.settings.DriveSideStore
 import com.carlink.usb.CarlinkBridge
 import com.carlink.util.DisplayProfile
 import com.carlink.util.LogCallback
@@ -1109,6 +1113,7 @@ class CarlinkManager(
             return
         }
         c.startHeartbeat()
+        armBoxLogStream(c)
 
         setStatusText("Waiting for phone...")
     }
@@ -1152,6 +1157,7 @@ class CarlinkManager(
                 // it is three PNG encodes, and this runs on the connect path.
                 oemIconImages = oemIconImages,
                 oemIconLabel = context.getString(R.string.app_name),
+                rightHandDrive = DriveSideStore.get(context).current == DriveSide.RIGHT,
             )
         logInfo("[CONFIG] ${g.describe()}", tag = Logger.Tags.ADAPTR)
         return spec
@@ -2378,6 +2384,31 @@ class CarlinkManager(
         android.text.format.DateUtils
             .getRelativeTimeSpanString(ms, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS)
             .toString()
+
+    // ---- Drive logging ---------------------------------------------------------------------------
+
+    /**
+     * Settings → Record drive logs. Starts/stops the [DriveLog] file and, on a live link, arms or
+     * disarms the box's CH_LOG stream so box lines land in the same file as the app's.
+     */
+    fun setDriveLogging(on: Boolean) {
+        logWarn("[UI_ACTION] Drive logging -> ${if (on) "on" else "off"}", tag = Logger.Tags.ADAPTR)
+        DriveLogging.setEnabled(context, on)
+        val c = client ?: return
+        if (on) {
+            armBoxLogStream(c)
+        } else {
+            c.setBoxLogStream(false)
+            c.onBoxLog = null
+        }
+    }
+
+    /** After SUBSCRIBE (the box resets the stream to off per session): stream box lines into the drive log. */
+    private fun armBoxLogStream(c: OcbmClient) {
+        if (!DriveLog.recording) return
+        c.onBoxLog = { DriveLog.boxEntries(it) }
+        c.setBoxLogStream(true)
+    }
 
     /**
      * Choose the phone the adapter should prefer, or null to follow most-recently-connected.
