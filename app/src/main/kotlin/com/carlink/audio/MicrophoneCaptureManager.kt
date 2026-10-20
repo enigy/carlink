@@ -119,6 +119,16 @@ class MicrophoneCaptureManager(
      * AudioRecord of the session, including one rebuilt after a DEAD_OBJECT.
      */
     @Volatile private var preferredInput: AudioDeviceInfo? = null
+
+    /**
+     * Sees every block of captured S16LE PCM as it goes out (before mSBC encoding), on the uplink
+     * thread. The in-call echo monitor ([CallEchoMonitor]) listens here; must not block.
+     */
+    @Volatile var uplinkPcmTap: ((ByteArray, Int, Int) -> Unit)? = null
+
+    /** The input the current capture is routed to, for the echo monitor's routing line. */
+    fun routedInput(): String = AudioRouteInfo.device(audioRecord?.routedDevice)
+
     private var micBuffer: AudioRingBuffer? = null
     private var currentFormat: MicFormatConfig? = null
     private var captureThread: MicCaptureThread? = null
@@ -407,6 +417,7 @@ class MicrophoneCaptureManager(
         if (enc == null || uplinkCodec != MicProfile.CODEC_MSBC) {
             val chunk = readChunk(maxBytes = maxPcmBytes)
             if (chunk == null || chunk.isEmpty()) return 0
+            uplinkPcmTap?.invoke(chunk, 0, chunk.size)
             send(chunk)
             return 1
         }
@@ -416,6 +427,7 @@ class MicrophoneCaptureManager(
         // Single reader: `available` cannot shrink under us, so a short read here means the writer
         // overran and discarded — the CAS in AudioRingBuffer.read already threw those bytes away.
         val got = if (whole == 0) 0 else buffer.read(msbcPcmBuffer, 0, whole) / frame * frame
+        if (got > 0) uplinkPcmTap?.invoke(msbcPcmBuffer, 0, got)
         var sent = 0
         var off = 0
         while (off < got) {

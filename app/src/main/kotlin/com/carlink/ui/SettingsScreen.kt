@@ -228,7 +228,7 @@ private fun CategoryPane(
     when (category) {
         SettingsCategory.PHONES -> PhonesPane(panes.carlinkManager, panes.live)
         SettingsCategory.DISPLAY -> DisplayPane(savedMode = savedMode, onApply = onApplyMode)
-        SettingsCategory.CALLS -> CallsPane()
+        SettingsCategory.CALLS -> CallsPane(panes.carlinkManager)
         SettingsCategory.CLUSTER -> ClusterPane(panes.live, onResetCluster = panes.actions.onResetCluster)
         SettingsCategory.TROUBLESHOOT -> TroubleshootPane(panes.carlinkManager, panes.live, connected = panes.connected)
         SettingsCategory.ADAPTER -> AdapterPane(panes.carlinkManager, panes.live)

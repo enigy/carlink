@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.carlink.CarlinkManager
 import com.carlink.audio.AudioRouteInfo
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.logging.logWarn
@@ -31,7 +32,10 @@ private val PANE_MAX_WIDTH = 1100.dp
  * Voice_Uplink bus.
  */
 @Composable
-internal fun CallsPane(modifier: Modifier = Modifier) {
+internal fun CallsPane(
+    carlinkManager: CarlinkManager,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val callAudio = remember { CallAudioStore.get(context) }
     val callMic by callAudio.callMicFlow.collectAsState()
@@ -72,6 +76,7 @@ internal fun CallsPane(modifier: Modifier = Modifier) {
             },
         )
         Text("Standard rides out network hiccups. Low cuts delay. Applies on the next call.", style = SettingsStyle.Body, color = hint)
+        CallAudioTests(carlinkManager)
     }
 }
 

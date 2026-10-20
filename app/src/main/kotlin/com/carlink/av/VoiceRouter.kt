@@ -133,6 +133,16 @@ class VoiceRouter(
     /** Is a phone call's downlink currently open? Settings → Call Mic only forces an input for calls. */
     fun isCallActive(): Boolean = synchronized(sinks) { sinks[Purpose.CALL]?.isConfigured == true }
 
+    /**
+     * Sees the caller's decoded S16LE PCM (with its rate and channels) as it goes to the call track,
+     * on the decode thread. The in-call echo monitor ([com.carlink.audio.CallEchoMonitor]) listens
+     * here; must not block.
+     */
+    @Volatile var callPcmTap: ((pcm: ByteArray, off: Int, len: Int, rate: Int, channels: Int) -> Unit)? = null
+
+    /** The call track's size, underruns and output device, for the echo monitor's lines. */
+    fun callTrackStats(): String = synchronized(sinks) { sinks[Purpose.CALL] }?.stats() ?: "no call track"
+
     private companion object {
         /** AudioTrack size for voice purposes, in platform-minimum buffers. */
         const val DEFAULT_BUFFER_MULTIPLIER = 4
@@ -675,6 +685,7 @@ class VoiceRouter(
             len: Int,
             t: AudioTrack,
         ): Boolean {
+            if (p == Purpose.CALL) callPcmTap?.invoke(pcm, off, len, rate, channels)
             if (PcmLevel.audible(pcm, off, len, DUCK_PEAK_THRESHOLD)) {
                 lastAudioAt = android.os.SystemClock.elapsedRealtime()
                 onDuck(true)
@@ -698,6 +709,15 @@ class VoiceRouter(
                 o += w
             }
             return true
+        }
+
+        fun stats(): String {
+            val t = track ?: return "${p.label}: no track"
+            val r = rate.coerceAtLeast(1)
+            return runCatching {
+                "callTrack=${t.bufferSizeInFrames * 1000L / r}ms underruns=${t.underrunCount} " +
+                    "out=${com.carlink.audio.AudioRouteInfo.device(t.routedDevice)}"
+            }.getOrDefault("${p.label}: track unreadable")
         }
 
         /** pause + flush BEFORE abandoning focus, so AAOS sees no active player of this usage. */

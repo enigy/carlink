@@ -6,6 +6,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Surface
 import com.carlink.audio.AudioRouteInfo
+import com.carlink.audio.CallEchoMonitor
 import com.carlink.audio.MicProfile
 import com.carlink.audio.MicrophoneCaptureManager
 import com.carlink.av.MediaAudioPlayer
@@ -2228,7 +2229,66 @@ class CarlinkManager(
             }, 0, MicProfile.TICK_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
 
         logInfo("[MIC] Capture started at ${r}Hz ${c}ch codec=$codec (drain ${chunkSize}B/tick)", tag = Logger.Tags.MIC)
+        startEchoMonitor(r, c)
     }
+
+    // ---- Call echo monitor (ported from Carlink2 [223]) ------------------------------------------
+
+    @Volatile private var callEchoMonitor: CallEchoMonitor? = null
+
+    /**
+     * During a phone call, measure how much of the caller's voice comes back in the mic audio we
+     * send, and how late ([CallEchoMonitor], [ECHO_MON] lines every 3 s, a summary at call end).
+     * Taps the caller's PCM at the call track and the mic PCM before encoding. Needs both at the
+     * same rate, mono; otherwise it says so once and stays quiet.
+     */
+    private fun startEchoMonitor(
+        rate: Int,
+        channels: Int,
+    ) {
+        stopEchoMonitor()
+        val router = voiceRouter ?: return
+        val mic = microphoneManager ?: return
+        if (channels != 1 || !router.isCallActive()) return
+        val callMic = CallAudioStore.get(context).callMic
+        val monitor =
+            CallEchoMonitor(
+                sampleRate = rate,
+                bufferStats = { router.callTrackStats() },
+                routing = { "callMic=$callMic mic=${mic.routedInput()} ${router.callTrackStats()} os=${android.os.Build.DISPLAY}" },
+                log = { logInfo(it, tag = Logger.Tags.MIC) },
+            )
+        var mismatchLogged = false
+        router.callPcmTap = { pcm, off, len, r, ch ->
+            if (r == rate && ch == 1) {
+                monitor.onDownlink(pcm, off, len)
+            } else if (!mismatchLogged) {
+                mismatchLogged = true
+                logInfo("[ECHO_MON] caller audio is ${r}Hz ${ch}ch, mic ${rate}Hz: can't compare them this call", tag = Logger.Tags.MIC)
+            }
+        }
+        mic.uplinkPcmTap = { pcm, off, len -> monitor.onUplink(pcm, off, len) }
+        callEchoMonitor = monitor
+        logInfo("[ECHO_MON] start: ${rate}Hz callMic=$callMic", tag = Logger.Tags.MIC)
+    }
+
+    private fun stopEchoMonitor() {
+        voiceRouter?.callPcmTap = null
+        microphoneManager?.uplinkPcmTap = null
+        callEchoMonitor?.stop()
+        callEchoMonitor = null
+    }
+
+    /** Why the parked call-audio tests can't run right now, or null when they can. */
+    fun audioTestBlockedReason(): String? =
+        when {
+            voiceRouter?.isCallActive() == true -> "a phone call is active"
+            isMicrophoneCapturing -> "Siri or a call is using the microphone"
+            else -> null
+        }
+
+    /** Settings → Call buffer's track multiplier, so the echo test's track matches the call's. */
+    val callBufferMultiplier: Int get() = CallAudioStore.get(context).callBuffer.bufferMultiplier
 
     /**
      * Settings → Call Mic (Carlink2 [225]/[235]): the input a phone call records from. GM's
@@ -2276,6 +2336,7 @@ class CarlinkManager(
         micSendGeneration.incrementAndGet() // invalidate any queued run before cancelling
         micSendFuture?.cancel(false)
         micSendFuture = null
+        stopEchoMonitor()
         microphoneManager?.stop()
         isMicrophoneCapturing = false
         logInfo("[MIC] Capture stopped", tag = Logger.Tags.MIC)
