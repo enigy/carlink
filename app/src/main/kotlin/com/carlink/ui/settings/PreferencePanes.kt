@@ -19,7 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
-import com.carlink.audio.AudioRouteInfo
+import com.carlink.audio.CallPaths
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.logging.logWarn
 
@@ -27,9 +27,10 @@ import com.carlink.logging.logWarn
 private val PANE_MAX_WIDTH = 1100.dp
 
 /**
- * Calls: which input a phone call records from ([225]) and the call track's buffer ([226]), both
- * applied the moment they are tapped. "Car call path" is offered only when the car lists its
- * Voice_Uplink bus.
+ * Calls: which input a phone call records from and the call track's buffer ([226]), both applied
+ * the moment they are tapped. Call microphone offers Automatic, the system's choice, and every
+ * input this car lists that a call could use ([CallPaths.candidates]); the line under it says what
+ * Automatic picked and why.
  */
 @Composable
 internal fun CallsPane(
@@ -40,9 +41,10 @@ internal fun CallsPane(
     val callAudio = remember { CallAudioStore.get(context) }
     val callMic by callAudio.callMicFlow.collectAsState()
     val callBuffer by callAudio.callBufferFlow.collectAsState()
-    val carListsUplink =
+    val autoPath by callAudio.autoPathFlow.collectAsState()
+    val inputKeys =
         remember {
-            (context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.let { AudioRouteInfo.uplinkBus(it) } != null
+            (context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.let { am -> CallPaths.candidates(am).map { CallPaths.key(it) } }.orEmpty()
         }
     val hint = MaterialTheme.colorScheme.onSurfaceVariant
 
@@ -50,19 +52,15 @@ internal fun CallsPane(
         PaneHeader(title = "Calls")
         SectionLabel("Call microphone")
         ChoiceRow(
-            options = if (carListsUplink) CallMicConfig.entries else listOf(CallMicConfig.AUTOMATIC),
+            options = CallMicChoices.options(inputKeys, callMic),
             selected = callMic,
             onSelect = {
-                logWarn("[UI_ACTION] Call Mic -> ${it.name}", tag = "UI")
+                logWarn("[UI_ACTION] Call Mic -> ${it.code}", tag = "UI")
                 callAudio.setCallMic(it)
             },
         )
         Text(
-            if (carListsUplink) {
-                "Car call path records from the car's own call input."
-            } else {
-                "This car has no separate call input, so calls use the automatic choice."
-            },
+            CallMicChoices.note(callMic, autoPath, android.os.Build.FINGERPRINT, inputKeys.isNotEmpty()),
             style = SettingsStyle.Body,
             color = hint,
         )

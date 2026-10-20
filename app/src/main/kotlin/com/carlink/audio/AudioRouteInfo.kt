@@ -56,7 +56,7 @@ internal object AudioRouteInfo {
             "clientFx=[${config.clientEffects.joinToString { effect(it) }}]"
     }
 
-    private fun typeName(type: Int): String =
+    fun typeName(type: Int): String =
         when (type) {
             AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "EARPIECE"
             AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "SPEAKER"
@@ -66,6 +66,8 @@ internal object AudioRouteInfo {
             AudioDeviceInfo.TYPE_TELEPHONY -> "TELEPHONY"
             AudioDeviceInfo.TYPE_BUS -> "BUS"
             AudioDeviceInfo.TYPE_REMOTE_SUBMIX -> "REMOTE_SUBMIX"
+            AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> "USB"
+            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "HEADSET"
             TYPE_ECHO_REFERENCE -> "ECHO_REFERENCE"
             else -> "type$type"
         }

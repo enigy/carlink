@@ -169,6 +169,7 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.RequestPermission(),
         ) { isGranted ->
             logInfo("Microphone permission ${if (isGranted) "granted" else "denied"}", tag = "MAIN")
+            if (isGranted) carlinkManager?.checkCallPathIfNeeded()
         }
 
     /**
@@ -325,6 +326,7 @@ class MainActivity : ComponentActivity() {
         // BufferQueue can stall. Resume codec and request keyframe for immediate video.
         logInfo("[LIFECYCLE] onStart - resuming video", tag = "MAIN")
         carlinkManager?.resumeVideo()
+        carlinkManager?.setAppVisible(true)
     }
 
     override fun onStop() {
@@ -336,6 +338,7 @@ class MainActivity : ComponentActivity() {
         // USB connection and audio continue unaffected.
         logInfo("[LIFECYCLE] onStop - pausing video", tag = "MAIN")
         carlinkManager?.pauseVideo()
+        carlinkManager?.setAppVisible(false)
     }
 
     /**

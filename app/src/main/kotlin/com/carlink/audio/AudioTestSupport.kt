@@ -85,8 +85,8 @@ internal data class CallPath(
 
 /**
  * The call paths worth comparing on this head unit, Carlink3's own first:
- *  - "Automatic (Carlink3)": VOICE_COMMUNICATION, no app effects, mode untouched — what
- *    [MicrophoneCaptureManager] records today when Settings → Calls → Call microphone is Automatic.
+ *  - "System choice": VOICE_COMMUNICATION, no app effects, mode untouched — what
+ *    [MicrophoneCaptureManager] records when Settings → Calls → Call microphone is System choice.
  *  - "Android echo canceller (Carlink2)": VOICE_COMMUNICATION with AEC/NS/AGC in
  *    MODE_IN_COMMUNICATION — Carlink2's Automatic ([193]/[194]/[235]).
  *  - "Android echo canceller, normal mode": the same effects without the mode, to see which of the two matters.
@@ -99,7 +99,7 @@ internal fun callPathsToCompare(am: AudioManager): List<CallPath> {
     val vc = MediaRecorder.AudioSource.VOICE_COMMUNICATION
     val bus = AudioRouteInfo.uplinkBus(am)
     return listOfNotNull(
-        CallPath("Automatic (Carlink3)", vc, appEffects = false, commMode = false),
+        CallPath("System choice", vc, appEffects = false, commMode = false),
         CallPath("Android echo canceller (Carlink2)", vc, appEffects = true, commMode = true),
         CallPath("Android echo canceller, normal mode", vc, appEffects = true, commMode = false),
         bus?.let { CallPath("Car call path (Carlink3)", vc, appEffects = false, commMode = false, device = it) },

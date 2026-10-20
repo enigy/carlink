@@ -6,9 +6,12 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Surface
 import com.carlink.audio.AudioRouteInfo
+import com.carlink.audio.AudioTestLock
 import com.carlink.audio.CallEchoMonitor
+import com.carlink.audio.CallPaths
 import com.carlink.audio.MicProfile
 import com.carlink.audio.MicrophoneCaptureManager
+import com.carlink.audio.SilenceGuard
 import com.carlink.av.MediaAudioPlayer
 import com.carlink.av.TransientFocusPolicy
 import com.carlink.av.VideoCodecs
@@ -56,8 +59,8 @@ import com.carlink.protocol.AdapterConfig
 import com.carlink.protocol.MessageSerializer
 import com.carlink.protocol.MultiTouchAction
 import com.carlink.protocol.PhoneType
+import com.carlink.ui.settings.AutoCallPath
 import com.carlink.ui.settings.CallAudioStore
-import com.carlink.ui.settings.CallMicConfig
 import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
 import com.carlink.usb.CarlinkBridge
@@ -507,6 +510,19 @@ class CarlinkManager(
     /** CallStyle notification for iPhone calls; answer/decline/hang-up route to [sendTelephony]. */
     private var callNotificationHost: CallNotificationHost? = null
 
+    /** Whether MainActivity (the projection) is on screen; the call card stays out of its way while it is. */
+    @Volatile private var appVisible = true
+
+    /**
+     * MainActivity started or stopped. While Carlink3 is on screen CarPlay's own call screen is the
+     * call UI, so the Android call card is not posted (on AAOS a call card stays heads-up over the
+     * projection until it is acted on). Main thread.
+     */
+    fun setAppVisible(visible: Boolean) {
+        appVisible = visible
+        callNotificationHost?.setAppVisible(visible)
+    }
+
     /**
      * This host session's identity on the wire, sent in every CT_HELLO this manager's clients make.
      *
@@ -840,6 +856,7 @@ class CarlinkManager(
             }
         appFocusClaimer = AppFocusClaimer(context).also { it.start() }
         callNotificationHost = CallNotificationHost(context) { idx -> sendTelephony(idx) }
+        callNotificationHost?.setAppVisible(appVisible)
 
         microphoneManager =
             MicrophoneCaptureManager(context, logCallback).also { mgr ->
@@ -915,6 +932,7 @@ class CarlinkManager(
         }
 
         logInfo("CarlinkManager initialized (OCBM)", tag = Logger.Tags.ADAPTR)
+        checkCallPathIfNeeded()
     }
 
     /**
@@ -2190,6 +2208,7 @@ class CarlinkManager(
             startMicrophoneCapture(rate, channels, codec)
         } else {
             stopMicrophoneCapture()
+            carPathSilentThisCall = false
         }
     }
 
@@ -2277,7 +2296,8 @@ class CarlinkManager(
      * During a phone call, measure how much of the caller's voice comes back in the mic audio we
      * send, and how late ([CallEchoMonitor], [ECHO_MON] lines every 3 s, a summary at call end).
      * Taps the caller's PCM at the call track and the mic PCM before encoding. Needs both at the
-     * same rate, mono; otherwise it says so once and stays quiet.
+     * same rate, mono; otherwise it says so once and stays quiet. When Automatic put the call on
+     * the car call path, the same tap feeds its [SilenceGuard] ([onCarPathSilent]).
      */
     private fun startEchoMonitor(
         rate: Int,
@@ -2292,7 +2312,7 @@ class CarlinkManager(
             CallEchoMonitor(
                 sampleRate = rate,
                 bufferStats = { router.callTrackStats() },
-                routing = { "callMic=$callMic mic=${mic.routedInput()} ${router.callTrackStats()} os=${android.os.Build.DISPLAY}" },
+                routing = { "callMic=${callMic.label} mic=${mic.routedInput()} ${router.callTrackStats()} os=${android.os.Build.DISPLAY}" },
                 log = { logInfo(it, tag = Logger.Tags.MIC) },
             )
         var mismatchLogged = false
@@ -2304,9 +2324,14 @@ class CarlinkManager(
                 logInfo("[ECHO_MON] caller audio is ${r}Hz ${ch}ch, mic ${rate}Hz: can't compare them this call", tag = Logger.Tags.MIC)
             }
         }
-        mic.uplinkPcmTap = { pcm, off, len -> monitor.onUplink(pcm, off, len) }
+        // Automatic on the car call path is guarded; a path the driver picked by hand is trusted as is.
+        val guard = if (callMic.isAutomatic && micInput != null) SilenceGuard(rate) else null
+        mic.uplinkPcmTap = { pcm, off, len ->
+            monitor.onUplink(pcm, off, len)
+            if (guard?.feed(pcm, off, len) == true) scope.launch { onCarPathSilent() }
+        }
         callEchoMonitor = monitor
-        logInfo("[ECHO_MON] start: ${rate}Hz callMic=$callMic", tag = Logger.Tags.MIC)
+        logInfo("[ECHO_MON] start: ${rate}Hz callMic=${callMic.label} guard=${if (guard != null) "on" else "off"}", tag = Logger.Tags.MIC)
     }
 
     private fun stopEchoMonitor() {
@@ -2335,17 +2360,89 @@ class CarlinkManager(
      * One [CALL_AUDIO] line per capture names the choice, so logs from different GM builds compare.
      */
     private fun callMicInput(): android.media.AudioDeviceInfo? {
-        val pref = CallAudioStore.get(context).callMic
+        val store = CallAudioStore.get(context)
+        val pref = store.callMic
         val callActive = voiceRouter?.isCallActive() == true
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
-        val bus = am?.let { AudioRouteInfo.uplinkBus(it) }
-        val input = if (callActive && pref == CallMicConfig.VOICE_UPLINK) bus else null
+        val key = pref.deviceKey
+        val (input, why) =
+            when {
+                !callActive -> null to "no call yet (Siri, or the call's audio hasn't started)"
+                am == null -> null to "no AudioManager"
+                pref.isAutomatic -> automaticInput(am, store)
+                key != null -> CallPaths.find(am, key)?.let { it to "your choice" } ?: (null to "your choice isn't listed by the car now")
+                else -> null to "system choice"
+            }
         logInfo(
-            "[CALL_AUDIO] callMic=$pref callActive=$callActive carListsVoiceUplink=${bus != null} " +
-                "input=${input?.let { AudioRouteInfo.device(it) } ?: "OS choice"} os=${android.os.Build.DISPLAY}",
+            "[CALL_AUDIO] callMic=${pref.label} callActive=$callActive " +
+                "input=${input?.let { AudioRouteInfo.device(it) } ?: "OS choice"} ($why) os=${android.os.Build.DISPLAY}",
             tag = Logger.Tags.MIC,
         )
         return input
+    }
+
+    /** Set for the rest of a call once Automatic's [SilenceGuard] found the car call path silent. */
+    @Volatile private var carPathSilentThisCall = false
+
+    /**
+     * Automatic: the input the first-launch check chose for this car software ([checkCallPathIfNeeded]).
+     * Not checked yet (no mic permission at launch, or a failed check) means try the car call path
+     * anyway: the guard catches a silent one within seconds.
+     */
+    private fun automaticInput(
+        am: android.media.AudioManager,
+        store: CallAudioStore,
+    ): Pair<android.media.AudioDeviceInfo?, String> {
+        if (carPathSilentThisCall) return null to "Automatic: the car call path went silent this call"
+        val auto = store.autoPath?.takeIf { it.osBuild == android.os.Build.FINGERPRINT }
+        val key =
+            when {
+                auto == null -> null
+                auto.deviceKey == null -> return null to "Automatic: ${auto.reason}"
+                else -> auto.deviceKey
+            }
+        if (key != null) return CallPaths.find(am, key)?.let { it to "Automatic: ${auto?.reason}" } ?: (null to "Automatic: its input isn't listed now")
+        val bus = CallPaths.candidates(am).firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUS }
+        return bus to if (bus != null) "Automatic: not checked yet, trying the car call path" else "Automatic: this car lists no call input"
+    }
+
+    /**
+     * Automatic's guard tripped: the car call path has carried digital silence since the call's mic
+     * opened. Move this call to the system's choice and remember it, so later calls start there too
+     * (until the car's software changes and the first-launch check runs again).
+     */
+    private fun onCarPathSilent() {
+        if (!isMicrophoneCapturing || carPathSilentThisCall) return
+        logWarn("[CALL_AUDIO] Automatic: the car call path is silent — switching this call to the system choice", tag = Logger.Tags.MIC)
+        carPathSilentThisCall = true
+        CallAudioStore.get(context).setAutoPath(
+            AutoCallPath(null, android.os.Build.FINGERPRINT, "the car call path went silent during a call"),
+        )
+        stopMicrophoneCapture()
+        startMicrophoneCapture(micRate, micChannels, micCodec)
+    }
+
+    /**
+     * Automatic's silent first-launch check, re-run when the car's software changes: record about a
+     * second from the car call path with nothing playing and keep it if it carries sound
+     * ([CallPaths.probeCarCallPath]). Runs off the main thread, never during Siri, a call or an
+     * audio test. Called at startup and when microphone permission is granted.
+     */
+    fun checkCallPathIfNeeded() {
+        val store = CallAudioStore.get(context)
+        if (store.autoPath?.osBuild == android.os.Build.FINGERPRINT) return
+        scope.launch(Dispatchers.IO) {
+            if (audioTestBlockedReason() != null || !AudioTestLock.tryLock()) return@launch
+            try {
+                val probe = CallPaths.probeCarCallPath(context)
+                logInfo("[CALL_AUDIO] Automatic checked this car: ${probe.reason} (conclusive=${probe.conclusive})", tag = Logger.Tags.MIC)
+                if (probe.conclusive) {
+                    store.setAutoPath(AutoCallPath(probe.device?.let { CallPaths.key(it) }, android.os.Build.FINGERPRINT, probe.reason))
+                }
+            } finally {
+                AudioTestLock.unlock()
+            }
+        }
     }
 
     /**

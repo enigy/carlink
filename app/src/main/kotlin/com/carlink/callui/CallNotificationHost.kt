@@ -42,6 +42,12 @@ import com.carlink.ocbm.Ocbm
  *   posted instead. Nothing is lost but the call-shaped rendering.
  * - The `Person` must have a non-empty name ([CallState.displayLine] guarantees one).
  * - The card must be `ongoing` so a swipe cannot dismiss a live call.
+ *
+ * When it is shown (2026-10-20): on AAOS a CATEGORY_CALL heads-up stays over the screen until it is
+ * acted on, and it blocked the projection mid-call while CarPlay's own call screen sat underneath.
+ * So nothing is posted while Carlink3 is on screen ([setAppVisible]). With Carlink3 in the
+ * background an incoming call still pops up to be answered, and an ongoing call sits in the
+ * notification list on a quiet channel ([ONGOING_CHANNEL_ID]) that never pops up.
  */
 class CallNotificationHost(
     private val context: Context,
@@ -50,6 +56,10 @@ class CallNotificationHost(
     private val nm = context.getSystemService(NotificationManager::class.java)
     private val roster = CallRoster()
     private var shown: CallRoster.Presentation = CallRoster.Presentation.None
+
+    /** Which card is posted now; differs from [shown] while Carlink3 is on screen. */
+    private var posted = Card.NONE
+    private var appVisible = true
     private var registered = false
 
     private val receiver =
@@ -78,6 +88,14 @@ class CallNotificationHost(
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
         nm.createNotificationChannel(ch)
+        nm.createNotificationChannel(
+            NotificationChannel(ONGOING_CHANNEL_ID, "Ongoing calls", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "A call in progress while Carlink3 is in the background"
+                setShowBadge(false)
+                setSound(null, null)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            },
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && !nm.canUseFullScreenIntent()) {
             logWarn("[CALL_UI] USE_FULL_SCREEN_INTENT not granted — CallStyle will fall back to a plain card", tag = TAG)
         }
@@ -104,6 +122,16 @@ class CallNotificationHost(
         render(roster.update(state, SystemClock.elapsedRealtime()))
     }
 
+    /**
+     * MainActivity is on screen (true) or not. On screen, CarPlay's own call screen is the call UI
+     * and any card is withdrawn; leaving brings the card for the current call back. Main thread.
+     */
+    fun setAppVisible(visible: Boolean) {
+        if (visible == appVisible) return
+        appVisible = visible
+        render(shown, force = true)
+    }
+
     /** The current reduced view, for anyone arbitrating audio against it. */
     val presentation: CallRoster.Presentation get() = shown
 
@@ -120,17 +148,32 @@ class CallNotificationHost(
         }
     }
 
-    private fun render(p: CallRoster.Presentation) {
-        if (p == shown) return
-        val previous = shown
+    /**
+     * Post, update or withdraw the card for [p], given whether Carlink3 is on screen. [force] re-applies
+     * an unchanged call when only the visibility changed.
+     */
+    private fun render(
+        p: CallRoster.Presentation,
+        force: Boolean = false,
+    ) {
+        if (p == shown && !force) return
         shown = p
-        when (p) {
-            CallRoster.Presentation.None -> {
+        val want = cardFor(p, appVisible)
+        if (want == Card.NONE) {
+            if (posted != Card.NONE) {
                 nm.cancel(NOTIFICATION_ID)
-                if (previous != CallRoster.Presentation.None) logInfo("[CALL_UI] cleared", tag = TAG)
+                logInfo("[CALL_UI] cleared${if (appVisible) " (Carlink3 on screen)" else ""}", tag = TAG)
             }
+            posted = Card.NONE
+            return
+        }
+        // A different kind of card is posted fresh: updating a heads-up in place can leave it up.
+        if (posted != Card.NONE && posted != want) nm.cancel(NOTIFICATION_ID)
+        posted = want
+        when (p) {
             is CallRoster.Presentation.Incoming -> post(styled(p), "incoming ${p.call.displayLine}")
-            is CallRoster.Presentation.Ongoing -> post(styled(p), "ongoing ${p.call.displayLine}")
+            is CallRoster.Presentation.Ongoing -> post(styled(p), "ongoing ${p.call.displayLine} (quiet)")
+            CallRoster.Presentation.None -> Unit
         }
     }
 
@@ -138,15 +181,15 @@ class CallNotificationHost(
     private fun styled(p: CallRoster.Presentation): Notification =
         when (p) {
             is CallRoster.Presentation.Incoming ->
-                plainBuilder(p.call, "Incoming call")
+                plainBuilder(p.call, "Incoming call", CHANNEL_ID)
                     .setStyle(NotificationCompat.CallStyle.forIncomingCall(person(p.call), pending(ACTION_DECLINE), pending(ACTION_ANSWER)))
                     .setFullScreenIntent(activityIntent(), true)
                     .build()
             is CallRoster.Presentation.Ongoing -> {
                 val b =
-                    plainBuilder(p.call, "Ongoing call")
+                    plainBuilder(p.call, "Ongoing call", ONGOING_CHANNEL_ID)
                         .setStyle(NotificationCompat.CallStyle.forOngoingCall(person(p.call), pending(ACTION_HANGUP)))
-                        .setFullScreenIntent(activityIntent(), true)
+                        .setPriority(NotificationCompat.PRIORITY_LOW)
                 if (p.sinceMs > 0) {
                     // Chronometer runs on wall-clock `when`; convert the elapsed stamp.
                     b.setUsesChronometer(true).setWhen(System.currentTimeMillis() - (SystemClock.elapsedRealtime() - p.sinceMs))
@@ -175,8 +218,13 @@ class CallNotificationHost(
             val plain =
                 when (p) {
                     is CallRoster.Presentation.Incoming ->
-                        plainBuilder(p.call, "Incoming call").addAction(action("Answer", ACTION_ANSWER)).addAction(action("Decline", ACTION_DECLINE))
-                    is CallRoster.Presentation.Ongoing -> plainBuilder(p.call, "Ongoing call").addAction(action("Hang up", ACTION_HANGUP))
+                        plainBuilder(p.call, "Incoming call", CHANNEL_ID)
+                            .addAction(action("Answer", ACTION_ANSWER))
+                            .addAction(action("Decline", ACTION_DECLINE))
+                    is CallRoster.Presentation.Ongoing ->
+                        plainBuilder(p.call, "Ongoing call", ONGOING_CHANNEL_ID)
+                            .setPriority(NotificationCompat.PRIORITY_LOW)
+                            .addAction(action("Hang up", ACTION_HANGUP))
                     CallRoster.Presentation.None -> return
                 }
             runCatching { nm.notify(NOTIFICATION_ID, plain.build()) }
@@ -187,9 +235,10 @@ class CallNotificationHost(
     private fun plainBuilder(
         call: CallState,
         text: String,
+        channel: String,
     ): NotificationCompat.Builder =
         NotificationCompat
-            .Builder(context, CHANNEL_ID)
+            .Builder(context, channel)
             .setSmallIcon(R.drawable.ic_carlink_attribution)
             .setContentTitle(call.displayLine)
             .setContentText(call.label?.let { "$text · $it" } ?: text)
@@ -201,14 +250,6 @@ class CallNotificationHost(
             .setSilent(true) // iOS rings through the ALERT audio lane; a second ringtone here would double up.
             .addPerson(person(call))
             .setContentIntent(activityIntent())
-
-    private fun person(call: CallState): Person =
-        Person
-            .Builder()
-            .setName(call.displayLine)
-            .setImportant(true)
-            .setKey(call.key)
-            .build()
 
     private fun pending(action: String): PendingIntent =
         PendingIntent.getBroadcast(
@@ -232,6 +273,9 @@ class CallNotificationHost(
         private const val TAG = "CALL_UI"
         const val CHANNEL_ID = "carlink_calls"
 
+        /** Ongoing calls while Carlink3 is in the background: low importance, so never heads-up. */
+        const val ONGOING_CHANNEL_ID = "carlink_calls_ongoing"
+
         /** Distinct from the media FGS slot (1001) so the two never replace each other. */
         const val NOTIFICATION_ID = 1002
         private const val REQ_ACTIVITY = 1002
@@ -241,3 +285,26 @@ class CallNotificationHost(
         const val ACTION_HANGUP = "com.carlink.callui.HANGUP"
     }
 }
+
+/** Which card is posted; differs from the call's presentation while Carlink3 is on screen. */
+private enum class Card { NONE, INCOMING, ONGOING }
+
+/** Nothing while Carlink3 is on screen (CarPlay's call screen is up); otherwise the call's own card. */
+private fun cardFor(
+    p: CallRoster.Presentation,
+    appVisible: Boolean,
+): Card =
+    when {
+        appVisible -> Card.NONE
+        p is CallRoster.Presentation.Incoming -> Card.INCOMING
+        p is CallRoster.Presentation.Ongoing -> Card.ONGOING
+        else -> Card.NONE
+    }
+
+private fun person(call: CallState): Person =
+    Person
+        .Builder()
+        .setName(call.displayLine)
+        .setImportant(true)
+        .setKey(call.key)
+        .build()

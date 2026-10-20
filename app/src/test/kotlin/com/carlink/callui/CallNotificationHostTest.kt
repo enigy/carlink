@@ -34,6 +34,7 @@ class CallNotificationHostTest {
     fun `a ringing call posts an ongoing CallStyle card with a full-screen intent and both actions`() {
         val pressed = mutableListOf<Byte>()
         val host = CallNotificationHost(ctx) { pressed += it }
+        host.setAppVisible(false)
         host.onCallState(call(CallState.STATUS_RINGING))
 
         val n = shadowOf(nm).getNotification(CallNotificationHost.NOTIFICATION_ID)
@@ -55,13 +56,17 @@ class CallNotificationHostTest {
     }
 
     @Test
-    fun `active then idle replaces the card with hang-up and clears it`() {
+    fun `active then idle replaces the card with a quiet hang-up card and clears it`() {
         val pressed = mutableListOf<Byte>()
         val host = CallNotificationHost(ctx) { pressed += it }
+        host.setAppVisible(false)
         host.onCallState(call(CallState.STATUS_RINGING))
         host.onCallState(call(CallState.STATUS_ACTIVE))
         val n = shadowOf(nm).getNotification(CallNotificationHost.NOTIFICATION_ID)
         assertEquals(1, n.actions.size)
+        // Low-importance channel and no full-screen intent: an ongoing call never pops up.
+        assertEquals(CallNotificationHost.ONGOING_CHANNEL_ID, n.channelId)
+        assertNull(n.fullScreenIntent)
         n.actions[0].actionIntent.send()
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(listOf(Ocbm.TEL_END), pressed)
@@ -69,6 +74,21 @@ class CallNotificationHostTest {
         host.onCallState(CallState(CallState.STATUS_DISCONNECTED, 0, null, null, null, null, null))
         assertNull(shadowOf(nm).getNotification(CallNotificationHost.NOTIFICATION_ID))
         assertEquals(CallRoster.Presentation.None, host.presentation)
+        host.release()
+    }
+
+    @Test
+    fun `nothing is posted while Carlink3 is on screen, and leaving brings the card back`() {
+        val host = CallNotificationHost(ctx) {}
+        host.onCallState(call(CallState.STATUS_ACTIVE))
+        assertNull("CarPlay's own call screen is showing", shadowOf(nm).getNotification(CallNotificationHost.NOTIFICATION_ID))
+        assertTrue(host.presentation is CallRoster.Presentation.Ongoing)
+
+        host.setAppVisible(false)
+        assertEquals(CallNotificationHost.ONGOING_CHANNEL_ID, shadowOf(nm).getNotification(CallNotificationHost.NOTIFICATION_ID).channelId)
+
+        host.setAppVisible(true)
+        assertNull(shadowOf(nm).getNotification(CallNotificationHost.NOTIFICATION_ID))
         host.release()
     }
 }
