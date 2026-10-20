@@ -18,6 +18,25 @@ Modules inherited from OCBM and removed here: `:projection` (Raspberry Pi target
 (system APIs a third-party app cannot hold), `:usbhandler` (OCBM's untested proof of the permission
 grant — superseded by `:bridge`).
 
+## Install
+
+1. Install Carlink3 from Google Play. <!-- TODO: Play link -->
+2. Copy [`app/carlink3_bridge.apk`](app/carlink3_bridge.apk) (Carlink3 USB Bridge 1.0.3) to a USB drive.
+   SHA-256: `dc4e10e2abc424f1eff27195544cc5e04a47f305ef2a06731684c4278ae7a94f`
+3. While parked, open Carlink3. It shows **USB bridge not installed** with an **Open Files** button
+   that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK.
+   If asked, allow Files to install apps.
+4. When the install finishes, tap the Carlink3 notification (or press Home and open Carlink3).
+
+The bridge uses the same package name as Carlink2's (`android.car.usb.handler`, the name GM's head
+unit hands USB devices to) and answers only Carlink3, so installing it replaces Carlink2's bridge.
+To check the download: `shasum -a 256 carlink3_bridge.apk` on macOS, `sha256sum carlink3_bridge.apk`
+on Linux, or `Get-FileHash carlink3_bridge.apk -Algorithm SHA256` in Windows PowerShell.
+
+The same APK is attached to each [GitHub Release](https://github.com/enigy/carlink3/releases) as
+`carlink3_bridge-<version>.apk`. When the bridge version changes, replace `app/carlink3_bridge.apk`
+with the release's signed APK and update the version and SHA-256 above.
+
 ## Status
 
 **Milestones 1, 2 and 4 are in; nothing has run on a box yet.** `:app` (`com.enigy.carlink3`),
