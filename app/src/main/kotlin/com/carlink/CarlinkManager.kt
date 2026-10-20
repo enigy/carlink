@@ -1657,6 +1657,7 @@ class CarlinkManager(
         known: Boolean,
     ) {
         if (mode == projectionMode && health == boxHealth && known == boxHealthKnown) return
+        if (mode != projectionMode) logInfo("[STATUS] adapter mode -> ${Ocbm.pmName(mode)}", tag = Logger.Tags.ADAPTR)
         projectionMode = mode
         boxHealth = health
         boxHealthKnown = known
@@ -2953,7 +2954,12 @@ class CarlinkManager(
         }
     }
 
+    @Volatile private var lastStatusText = ""
+
     private fun setStatusText(text: String) {
+        // Timestamped in the trail so a drive log shows how long each connecting step really lasts.
+        if (text != lastStatusText) logInfo("[STATUS] $text", tag = Logger.Tags.ADAPTR)
+        lastStatusText = text
         callback?.onStatusTextChanged(text)
         // Mirror status to the MediaSession placeholder so cluster, cardview and CarMediaApp all
         // show the same state the app UI shows. Gated on != STREAMING: once real track metadata

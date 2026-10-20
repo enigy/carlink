@@ -1,6 +1,8 @@
 package com.carlink.ui.components
 
+import com.carlink.ocbm.Ocbm
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,6 +56,23 @@ class LoadingStepsTest {
         val steps = launch.map { step(it) }
         steps.zipWithNext().forEachIndexed { i, (a, b) -> assertTrue("${launch[i]} -> ${launch[i + 1]}", b >= a) }
         assertEquals(LoadingStep.START, steps.last())
+    }
+
+    @Test
+    fun theAdapterClaimingAProjectionStartsTheLastStep() {
+        // WIRELESS_CP lands right after the Wi-Fi handoff, while the text still says the phone step.
+        assertTrue(LoadingSteps.projectionStarting(Ocbm.PM_WIRELESS_CP))
+        assertTrue(LoadingSteps.projectionStarting(Ocbm.PM_WIRED_CP))
+        assertFalse(LoadingSteps.projectionStarting(Ocbm.PM_NONE))
+        val handedOff = LoadingSteps.projectionStarting(Ocbm.PM_WIRELESS_CP)
+        assertEquals(LoadingStep.START, step("Handing off to Wi-Fi...", phoneConnected = handedOff))
+        assertEquals(LoadingStep.PHONE, step("Handing off to Wi-Fi...", phoneConnected = LoadingSteps.projectionStarting(Ocbm.PM_NONE)))
+    }
+
+    @Test
+    fun androidAutoModesNameAndroidAuto() {
+        assertTrue(LoadingSteps.isAndroidAuto(Ocbm.PM_WIRED_AA))
+        assertFalse(LoadingSteps.isAndroidAuto(Ocbm.PM_WIRELESS_CP))
     }
 
     @Test

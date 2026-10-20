@@ -1,5 +1,7 @@
 package com.carlink.ui.components
 
+import com.carlink.ocbm.Ocbm
+
 /** The connecting screen's three steps (Carlink2 [229]). */
 internal enum class LoadingStep { ADAPTER, PHONE, START }
 
@@ -70,6 +72,17 @@ internal object LoadingSteps {
             }
         return LoadingStatus(step, action)
     }
+
+    /**
+     * The adapter has claimed a projection (CT_PROJ_MODE): WIRELESS_CP right after the phone hands
+     * off from Bluetooth to Wi-Fi, WIRED_CP when a phone is plugged in, and the Android Auto modes.
+     * That is when CarPlay (or Android Auto) is really starting, ahead of the session's first
+     * key ("Phone connected"), which the first video frame follows within half a second.
+     */
+    fun projectionStarting(mode: Byte): Boolean = mode != Ocbm.PM_NONE
+
+    /** The adapter's projection is Android Auto, so the last step says so. */
+    fun isAndroidAuto(mode: Byte): Boolean = mode == Ocbm.PM_WIRED_AA || mode == Ocbm.PM_WIRELESS_AA
 
     fun label(
         step: LoadingStep,

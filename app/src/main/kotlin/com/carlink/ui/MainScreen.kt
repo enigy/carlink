@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
@@ -73,6 +74,7 @@ import com.carlink.ui.components.BridgeSetupPanel
 import com.carlink.ui.components.DialogSystemBars
 import com.carlink.ui.components.ForestFogEffect
 import com.carlink.ui.components.LoadingStatusView
+import com.carlink.ui.components.LoadingSteps
 import com.carlink.ui.components.NO_BACKGROUND_BRUSH
 import com.carlink.ui.components.VideoSurface
 import com.carlink.ui.components.VideoSurfaceState
@@ -407,6 +409,13 @@ private fun LoadingOverlay(
 ) {
     val context = LocalContext.current
     val backgroundLogo by BackgroundLogoStore.get(context).flow.collectAsState()
+    var projectionMode by remember(carlinkManager) { mutableStateOf(carlinkManager.projectionMode) }
+    DisposableEffect(carlinkManager) {
+        // Fires on every CT_PROJ_MODE / CT_BOX_HEALTH change, on the main thread.
+        val l = CarlinkManager.BoxStatusListener { projectionMode = carlinkManager.projectionMode }
+        carlinkManager.addBoxStatusListener(l)
+        onDispose { carlinkManager.removeBoxStatusListener(l) }
+    }
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // ContentScale.Crop fills the panel and centre-crops the overflow (the scene is ~2.49:1,
         // so almost nothing is cropped) — no stretching. Same scene for both logos.
@@ -440,9 +449,14 @@ private fun LoadingOverlay(
                 // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
                 !bridge.installed -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
                 statusText.startsWith(BRIDGE_TROUBLE_PREFIX) -> BridgeNotStartingPanel(onOpenAppInfo = { CarlinkBridge.openAppInfo(context) })
-                // phoneConnected is folded into the status text here ("Phone connected", "Starting
-                // projection…"), so the classifier needs no second signal.
-                else -> LoadingStatusView(statusText = statusText, phoneConnected = false, androidAuto = false)
+                // The adapter's own projection mode is what starts the last step: it flips to
+                // WIRELESS_CP/WIRED_CP when CarPlay really begins, ahead of "Phone connected".
+                else ->
+                    LoadingStatusView(
+                        statusText = statusText,
+                        phoneConnected = LoadingSteps.projectionStarting(projectionMode),
+                        androidAuto = LoadingSteps.isAndroidAuto(projectionMode),
+                    )
             }
         }
         BoxStatusLine(
