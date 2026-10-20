@@ -30,7 +30,7 @@ grant — superseded by `:bridge`).
 - **Cluster/HUD navigation:** Carlink2's Templates Host pipeline (`cluster/`, `navigation/`, the compose
   icon store) is ported verbatim. `navigation/OcbmNavigationFeed` turns the box's `routeGuidance` /
   `maneuver` JSON (`CH_METADATA`) into the `NavigationState` it renders, including the exit label
-  ("Exit 273 · Wade Green Rd"). Off by default — Settings → Control → **Cluster Navigation**; **Reset
+  ("Exit 123 · John Smith Rd"). Off by default — Settings → Control → **Cluster Navigation**; **Reset
   Cluster** restarts the host binding. Junction spoke angles (`junctionAngles` / `junctionExitAngle`)
   are consumed when the box emits them — that is the `patches/ocbm/` change, on the fork's
   `route-guidance-exitinfo-angles` branch; against an unpatched box, roundabout icons fall back to the
