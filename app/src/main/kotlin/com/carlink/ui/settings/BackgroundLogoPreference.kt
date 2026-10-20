@@ -34,6 +34,13 @@ enum class BackgroundLogoConfig(
     NONE("none", "No background", null),
     ;
 
+    /**
+     * Whether the connecting screen draws its drifting fog ([com.carlink.ui.components.ForestFogEffect])
+     * over this scene. The fog is shaped for the forest band along the bottom of the brand scene, so
+     * only GMC and Chevrolet get it; on the photos it sat over roads, water and benches.
+     */
+    val showsFog: Boolean get() = this == GMC || this == CHEVROLET
+
     companion object {
         val DEFAULT = GMC
 

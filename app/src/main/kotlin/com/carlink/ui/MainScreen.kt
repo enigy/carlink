@@ -394,9 +394,9 @@ private fun ProjectionSurface(
 }
 
 /**
- * The connecting screen, from Carlink2: the brand scene (Settings → App Control → Background),
- * drifting fog over its forest, the logo, and the status folded into three ethereal steps with a
- * plain action line when the driver has to do something. The box's own status line sits at the
+ * The connecting screen, from Carlink2: the chosen scene (Settings → Display → Loading screen),
+ * drifting fog over the forest of the GMC and Chevrolet scenes only, the logo, and the status folded
+ * into three ethereal steps with a plain action line when the driver has to do something. The box's own status line sits at the
  * bottom edge, dimmed, for the bench. Shown while no session streams.
  */
 @Composable
@@ -423,7 +423,7 @@ private fun LoadingOverlay(
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        ForestFogEffect()
+        if (backgroundLogo.showsFog) ForestFogEffect()
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
