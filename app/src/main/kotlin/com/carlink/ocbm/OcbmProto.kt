@@ -280,6 +280,7 @@ object Ocbm {
     const val CAP_IP: Int = 0x0000_0008
     const val CAP_FILE: Int = 0x0000_0010
     const val CAP_ETH: Int = 0x0000_0020
+    const val CAP_PHONE_POLICY: Int = 0x0000_0040
 
     fun capsString(caps: Int): String {
         val bits = ArrayList<String>()
@@ -289,6 +290,7 @@ object Ocbm {
         if (caps and CAP_IP != 0) bits.add("IP")
         if (caps and CAP_FILE != 0) bits.add("FILE")
         if (caps and CAP_ETH != 0) bits.add("ETH")
+        if (caps and CAP_PHONE_POLICY != 0) bits.add("PHONE_POLICY")
         return if (bits.isEmpty()) "none" else bits.joinToString("|")
     }
 
@@ -299,6 +301,8 @@ object Ocbm {
     const val MGMT_FORGET_DEVICE: Byte = 0x04
     const val MGMT_RESTART_WIRELESS: Byte = 0x05
     const val MGMT_ENTER_NCM: Byte = 0x06
+    const val MGMT_SET_POLICY: Byte = 0x07
+    const val MGMT_CONNECT_DEVICE: Byte = 0x08
     const val MGMT_INFO: Byte = 0x81.toByte()
     const val MGMT_ACK: Byte = 0x82.toByte()
 

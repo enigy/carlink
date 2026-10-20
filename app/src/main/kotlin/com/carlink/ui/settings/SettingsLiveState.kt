@@ -54,6 +54,10 @@ internal class SettingsLiveState(
     var driveLog by mutableStateOf(false)
     var driveLogFile by mutableStateOf<String?>(null)
 
+    /** The box takes phone priority (CAP_PHONE_POLICY), and the auto-connect flag the app holds. */
+    var policySupported by mutableStateOf(false)
+    var autoConnect by mutableStateOf(true)
+
     val connectedPhone: ConnectedPhone? get() = SettingsModel.connectedPhone(phone, devices)
 }
 
@@ -82,6 +86,8 @@ internal fun rememberSettingsLiveState(
         while (active) {
             live.phone = PhoneSnapshot(carlinkManager.currentPhoneType, carlinkManager.currentWifi ?: -1, carlinkManager.connectedBtMac)
             live.devices = carlinkManager.pairedDevices
+            live.policySupported = carlinkManager.phonePolicySupported
+            live.autoConnect = carlinkManager.autoConnectPhones
             live.box =
                 BoxSnapshot(
                     adapterConnected = connectionState != CarlinkManager.State.DISCONNECTED,

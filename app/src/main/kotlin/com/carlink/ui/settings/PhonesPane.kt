@@ -14,8 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PhoneIphone
-import androidx.compose.material.icons.filled.Usb
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -25,7 +23,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -79,11 +76,7 @@ internal fun PhonesPane(
         } else {
             NoPhoneCard()
         }
-        KnownPhones(
-            usbInUse = connected != null && !connected.wireless,
-            devices = live.devices.filterNot { it.btMac == connected?.device?.btMac },
-            onRemove = { deviceToRemove = it },
-        )
+        PhoneList(carlinkManager, live, connected, onRemove = { deviceToRemove = it })
         AddPhoneHint(carlinkManager.adapterName)
 
         deviceToRemove?.let { device ->
@@ -196,44 +189,6 @@ private fun PhoneTile(highlighted: Boolean) {
                 tint = if (highlighted) colors.onPrimaryContainer else colors.onSurfaceVariant,
                 modifier = Modifier.size(48.dp),
             )
-        }
-    }
-}
-
-/** USB port first, then every known wireless phone not already shown as connected. */
-@Composable
-private fun KnownPhones(
-    usbInUse: Boolean,
-    devices: List<CarlinkManager.DeviceInfo>,
-    onRemove: (CarlinkManager.DeviceInfo) -> Unit,
-) {
-    SettingsGroup {
-        SettingRow(
-            title = "USB port",
-            subtitle = if (usbInUse) "In use by the connected phone" else "Nothing plugged in",
-            icon = Icons.Default.Usb,
-        )
-        if (devices.isEmpty()) {
-            GroupDivider()
-            SettingRow(title = "No other phones yet", subtitle = "Phones you pair with the adapter appear here")
-        }
-        devices.forEach { device ->
-            key(device.btMac) {
-                GroupDivider()
-                val caution = !device.bonded
-                SettingRow(
-                    title = device.name,
-                    subtitle = SettingsModel.deviceStatus(device),
-                    icon = if (caution) Icons.Default.Warning else Icons.Default.PhoneIphone,
-                    tint = if (caution) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
-                ) {
-                    RowAction(
-                        label = if (device.bonded) "Forget" else "Remove",
-                        onClick = { onRemove(device) },
-                        weight = if (device.bonded) ActionWeight.DANGER_OUTLINE else ActionWeight.NORMAL,
-                    )
-                }
-            }
         }
     }
 }

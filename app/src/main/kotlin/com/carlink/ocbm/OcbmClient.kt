@@ -74,6 +74,9 @@ class OcbmClient(
         return send(Ocbm.CH_CTRL, pl)
     }
 
+    /** The box relays phone priority to its Bluetooth daemon (MGMT_SET_POLICY / MGMT_CONNECT_DEVICE). */
+    val supportsPhonePolicy: Boolean get() = (caps and Ocbm.CAP_PHONE_POLICY) != 0
+
     /** Config blob last sent with CT_SUBSCRIBE; re-sent verbatim if the box drops us. */
     @Volatile private var configBlob: ByteArray = ByteArray(0)
 

@@ -37,7 +37,18 @@ data class KnownDeviceSnapshot(
      * one preferred" instead of leaving an invariant to police on every mutation.
      */
     val preferredMac: String? = null,
-)
+    /**
+     * The user's full reconnect order (lower-case MACs, first = called first), or empty for "no
+     * explicit order". Sent to the box as its connection policy (`MGMT_SET_POLICY`); phones not
+     * listed keep their place after the listed ones.
+     */
+    val priority: List<String> = emptyList(),
+    /** Whether the box pages known phones on its own when it starts. */
+    val autoConnect: Boolean = true,
+) {
+    /** The explicit order the list and the box follow: [priority], else the single [preferredMac]. */
+    val order: List<String> get() = priority.ifEmpty { listOfNotNull(preferredMac) }
+}
 
 /**
  * JSON form of [KnownDeviceSnapshot]. Separated from the store so it is testable without a Context.
@@ -65,6 +76,16 @@ object KnownDeviceCodec {
         buildString {
             append("""{"v":""").append(SCHEMA_VERSION)
             s.preferredMac?.let { append(""","preferredMac":""").append(JSONObject.quote(it)) }
+            // Written only when set, so a document with neither reads exactly as before.
+            if (s.priority.isNotEmpty()) {
+                append(""","priority":[""")
+                s.priority.forEachIndexed { i, m ->
+                    if (i > 0) append(',')
+                    append(JSONObject.quote(m))
+                }
+                append(']')
+            }
+            if (!s.autoConnect) append(""","autoConnect":false""")
             append(""","devices":[""")
             s.devices.values.sortedBy { it.mac }.forEachIndexed { i, d ->
                 if (i > 0) append(',')
@@ -106,6 +127,10 @@ object KnownDeviceCodec {
         return KnownDeviceSnapshot(
             devices = out,
             preferredMac = root.optString("preferredMac").lowercase().ifEmpty { null },
+            priority =
+                root.optJSONArray("priority")?.let { p -> (0 until p.length()).mapNotNull { p.optString(it).lowercase().ifEmpty { null } } }
+                    ?: emptyList(),
+            autoConnect = root.optBoolean("autoConnect", true),
         )
     }
 }
@@ -126,17 +151,20 @@ object KnownDeviceCodec {
  *    cannot page a phone it has no link key for, and offering Connect there is a lie the user
  *    discovers by tapping it.
  *
- * Ordering collapses all three phrasings of the request into one precedence — explicit selection,
- * else most-recently-connected, else first-seen — so with one phone it is "the first device", with
- * a choice made it is "the device selected", and otherwise it follows recency with no configuration.
+ * Ordering collapses all three phrasings of the request into one precedence — the user's explicit
+ * order ([order]: the priority list, or the single preferred phone), else most-recently-connected,
+ * else first-seen — so with one phone it is "the first device", with a choice made it is "the
+ * device selected", and otherwise it follows recency with no configuration. This is also the order
+ * the box is told to call phones in, so the list on screen is the order it will use.
  */
 fun mergeDeviceList(
     known: Map<String, KnownDevice>,
     bondedMacs: Set<String>,
     suppressed: Set<String>,
-    preferredMac: String?,
+    order: List<String>,
     formatLastSeen: (Long) -> String,
 ): List<DeviceInfo> {
+    val rank = order.map { it.lowercase() }.withIndex().associate { (i, m) -> m to i }
     val bonded = bondedMacs.map { it.lowercase() }.toSet()
     val hidden = suppressed.map { it.lowercase() }.toSet()
     val macs = (known.keys + bonded).filterNot { it in hidden }
@@ -153,10 +181,28 @@ fun mergeDeviceList(
             )
         }.sortedWith(
             compareBy(
-                { if (it.btMac == preferredMac?.lowercase()) 0 else 1 },
+                { rank[it.btMac] ?: Int.MAX_VALUE },
                 { -(known[it.btMac]?.lastConnectedMs ?: 0L) },
                 { known[it.btMac]?.firstSeenMs ?: Long.MAX_VALUE },
                 { it.btMac },
             ),
         )
 }
+
+/**
+ * The body of the box's `MGMT_SET_POLICY`: `{"autoConnect":true,"order":["AA:BB:CC:DD:EE:FF",..]}`.
+ * btd keeps only the bonded addresses from [order] and tries any other bond after them, so passing
+ * the whole list on screen (history-only phones included) is safe.
+ */
+fun phonePolicyJson(
+    order: List<String>,
+    autoConnect: Boolean,
+): String =
+    buildString {
+        append("""{"autoConnect":""").append(autoConnect).append(""","order":[""")
+        order.forEachIndexed { i, mac ->
+            if (i > 0) append(',')
+            append(JSONObject.quote(mac.uppercase()))
+        }
+        append("]}")
+    }

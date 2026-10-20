@@ -105,7 +105,7 @@ class KnownDevicesTest {
         bonded: Set<String>,
         suppressed: Set<String> = emptySet(),
         preferred: String? = null,
-    ) = mergeDeviceList(known, bonded, suppressed, preferred) { "t$it" }
+    ) = mergeDeviceList(known, bonded, suppressed, listOfNotNull(preferred)) { "t$it" }
 
     @Test
     fun `a bonded device the app has never seen appears under its MAC`() {

@@ -27,6 +27,7 @@ import com.carlink.device.KnownDevice
 import com.carlink.device.KnownDeviceSnapshot
 import com.carlink.device.KnownDeviceStore
 import com.carlink.device.mergeDeviceList
+import com.carlink.device.phonePolicyJson
 import com.carlink.logging.DriveLog
 import com.carlink.logging.DriveLogging
 import com.carlink.logging.LogExport
@@ -184,6 +185,9 @@ class CarlinkManager(
         // How long a forgotten device's MAC is suppressed from list merges while the box
         // processes the forget (it restarts wireless, which is not instant).
         private const val FORGET_SUPPRESS_MS = 25_000L
+
+        /** When to re-send the phone policy after SUBSCRIBE: btd comes up with the radios, a few seconds in. */
+        private val POLICY_SYNC_DELAYS_MS = longArrayOf(5_000L, 15_000L, 45_000L)
 
         private const val INITIAL_RECONNECT_DELAY_MS = 2000L
         private const val MAX_RECONNECT_DELAY_MS = 30000L
@@ -1138,6 +1142,7 @@ class CarlinkManager(
         }
         c.startHeartbeat()
         armBoxLogStream(c)
+        syncPhonePolicyAfterSubscribe()
 
         setStatusText("Waiting for phone...")
     }
@@ -1487,6 +1492,7 @@ class CarlinkManager(
             snap.copy(
                 devices = snap.devices - mac,
                 preferredMac = snap.preferredMac?.takeIf { it != mac },
+                priority = snap.priority - mac,
             )
         }
         bondedMacs = bondedMacs - mac
@@ -2565,7 +2571,7 @@ class CarlinkManager(
                     known = snap.devices,
                     bondedMacs = bondedMacs,
                     suppressed = recentlyForgotten.keys.toSet(),
-                    preferredMac = snap.preferredMac,
+                    order = snap.order,
                     formatLastSeen = ::formatLastSeen,
                 )
             }
@@ -2605,17 +2611,78 @@ class CarlinkManager(
         c.onBoxLog = { DriveLog.boxEntries(it) }
         c.setBoxLogStream(true)
     }
+    // ---- Phone priority (enigy/ocbm phone-priority: MGMT_SET_POLICY / MGMT_CONNECT_DEVICE) -------
+
+    /** True when the box advertises CAP_PHONE_POLICY; without it the priority controls stay hidden. */
+    val phonePolicySupported: Boolean get() = client?.supportsPhonePolicy == true
+
+    /** Whether the box calls known phones on its own when it starts (the app's durable copy). */
+    val autoConnectPhones: Boolean get() = knownStore?.snapshot?.autoConnect ?: true
 
     /**
-     * Choose the phone the adapter should prefer, or null to follow most-recently-connected.
-     *
-     * Persisted immediately so it survives a restart, and reflected in list order at once.
+     * Move a phone one place up ([delta] = -1) or down (+1) in the reconnect order. The whole list on
+     * screen becomes the explicit order, so what the user sees is exactly what the box is told.
      */
-    fun setPreferredDevice(btMac: String?) {
-        val mac = btMac?.lowercase()
-        logInfo("[DEVICE_MGMT] Preferred device -> ${mac ?: "(most recent)"}", tag = Logger.Tags.ADAPTR)
-        knownStore?.update { it.copy(preferredMac = mac) }
+    fun movePhone(
+        btMac: String,
+        delta: Int,
+    ) {
+        val order = _pairedDevices.map { it.btMac.lowercase() }.toMutableList()
+        val i = order.indexOf(btMac.lowercase())
+        val j = i + delta
+        if (i < 0 || j !in order.indices) return
+        order[i] = order[j].also { order[j] = order[i] }
+        logInfo("[DEVICE_MGMT] Priority -> ${order.joinToString()}", tag = Logger.Tags.ADAPTR)
+        knownStore?.update { it.copy(priority = order, preferredMac = order.first()) }
         rebuildDeviceList()
+        pushPhonePolicy("reorder")
+    }
+
+    fun setAutoConnectPhones(on: Boolean) {
+        logInfo("[DEVICE_MGMT] Auto-connect -> $on", tag = Logger.Tags.ADAPTR)
+        knownStore?.update { it.copy(autoConnect = on) }
+        pushPhonePolicy("auto-connect")
+    }
+
+    /** Ask the box to call this bonded phone now. The box never interrupts a phone that is projecting. */
+    fun connectPhone(btMac: String) {
+        if (!phonePolicySupported) return
+        scope.launch(Dispatchers.IO) {
+            val status = client?.mgmtAction(Ocbm.MGMT_CONNECT_DEVICE, btMac.uppercase().toByteArray(Charsets.US_ASCII))
+            logInfo("[DEVICE_MGMT] CONNECT_DEVICE($btMac) status=$status", tag = Logger.Tags.ADAPTR)
+        }
+    }
+
+    /**
+     * Send the order on screen and the auto-connect flag to the box. The app is the durable copy, so
+     * this also runs at every session start; the box writes flash only when the policy changed.
+     */
+    private fun pushPhonePolicy(reason: String) {
+        if (!phonePolicySupported) return
+        val snap = knownStore?.snapshot ?: return
+        val body = phonePolicyJson(_pairedDevices.map { it.btMac }, snap.autoConnect)
+        scope.launch(Dispatchers.IO) {
+            val status = client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8))
+            logInfo("[DEVICE_MGMT] SET_POLICY ($reason) $body status=$status", tag = Logger.Tags.ADAPTR)
+        }
+    }
+
+    /**
+     * Re-assert the policy once the session is up. btd only listens once the box has brought its
+     * radios up after SUBSCRIBE, so try a few times; every try is idempotent on the box.
+     */
+    private fun syncPhonePolicyAfterSubscribe() {
+        scope.launch {
+            for (waitMs in POLICY_SYNC_DELAYS_MS) {
+                delay(waitMs)
+                if (!phonePolicySupported) return@launch
+                val snap = knownStore?.snapshot ?: return@launch
+                val body = phonePolicyJson(_pairedDevices.map { it.btMac }, snap.autoConnect)
+                val status = withContext(Dispatchers.IO) { client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8)) }
+                logInfo("[DEVICE_MGMT] SET_POLICY (session) $body status=$status", tag = Logger.Tags.ADAPTR)
+                if (status == 0) return@launch
+            }
+        }
     }
 
     /**
