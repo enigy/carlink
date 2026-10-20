@@ -546,6 +546,11 @@ class CarlinkManager(
 
     @Volatile private var micChannels = 1
 
+    @Volatile private var micCodec = MicProfile.CODEC_PCM
+
+    /** The input the running capture was pinned to (null = the OS's choice), so a call can tell whether to move it. */
+    @Volatile private var micInput: android.media.AudioDeviceInfo? = null
+
     // Dedicated single-thread scheduler for the 20 ms mic send cadence. Deliberately NOT
     // shared-pool coroutines (broke mic timing — revisions [19]/[21]). A single-thread executor
     // also serializes old/new tasks across format switches, and the generation token skips stale
@@ -2124,6 +2129,7 @@ class CarlinkManager(
                 onAssistant = { speaking -> player.setAssistantSpeaking(speaking) },
                 // Settings → Call Buffer, read when the call track opens so a change takes the next call.
                 callBufferMultiplier = { CallAudioStore.get(context).callBuffer.bufferMultiplier },
+                onCallAudio = { scope.launch { onCallAudioStarted() } },
             ).also { it.start() }
         voiceRouter = router
 
@@ -2180,6 +2186,7 @@ class CarlinkManager(
             }
             micRate = rate
             micChannels = channels
+            micCodec = codec
             startMicrophoneCapture(rate, channels, codec)
         } else {
             stopMicrophoneCapture()
@@ -2206,6 +2213,7 @@ class CarlinkManager(
             return
         }
         isMicrophoneCapturing = true
+        micInput = input
 
         // 20 ms of PCM per tick, matching the box's own RTP packetization (PCM); for mSBC up to a
         // few whole 60-byte packets per tick with the ring buffer carrying the 7.5 ms remainder.
@@ -2230,6 +2238,35 @@ class CarlinkManager(
 
         logInfo("[MIC] Capture started at ${r}Hz ${c}ch codec=$codec (drain ${chunkSize}B/tick)", tag = Logger.Tags.MIC)
         startEchoMonitor(r, c)
+    }
+
+    /**
+     * The first caller audio of a call has arrived ([VoiceRouter]'s call track opened).
+     *
+     * The box opens the mic at the call stream's SETUP, before the phone sends any audio, so the
+     * capture normally started before the app could know it was a call: [callMicInput] saw no call
+     * and took the OS's choice, which made "Car call path" a no-op, and the echo monitor never
+     * started. A call placed from Siri is the same, its mic already open. Now that it is known,
+     * move the capture to the car's call input when that is the setting (a short restart at the
+     * start of the call), and start the echo monitor either way.
+     */
+    private fun onCallAudioStarted() {
+        if (!isMicrophoneCapturing) return
+        val wanted = callMicInput()
+        if (wanted != null && wanted.id != micInput?.id) {
+            logInfo(
+                "[CALL_AUDIO] call audio started with the mic on ${micInput?.let { AudioRouteInfo.device(it) } ?: "the OS choice"} — " +
+                    "moving it to ${AudioRouteInfo.device(wanted)}",
+                tag = Logger.Tags.MIC,
+            )
+            stopMicrophoneCapture()
+            startMicrophoneCapture(micRate, micChannels, micCodec)
+            return
+        }
+        if (callEchoMonitor == null) {
+            val (r, c) = MicProfile.captureFormatFor(micRate, micChannels, micCodec)
+            startEchoMonitor(r, c)
+        }
     }
 
     // ---- Call echo monitor (ported from Carlink2 [223]) ------------------------------------------
@@ -2337,6 +2374,7 @@ class CarlinkManager(
         micSendFuture?.cancel(false)
         micSendFuture = null
         stopEchoMonitor()
+        micInput = null
         microphoneManager?.stop()
         isMicrophoneCapturing = false
         logInfo("[MIC] Capture stopped", tag = Logger.Tags.MIC)

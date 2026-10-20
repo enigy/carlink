@@ -61,6 +61,12 @@ class VoiceRouter(
      * change applies on the next call.
      */
     private val callBufferMultiplier: () -> Int = { DEFAULT_BUFFER_MULTIPLIER },
+    /**
+     * The call track just opened: the first caller audio of a call has arrived. The box opens the mic
+     * at the call stream's SETUP, before the phone sends any audio, so this is the app's first sure
+     * sign that the open mic belongs to a phone call and not Siri. Runs on the decode thread.
+     */
+    private val onCallAudio: () -> Unit = {},
 ) {
     private val log = ProbeLog.sub("voice")
     private val running = AtomicBoolean(false)
@@ -588,6 +594,7 @@ class VoiceRouter(
                 log.i(
                     "${p.label}: ${AudioDecoders.codecName(cod)} ${r}Hz ${c}ch -> AudioTrack(usage=${p.usage}), decoder=${dec.name}",
                 )
+                if (p == Purpose.CALL) runCatching { onCallAudio() }
             } catch (e: Throwable) {
                 // Throwable, not Exception: an OutOfMemoryError here is an Error, and letting it
                 // escape leaks the native codec AND leaves the backoff unarmed.

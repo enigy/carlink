@@ -282,7 +282,7 @@ internal class EchoTest(
         val pT = EchoDsp.peakAbs(cT)
         val earlyPnr = EchoDsp.peakToNoiseDb(cT, pT.index, SR * EXCLUDE_MS / 1000)
         val earlyDb = EchoDsp.db(abs(pT.value) / EchoDsp.energy(train))
-        val found = earlyPnr >= FOUND_PNR_DB
+        var found = earlyPnr >= EchoVerdict.FOUND_PNR_DB
 
         // The down-sweep's echo sits at the same delay, one up-sweep + gap later.
         val cM = EchoDsp.crossCorrelate(x, meas, x.size - meas.size)
@@ -291,9 +291,6 @@ internal class EchoTest(
         val latePnr = EchoDsp.peakToNoiseDb(cM, pM.index, SR * EXCLUDE_MS / 1000)
         val lateDb = EchoDsp.db(abs(pM.value) / EchoDsp.energy(meas))
 
-        if (!found) {
-            return Result(v, found = false, earlyDb = earlyDb, earlyPnr = earlyPnr, lateDb = lateDb, latePnr = latePnr, noiseDbfs = noise, details = details)
-        }
         val p0 = lead.toLong()
         val r = pT.index.toLong()
         val tWrite = writes.timeOf(p0)
@@ -305,10 +302,20 @@ internal class EchoTest(
             a: Long?,
             b: Long?,
         ): Double? = if (a != null && b != null) (b - a) / NANOS_PER_MS.toDouble() else null
+        val delayMs = ms(tWrite, tRead)
+        var note = details
+        if (found && !EchoVerdict.plausible(earlyPnr, delayMs)) {
+            // A noise peak can clear the threshold; an echo can't arrive before its sound (2026-10-20: -290 ms).
+            found = false
+            note = "ignored a match at ${fmt(delayMs)}ms, before the sound played | $details"
+        }
+        if (!found) {
+            return Result(v, found = false, earlyDb = earlyDb, earlyPnr = earlyPnr, lateDb = lateDb, latePnr = latePnr, noiseDbfs = noise, details = note)
+        }
         return Result(
             v,
             found = true,
-            delayMs = ms(tWrite, tRead),
+            delayMs = delayMs,
             outMs = ms(tWrite, present),
             cabinMs = ms(present, capture),
             inMs = ms(capture, tRead),
@@ -345,36 +352,15 @@ internal class EchoTest(
             else -> "${r.variant.label}: no echo found"
         }
 
-    private fun lateText(r: Result): String = if ((r.latePnr ?: 0.0) >= FOUND_PNR_DB) "${fmt(r.lateDb)} dB" else "below ${fmt(r.lateDb)} dB"
+    private fun lateText(r: Result): String = if ((r.latePnr ?: 0.0) >= EchoVerdict.FOUND_PNR_DB) "${fmt(r.lateDb)} dB" else "below ${fmt(r.lateDb)} dB"
 
-    /**
-     * Every path against the raw mic, once adapted: how much echo each removes, and which leaves
-     * the least. A path that found no echo at all is scored by the best match it had, so its
-     * figure is a lower bound ("at least").
-     */
-    private fun verdict(results: List<Result>): List<String> {
-        val raw = results.firstOrNull { it.variant.isRawMic && it.error == null } ?: return emptyList()
-        if (!raw.found) return listOf("Raw mic heard no echo either: turn the call volume up and run it again.")
-        val rawLate = raw.lateDb ?: return emptyList()
-        val scored =
+    /** Every path against the raw mic, once adapted, and which leaves the least echo ([EchoVerdict]). */
+    private fun verdict(results: List<Result>): List<String> =
+        EchoVerdict.lines(
             results
-                .filter { !it.variant.isRawMic && it.error == null }
-                .mapNotNull { r -> r.lateDb?.let { r to rawLate - it } }
-        if (scored.isEmpty()) return emptyList()
-        val lines =
-            scored.map { (r, removed) ->
-                val grade =
-                    when {
-                        removed >= WORKING_DB -> "working"
-                        removed >= PARTIAL_DB -> "partial"
-                        else -> "not working"
-                    }
-                val bound = if (r.found) "" else "at least "
-                "${r.variant.label}: $bound${fmt(removed)} dB less echo than the raw mic ($grade)"
-            }
-        val best = scored.maxBy { it.second }.first
-        return lines + "Least echo: ${best.variant.label}. Run the voice test too: a path can be quiet because it hears nothing."
-    }
+                .filter { it.error == null }
+                .map { EchoVerdict.Path(it.variant.label, it.variant.isRawMic, it.found, it.lateDb) },
+        )
 
     private fun fmt(
         v: Double?,
@@ -401,9 +387,6 @@ internal class EchoTest(
         const val VARIANT_TIMEOUT_MS = 12_000L
         const val EXCLUDE_MS = 20
         const val SEARCH = 80 // 5 ms either side of the predicted down-sweep echo
-        const val FOUND_PNR_DB = 15.0
-        const val WORKING_DB = 20.0
-        const val PARTIAL_DB = 6.0
         const val STAMPS_INITIAL = 1024
         const val MIN_TRACK_BYTES = 4096 // VoiceRouter.openTrack's floor
         const val NANOS_PER_MS = 1_000_000L
