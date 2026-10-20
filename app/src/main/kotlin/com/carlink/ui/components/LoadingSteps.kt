@@ -32,18 +32,29 @@ internal object LoadingSteps {
             "usb permission denied",
         )
 
-    // The session itself is starting. Checked before PHONE_WORDS. The Bluetooth handshake texts
-    // ("Authenticating…", "Handing off to Wi-Fi…") are NOT here: the box replays its last BT phase on
-    // every SUBSCRIBE, so at boot — box health still at rootfs-ok — "Authenticated" arrives before any
-    // phone is near, and showing "Starting CarPlay" for it was wrong (truck 2026-10-19).
-    private val START_WORDS = listOf("phone connected", "starting projection", "re-establishing")
+    // The phone's session has started (the first stream key). Checked before PHONE_WORDS. Only this:
+    // "Starting projection…" is the app's SUBSCRIBE to the box, the latch that brings its radios up,
+    // and "Re-establishing session…" is the box link recovering, so both are still waking the
+    // adapter. Showing "Starting CarPlay" for the first and then stepping back was the launch
+    // stutter (truck 2026-10-20).
+    private val START_WORDS = listOf("phone connected")
 
-    // Once the phone is actually in play: BT link up, identified, handed off, or waited for.
+    // The adapter is up and the phone is waited for or in play: BT link up, authenticating,
+    // identified, handed off. "Authenticated" also arrives at boot with no phone near (the box replays
+    // its last BT phase on every SUBSCRIBE, truck 2026-10-19), but only after the SUBSCRIBE: the
+    // adapter is awake then and the app is waiting for the phone, so this step is right for it too.
     private val PHONE_WORDS =
-        listOf("waiting for phone", "phone found", "phone identified", "identifying", "handing off", "pairing", "phone not", "disconnecting phone")
-
-    // "Authenticating…" / "Authenticated" stay on the first step: at boot they are the replayed
-    // phase above, and during a real handshake the link-up text has already moved the dots on.
+        listOf(
+            "waiting for phone",
+            "phone found",
+            "authenticat",
+            "phone identified",
+            "identifying",
+            "handing off",
+            "pairing",
+            "phone not",
+            "disconnecting phone",
+        )
 
     fun classify(
         statusText: String,

@@ -2,6 +2,7 @@ package com.carlink.ui.components
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The connecting screen's three steps, driven by Carlink3's (OCBM) status vocabulary. */
@@ -15,15 +16,44 @@ class LoadingStepsTest {
 
     @Test
     fun adapterPhaseMessagesStayOnTheFirstStep() {
-        listOf("Connect Adapter", "Searching for adapter...", "Adapter found — opening...", "Connecting to adapter...", "Waiting for adapter...")
-            .forEach { assertEquals(it, LoadingStep.ADAPTER, step(it)) }
+        listOf(
+            "Connect Adapter",
+            "Searching for adapter...",
+            "Adapter found — opening...",
+            "Connecting to adapter...",
+            "Starting projection...",
+            "Re-establishing session...",
+            "Waiting for adapter...",
+        ).forEach { assertEquals(it, LoadingStep.ADAPTER, step(it)) }
     }
 
     @Test
-    fun replayedBluetoothAuthPhaseAtBootStaysOnTheFirstStep() {
+    fun replayedBluetoothAuthPhaseIsNotTheCarPlayStep() {
         // The box re-emits its last BT phase on SUBSCRIBE; at boot that is "Authenticated" with no
-        // phone anywhere near (truck 2026-10-19, box health still at rootfs-ok).
-        listOf("Authenticating...", "Authenticated").forEach { assertEquals(it, LoadingStep.ADAPTER, step(it)) }
+        // phone anywhere near (truck 2026-10-19). It arrives after the adapter is up: phone step.
+        listOf("Authenticating...", "Authenticated").forEach { assertEquals(it, LoadingStep.PHONE, step(it)) }
+    }
+
+    @Test
+    fun aLaunchOnlyEverMovesForward() {
+        // The order CarlinkManager sets these on a cold start (truck 2026-10-20 trail), with the
+        // box's replayed BT phase landing right after the SUBSCRIBE.
+        val launch =
+            listOf(
+                "Searching for adapter...",
+                "Adapter found — opening...",
+                "Connecting to adapter...",
+                "Starting projection...",
+                "Waiting for phone...",
+                "Authenticated",
+                "Phone found — linking...",
+                "Authenticating...",
+                "Phone identified",
+                "Phone connected",
+            )
+        val steps = launch.map { step(it) }
+        steps.zipWithNext().forEachIndexed { i, (a, b) -> assertTrue("${launch[i]} -> ${launch[i + 1]}", b >= a) }
+        assertEquals(LoadingStep.START, steps.last())
     }
 
     @Test
@@ -41,8 +71,7 @@ class LoadingStepsTest {
 
     @Test
     fun sessionStartMessagesAndAConnectedPhoneAreTheThirdStep() {
-        listOf("Phone connected", "Starting projection...", "Re-establishing session...")
-            .forEach { assertEquals(it, LoadingStep.START, step(it)) }
+        assertEquals(LoadingStep.START, step("Phone connected"))
         assertEquals(LoadingStep.START, step("Waiting for phone...", phoneConnected = true))
     }
 
