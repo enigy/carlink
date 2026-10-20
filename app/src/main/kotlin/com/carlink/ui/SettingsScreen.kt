@@ -229,7 +229,7 @@ private fun CategoryPane(
         SettingsCategory.DISPLAY -> DisplayPane(savedMode = savedMode, onApply = onApplyMode)
         SettingsCategory.CALLS -> CallsPane()
         SettingsCategory.CLUSTER -> ClusterPane(panes.live, onResetCluster = panes.actions.onResetCluster)
-        SettingsCategory.TROUBLESHOOT -> TroubleshootPane(panes.carlinkManager, connected = panes.connected)
+        SettingsCategory.TROUBLESHOOT -> TroubleshootPane(panes.carlinkManager, panes.live, connected = panes.connected)
         SettingsCategory.ADAPTER -> AdapterPane(panes.carlinkManager, panes.live)
     }
 }
@@ -251,7 +251,7 @@ private fun categorySummaries(
         SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo),
         SettingsCategory.CALLS to SettingsModel.callsSummary(mic, buffer),
         SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn),
-        SettingsCategory.TROUBLESHOOT to "Reset video, wireless, connection or adapter",
+        SettingsCategory.TROUBLESHOOT to SettingsModel.troubleshootSummary(live.driveLog),
         SettingsCategory.ADAPTER to SettingsModel.adapterSummary(panes.carlinkManager.adapterName, live.box),
     )
 }

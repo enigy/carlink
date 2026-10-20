@@ -102,6 +102,9 @@ object SettingsModel {
 
     fun clusterSummary(on: Boolean): String = if (on) "Directions on" else "Directions off"
 
+    /** Troubleshoot: the fixes, and the logs that now live beside them; says when a drive log is running. */
+    fun troubleshootSummary(driveLog: Boolean): String = if (driveLog) "Fixes and logs · Recording drive log" else "Fixes and logs"
+
     fun adapterSummary(
         adapterName: String,
         box: BoxSnapshot,

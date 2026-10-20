@@ -46,10 +46,13 @@ private enum class Fix { RESTART_WIRELESS, RESET_CONNECTION, REBOOT, DISCONNECT_
  *  - Reset connection: the clean-slate reset ([CarlinkManager.cleanSlateReset]).
  *  - Reboot adapter: `MGMT_REBOOT`; ~50 s absence and a USB permission prompt after.
  *  - Disconnect adapter: CT_STOP + release USB, off the main thread.
+ *
+ * Below the ladder, the log controls ([LogsGroup]): what to reach for once something went wrong.
  */
 @Composable
 internal fun TroubleshootPane(
     carlinkManager: CarlinkManager,
+    live: SettingsLiveState,
     connected: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -77,6 +80,8 @@ internal fun TroubleshootPane(
             onPick = { confirm = it },
         )
         Text("Each fix asks you to confirm before it interrupts anything.", style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SectionLabel("Logs", modifier = Modifier.padding(top = 8.dp))
+        LogsGroup(carlinkManager, live)
         FixConfirmation(confirm, carlinkManager, onDone = { confirm = null }, onResetting = { resetting = it })
     }
 }

@@ -100,6 +100,8 @@ class SettingsModelTest {
         assertEquals("Car call path · Low buffer", SettingsModel.callsSummary(CallMicConfig.VOICE_UPLINK, CallBufferConfig.LOW))
         assertEquals("Directions on", SettingsModel.clusterSummary(true))
         assertEquals("Directions off", SettingsModel.clusterSummary(false))
+        assertEquals("Fixes and logs", SettingsModel.troubleshootSummary(false))
+        assertEquals("Fixes and logs · Recording drive log", SettingsModel.troubleshootSummary(true))
     }
 
     @Test
