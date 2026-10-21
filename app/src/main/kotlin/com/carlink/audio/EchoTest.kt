@@ -182,6 +182,12 @@ internal class EchoTest(
     ): Result {
         am.mode = if (v.commMode) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
         val mode = am.mode
+        // run() checks too; checked again here, next to the AudioRecord it guards, because the
+        // permission can be withdrawn while the test runs and lint (MissingPermission) only credits
+        // a check in the same function.
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            return Result(v, error = "microphone permission isn't granted")
+        }
         val recMin = AudioRecord.getMinBufferSize(SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val trackMin = AudioTrack.getMinBufferSize(SR, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (recMin <= 0 || trackMin <= 0) return Result(v, error = "no buffer size (rec=$recMin track=$trackMin)")

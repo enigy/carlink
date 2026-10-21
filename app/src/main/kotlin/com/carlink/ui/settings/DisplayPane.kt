@@ -159,21 +159,24 @@ private fun DriveSideChoice() {
     val context = LocalContext.current
     val store = remember { DriveSideStore.get(context) }
     val side by store.flow.collectAsState()
-    SectionLabel("Driver's seat", modifier = Modifier.padding(top = 8.dp))
-    ChoiceRow(
-        options = DriveSide.entries,
-        selected = side,
-        onSelect = {
-            logWarn("[UI_ACTION] Drive side -> ${it.name}", tag = "UI")
-            store.set(it)
-        },
-        modifier = Modifier.widthIn(max = 760.dp),
-    )
-    Text(
-        "CarPlay puts its dock and status bar on the driver's side. Applies at the next connection.",
-        style = SettingsStyle.RowSubtitle,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    // One Column, spaced like DisplayPane's, so this emits a single node (ComposeMultipleContentEmitters).
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        SectionLabel("Driver's seat", modifier = Modifier.padding(top = 8.dp))
+        ChoiceRow(
+            options = DriveSide.entries,
+            selected = side,
+            onSelect = {
+                logWarn("[UI_ACTION] Drive side -> ${it.name}", tag = "UI")
+                store.set(it)
+            },
+            modifier = Modifier.widthIn(max = 760.dp),
+        )
+        Text(
+            "CarPlay puts its dock and status bar on the driver's side. Applies at the next connection.",
+            style = SettingsStyle.RowSubtitle,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 @Composable

@@ -1,6 +1,7 @@
 package com.carlink.ui.settings
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -163,13 +164,17 @@ private fun RankControls(
     phoneConnected: Boolean,
     actions: PhoneListActions,
 ) {
-    MoveButton(up = true, enabled = index > 0, name = device.name) { actions.onMove(device.btMac, -1) }
-    MoveButton(up = false, enabled = index < count - 1, name = device.name) { actions.onMove(device.btMac, 1) }
-    RowAction(
-        label = if (live) "Connected" else "Connect",
-        enabled = device.bonded && !phoneConnected,
-        onClick = { actions.onConnect(device) },
-    )
+    // One Row, spaced and aligned like SettingRow's trailing slot, so this emits a single node
+    // (ComposeMultipleContentEmitters).
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        MoveButton(up = true, enabled = index > 0, name = device.name) { actions.onMove(device.btMac, -1) }
+        MoveButton(up = false, enabled = index < count - 1, name = device.name) { actions.onMove(device.btMac, 1) }
+        RowAction(
+            label = if (live) "Connected" else "Connect",
+            enabled = device.bonded && !phoneConnected,
+            onClick = { actions.onConnect(device) },
+        )
+    }
 }
 
 /** "1" in the accent for the phone called first, plain numbers after it. */

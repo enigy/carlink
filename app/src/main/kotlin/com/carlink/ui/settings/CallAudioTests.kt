@@ -1,5 +1,6 @@
 package com.carlink.ui.settings
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -35,17 +36,23 @@ import kotlinx.coroutines.withContext
  * ([ECHO_TEST], [VOICE_TEST]), and during real calls the [ECHO_MON] lines add the in-call view.
  */
 @Composable
-internal fun CallAudioTests(carlinkManager: CarlinkManager) {
-    SectionLabel("Call audio tests", modifier = Modifier.padding(top = 16.dp))
-    Text(
-        "Park, pause music and keep the cabin quiet. Turn the volume up to a normal call level first.",
-        style = SettingsStyle.Body,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    SettingsGroup {
-        EchoTestRow(carlinkManager)
-        GroupDivider()
-        VoiceTestRow(carlinkManager)
+internal fun CallAudioTests(
+    carlinkManager: CarlinkManager,
+    modifier: Modifier = Modifier,
+) {
+    // One Column, spaced like CallsPane's, so this emits a single node (ComposeMultipleContentEmitters).
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        SectionLabel("Call audio tests", modifier = Modifier.padding(top = 16.dp))
+        Text(
+            "Park, pause music and keep the cabin quiet. Turn the volume up to a normal call level first.",
+            style = SettingsStyle.Body,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SettingsGroup {
+            EchoTestRow(carlinkManager)
+            GroupDivider()
+            VoiceTestRow(carlinkManager)
+        }
     }
 }
 

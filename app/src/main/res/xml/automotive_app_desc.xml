@@ -10,9 +10,18 @@
     - navigation : CarlinkClusterService declares androidx.car.app.category.NAVIGATION
                    (cluster-only via FEATURE_CLUSTER; does not conflict with Maps on the main display)
     Upstream (CarlinkAndroid) had removed template/navigation along with its cluster code.
+
+    Lint (InvalidUsesTagAttribute) accepts only media, notification, sms or template here, and the
+    navigation category is already declared where the Car App Library reads it: the
+    CarlinkClusterService intent-filter (androidx.car.app.category.NAVIGATION). "navigation" is kept
+    anyway, deliberately: it went in together with "template" (Carlink2 declares both too), and the
+    cluster has only been verified on the truck with both present. Drop it after a drive confirms the
+    cluster still binds without it.
 -->
-<automotiveApp>
+<automotiveApp xmlns:tools="http://schemas.android.com/tools">
     <uses name="media"/>
     <uses name="template"/>
-    <uses name="navigation"/>
+    <uses
+        name="navigation"
+        tools:ignore="InvalidUsesTagAttribute" />
 </automotiveApp>

@@ -124,6 +124,10 @@ internal class VoiceTest(
         input: CallPath,
         am: AudioManager,
     ): Take {
+        // run() checks too; checked again next to the AudioRecord it guards (see EchoTest.runVariant).
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            return Take(input.label, error = "microphone permission isn't granted")
+        }
         am.mode = if (input.commMode) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
         val recMin = AudioRecord.getMinBufferSize(SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (recMin <= 0) return Take(input.label, error = "no buffer size ($recMin)")
