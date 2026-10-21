@@ -519,7 +519,7 @@ The CarPlay connection has always carried the iPhone's name; we were discarding 
 reads `name` from the phase-1 SETUP body plist beside `deviceID`/`macAddress`/`sessionUUID`
 (`AirPlayReceiverServer.c:3213`), with an `X-Apple-Client-Name` header fallback (`:2354-2360`).
 
-Captured from the real SETUP: `name=<owner> iPhone`, `deviceID=64:31:35:8c:29:69`, `model=iPhone18,4`,
+Captured from the real SETUP: `name=<owner> iPhone`, `deviceID=AA:BB:CC:DD:EE:FF`, `model=iPhone18,4`,
 `osName=iPhone OS`, `osVersion=27.0`.
 
 `deviceID` is the **BR/EDR MAC**, so it joins against `MGMT_INFO`'s bonded list — the only thing on

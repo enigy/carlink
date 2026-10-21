@@ -2,6 +2,7 @@ package com.enigy.carlink2.bridge
 
 import android.content.ContentProvider
 import android.content.ContentValues
+import android.content.pm.ApplicationInfo
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.graphics.Bitmap
@@ -37,6 +38,12 @@ import java.util.LinkedHashMap
  *
  * Exported with grantUriPermissions because the host and cluster run as other UIDs. Content
  * is limited to maneuver-icon PNGs the host itself inserted; delete/update are no-ops.
+ *
+ * Bounds (security review M1, bridge 1.0.4): only system apps (the Templates Host is one) may
+ * insert or query, so no installed app can swap the cluster's turn arrows; inserts must be PNGs
+ * of at most [MAX_PNG_BYTES]; openFile() scales only to 1..[MAX_SCALED_PX] and only sources up to
+ * [MAX_SOURCE_PX], and an out-of-memory scale serves the original. Before, any app could make
+ * this process run out of memory, and it owns the USB link, so CarPlay dropped with it.
  */
 class ClusterIconProvider : ContentProvider() {
     // contentKey → PNG bytes. Access-order LRU; synchronizedMap so eviction runs under the lock.
@@ -54,16 +61,25 @@ class ClusterIconProvider : ContentProvider() {
         return true
     }
 
+    // Calling package -> whether it is a system app; a package can't change that without a reinstall.
+    private val systemCallers = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
     // insert() must NEVER return null: null latches the host's skipIcons for the session.
     override fun insert(
         uri: Uri,
         values: ContentValues?,
     ): Uri {
+        val unknown = Uri.parse("content://$AUTHORITY/img/unknown")
+        if (!callerIsSystem("insert")) return unknown
         val iconId = values?.getAsString("iconId")
         val data = values?.getAsByteArray("data")
         if (iconId == null || data == null) {
             Log.w(TAG, "insert() missing iconId or data (iconId=$iconId, dataSize=${data?.size})")
-            return Uri.parse("content://$AUTHORITY/img/unknown")
+            return unknown
+        }
+        if (data.size > MAX_PNG_BYTES || !isPng(data)) {
+            Log.w(TAG, "insert() refused: ${data.size} B, png=${isPng(data)}")
+            return unknown
         }
         val contentKey = contentKey(data)
         BridgeStats.iconInserts.incrementAndGet()
@@ -80,7 +96,7 @@ class ClusterIconProvider : ContentProvider() {
         sortOrder: String?,
     ): Cursor {
         val cursor = MatrixCursor(arrayOf("contentUri", "aspectRatio"))
-        if (selection == null) return cursor
+        if (selection == null || !callerIsSystem("query")) return cursor
 
         val contentKey = contentByIconId[selection]
         val data = contentKey?.let { pngByContent[it] }
@@ -112,7 +128,7 @@ class ClusterIconProvider : ContentProvider() {
         val targetW = uri.getQueryParameter("w")?.toIntOrNull()
         val targetH = uri.getQueryParameter("h")?.toIntOrNull()
         val output =
-            if (targetW != null && targetH != null && targetW > 0 && targetH > 0) {
+            if (targetW != null && targetH != null && targetW in 1..MAX_SCALED_PX && targetH in 1..MAX_SCALED_PX) {
                 val scaledKey = "$contentKey@${targetW}x$targetH"
                 scaledPng[scaledKey] ?: scaleIcon(data, targetW, targetH).also { scaledPng[scaledKey] = it }
             } else {
@@ -148,7 +164,14 @@ class ClusterIconProvider : ContentProvider() {
         h: Int,
     ): ByteArray =
         try {
-            val original = BitmapFactory.decodeByteArray(png, 0, png.size)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(png, 0, png.size, bounds)
+            val original =
+                if (bounds.outWidth in 1..MAX_SOURCE_PX && bounds.outHeight in 1..MAX_SOURCE_PX) {
+                    BitmapFactory.decodeByteArray(png, 0, png.size)
+                } else {
+                    null
+                }
             if (original == null) {
                 png
             } else {
@@ -162,7 +185,26 @@ class ClusterIconProvider : ContentProvider() {
         } catch (e: Exception) {
             Log.w(TAG, "scaleIcon(${w}x$h) failed: ${e.message} — serving original")
             png
+        } catch (e: OutOfMemoryError) {
+            Log.w(TAG, "scaleIcon(${w}x$h) ran out of memory — serving original")
+            png
         }
+
+    /**
+     * Only system apps may write or look up icons: the Templates Host is one, and no app the
+     * driver installs can be. Logged once per package, so a refused real host shows up in logcat.
+     */
+    private fun callerIsSystem(op: String): Boolean {
+        val pkg = runCatching { callingPackage }.getOrNull() ?: return false.also { Log.w(TAG, "$op refused: no calling package") }
+        return systemCallers.getOrPut(pkg) {
+            val flags = runCatching { context?.packageManager?.getApplicationInfo(pkg, 0)?.flags }.getOrNull() ?: 0
+            val system = flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+            Log.i(TAG, "$op from $pkg: ${if (system) "system app, allowed" else "not a system app, refused"}")
+            system
+        }
+    }
+
+    private fun isPng(data: ByteArray): Boolean = data.size >= PNG_SIGNATURE.size && PNG_SIGNATURE.indices.all { data[it] == PNG_SIGNATURE[it] }
 
     override fun delete(
         uri: Uri,
@@ -189,6 +231,17 @@ class ClusterIconProvider : ContentProvider() {
         // The host may mint a new iconId per insert; ids are tiny, so keep a longer tail.
         const val MAX_ICON_ID_ENTRIES = 256
         const val MAX_SCALED_ENTRIES = 20
+
+        /** Largest PNG insert() keeps; the display app's maneuver icons are 512 px, a few KB to ~60 KB. */
+        const val MAX_PNG_BYTES = 512 * 1024
+
+        /** Largest ?w=/?h= openFile() scales to; anything else gets the original bytes. */
+        const val MAX_SCALED_PX = 1024
+
+        /** Largest source openFile() will decode to scale. */
+        const val MAX_SOURCE_PX = 2048
+
+        private val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
 
         fun <V> lruMap(maxEntries: Int): MutableMap<String, V> =
             Collections.synchronizedMap(

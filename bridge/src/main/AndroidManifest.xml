@@ -6,6 +6,11 @@
         android:name="android.hardware.usb.host"
         android:required="false" />
 
+    <!-- CallerVerifier reads the display app's installer and signing certificate. -->
+    <queries>
+        <package android:name="com.enigy.carlink3" />
+    </queries>
+
     <!-- No activity on purpose. The platform's fixed USB handler grants this package's UID
          permission for every attached device, THEN tries to start
          android.car.usb.handler.UsbHostManagementActivity. When that activity is missing the

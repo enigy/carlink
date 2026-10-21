@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.SystemClock
+import com.carlink.logging.LogRedactor
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logNavi
@@ -432,8 +433,8 @@ object NavigationStateManager {
 
             logInfo(
                 "[NAVI] Burst detected (${gapMs}ms gap) — " +
-                    "next-step: maneuver=${merged.nextManeuverType}, road=${merged.nextRoadName}; " +
-                    "current preserved: maneuver=${merged.maneuverType}, road=${merged.roadName}",
+                    "next-step: maneuver=${merged.nextManeuverType}, road=${LogRedactor.place(merged.nextRoadName)}; " +
+                    "current preserved: maneuver=${merged.maneuverType}, road=${LogRedactor.place(merged.roadName)}",
                 tag = Logger.Tags.NAVI,
             )
 
@@ -606,19 +607,25 @@ object NavigationStateManager {
                     // until fresh _iap2m arrives.
                     hardReroute = true
                     lastRouteRef = null
-                    logInfo("[NAVI] Tier C hard reroute: no match for $resolvedManeuverType@\"$incomingRoad\" — falling through", tag = Logger.Tags.NAVI)
+                    logInfo("[NAVI] Tier C hard reroute: no match for $resolvedManeuverType@\"${LogRedactor.place(incomingRoad)}\" — falling through", tag = Logger.Tags.NAVI)
                 } else if (!bootstrapDone && idx > localCursor) {
                     // Cold-start bootstrap: FIRST maneuver-bearing message after route load.
                     // Trust Apple's idx (one-shot — flag flips after first use). Safe because
                     // we haven't yet driven anywhere on the new route so Apple's idea of
                     // "current step" IS our starting position.
-                    logInfo("[NAVI] Tier C cold-start bootstrap: cursor $localCursor → $idx via $resolvedManeuverType@\"$incomingRoad\"", tag = Logger.Tags.NAVI)
+                    logInfo(
+                        "[NAVI] Tier C cold-start bootstrap: cursor $localCursor → $idx via $resolvedManeuverType@\"${LogRedactor.place(incomingRoad)}\"",
+                        tag = Logger.Tags.NAVI,
+                    )
                     localCursor = idx
                     bootstrapDone = true
                 } else if (idx < localCursor && (localCursor - idx) >= 3) {
                     // Backward correction: snap only if delta ≥ 3 (avoids duplicate (cp, road)
                     // matches in same route from triggering spurious snaps).
-                    logInfo("[NAVI] Tier C backward correction: cursor $localCursor → $idx via $resolvedManeuverType@\"$incomingRoad\"", tag = Logger.Tags.NAVI)
+                    logInfo(
+                        "[NAVI] Tier C backward correction: cursor $localCursor → $idx via $resolvedManeuverType@\"${LogRedactor.place(incomingRoad)}\"",
+                        tag = Logger.Tags.NAVI,
+                    )
                     localCursor = idx
                 }
                 // idx >= localCursor: confirmation (=) or preview (>). Don't advance cursor.

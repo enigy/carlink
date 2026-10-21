@@ -23,8 +23,10 @@ object LogExport {
         name: String,
         bytes: ByteArray,
     ): Result<String> =
-        runCatching { saveToDownloads(context, name, bytes) }
-            .recoverCatching { saveToAppFiles(context, name, bytes) }
+        LogRedactor.text(bytes).let { clean ->
+            runCatching { saveToDownloads(context, name, clean) }
+                .recoverCatching { saveToAppFiles(context, name, clean) }
+        }
 
     /** This process's own logcat (what the OS lets an app read without READ_LOGS), or null if unavailable. */
     fun appLogcat(): ByteArray? =

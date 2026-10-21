@@ -56,6 +56,10 @@ internal class SettingsLiveState(
 
     /** The box takes phone priority (CAP_PHONE_POLICY), and the auto-connect flag the app holds. */
     var policySupported by mutableStateOf(false)
+
+    /** The box gates pairing behind a window (CAP_PAIR_WINDOW), and whether it says the window is open. */
+    var pairWindowSupported by mutableStateOf(false)
+    var pairWindowOpen by mutableStateOf(false)
     var autoConnect by mutableStateOf(true)
 
     val connectedPhone: ConnectedPhone? get() = SettingsModel.connectedPhone(phone, devices)
@@ -87,6 +91,8 @@ internal fun rememberSettingsLiveState(
             live.phone = PhoneSnapshot(carlinkManager.currentPhoneType, carlinkManager.currentWifi ?: -1, carlinkManager.connectedBtMac)
             live.devices = carlinkManager.pairedDevices
             live.policySupported = carlinkManager.phonePolicySupported
+            live.pairWindowSupported = carlinkManager.pairWindowSupported
+            live.pairWindowOpen = carlinkManager.pairWindowOpen
             live.autoConnect = carlinkManager.autoConnectPhones
             live.box =
                 BoxSnapshot(

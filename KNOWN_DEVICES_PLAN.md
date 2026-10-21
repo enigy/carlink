@@ -95,7 +95,7 @@ phone first, and store order carries no information about recent use.
 
 `CT_PHONE_IDENT` (0x18, landed 2026-08-15) carries `{name, deviceID, model, osName, osVersion}` from
 the phone's own AirPlay phase-1 SETUP plist. `deviceID` is the BR/EDR MAC — the join key against
-`MGMT_INFO.devices`. Verified on hardware: `name=<owner> iPhone`, `deviceID=64:31:35:8c:29:69`.
+`MGMT_INFO.devices`. Verified on hardware: `name=<owner> iPhone`, `deviceID=AA:BB:CC:DD:EE:FF`.
 
 ### 2.6 The old firmware really did have this
 
@@ -112,7 +112,7 @@ Agent 7 found it, with wire shapes:
 
 Storage was **on the adapter** (`DevList` in `/etc/riddle.conf`), with fields `id`/`name`/`type`/
 `time`/`rfcomm`. The real `DevList` from this project's own backed-up unit still contains
-`64:31:35:8C:29:69 "iPhone"`.
+`AA:BB:CC:DD:EE:FF "iPhone"`.
 
 Stock policy was `LastConnectedDevice` — a single MAC the firmware overwrote at every session start.
 **No user-designatable primary existed**; the old app bolted targeting on via 0x11.

@@ -76,7 +76,16 @@ internal fun PhonesPane(
             NoPhoneCard()
         }
         PhoneList(carlinkManager, live, connected, onRemove = { deviceToRemove = it })
-        AddPhoneHint(carlinkManager.adapterName)
+        if (live.pairWindowSupported) {
+            PairPhoneCard(
+                adapterName = carlinkManager.adapterName,
+                boxSaysOpen = live.pairWindowOpen,
+                onOpen = { carlinkManager.setPairWindow(PAIR_WINDOW_SECONDS) },
+                onClose = { carlinkManager.setPairWindow(0) },
+            )
+        } else {
+            AddPhoneHint(carlinkManager.adapterName)
+        }
 
         deviceToRemove?.let { device ->
             RemoveDeviceDialog(

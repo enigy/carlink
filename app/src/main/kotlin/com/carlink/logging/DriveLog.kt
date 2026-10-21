@@ -126,7 +126,7 @@ object DriveLog {
             dropped.incrementAndGet()
             return
         }
-        queue.add(line)
+        queue.add(LogRedactor.line(line))
         queued.incrementAndGet()
     }
 

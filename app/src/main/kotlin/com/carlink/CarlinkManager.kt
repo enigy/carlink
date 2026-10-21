@@ -31,6 +31,7 @@ import com.carlink.device.phonePolicyJson
 import com.carlink.logging.DriveLog
 import com.carlink.logging.DriveLogging
 import com.carlink.logging.LogExport
+import com.carlink.logging.LogRedactor
 import com.carlink.logging.LogTrail
 import com.carlink.logging.Logger
 import com.carlink.logging.ProbeLog
@@ -197,6 +198,8 @@ class CarlinkManager(
 
         /** How much of the box's reject line goes into the [LANES] refusal log line. */
         private const val LANE_REFUSAL_LOG_CHARS = 160
+
+        private const val BYTE_MASK = 0xFF
 
         /** The other daemons' logs Save Logs also pulls (ocbmd's LOG_SRC table), with the file label each gets. */
         private val BOX_DAEMON_LOGS = listOf("/tmp/iap2d.log" to "iap2d", "/tmp/carplayd.log" to "carplayd", "/tmp/supervisor.log" to "supervisor")
@@ -1671,7 +1674,7 @@ class CarlinkManager(
     private fun onCallState(cs: CallState) {
         callState = if (cs.isEnded) null else cs
         logInfo(
-            "[CALL_STATE] ${CallState.statusName(cs.status)} dir=${cs.direction} ${cs.displayLine}" +
+            "[CALL_STATE] ${CallState.statusName(cs.status)} dir=${cs.direction} ${cs.logLabel}" +
                 (cs.label?.let { " ($it)" } ?: ""),
             tag = Logger.Tags.PHONE,
         )
@@ -2638,7 +2641,7 @@ class CarlinkManager(
             )
         }
         logInfo(
-            "[PHONE] ${name.ifEmpty { mac }} (${obj.optString("model")}, " +
+            "[PHONE] ${if (name.isEmpty()) LogRedactor.line(mac) else "<phone>"} (${obj.optString("model")}, " +
                 "${obj.optString("osName")} ${obj.optString("osVersion")})",
             tag = Logger.Tags.PHONE,
         )
@@ -2729,6 +2732,24 @@ class CarlinkManager(
         )
         scope.launch { cleanSlateReset() }
     }
+    // ---- Pairing window (security plan 2026-10-21 §3: MGMT_PAIR_WINDOW, CAP_PAIR_WINDOW) ----------
+
+    /** The box lets new phones pair only inside a window the app opens; without it, today's open pairing. */
+    val pairWindowSupported: Boolean get() = client?.supportsPairWindow == true
+
+    /** The box reports the window open (CT_BOX_HEALTH BH_PAIR_WINDOW). */
+    val pairWindowOpen: Boolean get() = boxHealth and Ocbm.BH_PAIR_WINDOW != 0
+
+    /** Open the pairing window for [seconds] (the box clamps to 1..300), or close it with 0. */
+    fun setPairWindow(seconds: Int) {
+        logWarn("[PAIRING] window ${if (seconds > 0) "open for ${seconds}s" else "close"} requested", tag = Logger.Tags.ADAPTR)
+        scope.launch(Dispatchers.IO) {
+            val arg = byteArrayOf((seconds and BYTE_MASK).toByte(), ((seconds shr Byte.SIZE_BITS) and BYTE_MASK).toByte())
+            val status = client?.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, arg)
+            logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
+        }
+    }
+
     // ---- Phone priority (enigy/ocbm phone-priority: MGMT_SET_POLICY / MGMT_CONNECT_DEVICE) -------
 
     /** True when the box advertises CAP_PHONE_POLICY; without it the priority controls stay hidden. */

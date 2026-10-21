@@ -35,10 +35,19 @@ data class CallState(
     /** Stable identity for a call across its records: the UUID when iOS gives one, else the number. */
     val key: String get() = callUuid?.takeIf { it.isNotEmpty() } ?: remoteId?.takeIf { it.isNotEmpty() } ?: SINGLE_KEY
 
+    /** For logs: `<contact>`, or `<number …1234>`, never the name or the whole number (security review M4). */
+    val logLabel: String get() =
+        when {
+            !displayName.isNullOrBlank() -> "<contact>"
+            !remoteId.isNullOrBlank() -> "<number …${remoteId.takeLast(LOG_DIGITS)}>"
+            else -> "Unknown caller"
+        }
+
     /** Best display line: name, else number, else a placeholder — `CallStyle` refuses an empty name. */
     val displayLine: String get() = displayName?.takeIf { it.isNotBlank() } ?: remoteId?.takeIf { it.isNotBlank() } ?: "Unknown caller"
 
     companion object {
+        private const val LOG_DIGITS = 4
         const val STATUS_DISCONNECTED = 0
         const val STATUS_SENDING = 1
         const val STATUS_RINGING = 2

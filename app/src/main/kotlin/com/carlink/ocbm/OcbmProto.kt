@@ -197,6 +197,7 @@ object Ocbm {
     const val BH_CARPLAY_WIRELESS: Int = 0x10
     const val BH_WLAN_AP: Int = 0x20
     const val BH_ROOTFS_OK: Int = 0x40
+    const val BH_PAIR_WINDOW: Int = 0x80
 
     // ---- CT_LOG_CTL (0x1B) — host→box `[CT_LOG_CTL][enabled u8][cap_kb u16 LE]` ----------------
     // Arms the CH_LOG stream: the box tails its universal log (source 0, truncated at cap_kb once
@@ -236,6 +237,7 @@ object Ocbm {
                 if (f and BH_CARPLAY_WIRELESS != 0) add("btd")
                 if (f and BH_WLAN_AP != 0) add("hostapd")
                 if (f and BH_ROOTFS_OK != 0) add("rootfs-ok")
+                if (f and BH_PAIR_WINDOW != 0) add("pair-window")
             }
         return if (on.isEmpty()) "none" else on.joinToString("|")
     }
@@ -281,6 +283,7 @@ object Ocbm {
     const val CAP_FILE: Int = 0x0000_0010
     const val CAP_ETH: Int = 0x0000_0020
     const val CAP_PHONE_POLICY: Int = 0x0000_0040
+    const val CAP_PAIR_WINDOW: Int = 0x0000_0080
 
     fun capsString(caps: Int): String {
         val bits = ArrayList<String>()
@@ -291,6 +294,7 @@ object Ocbm {
         if (caps and CAP_FILE != 0) bits.add("FILE")
         if (caps and CAP_ETH != 0) bits.add("ETH")
         if (caps and CAP_PHONE_POLICY != 0) bits.add("PHONE_POLICY")
+        if (caps and CAP_PAIR_WINDOW != 0) bits.add("PAIR_WINDOW")
         return if (bits.isEmpty()) "none" else bits.joinToString("|")
     }
 
@@ -303,6 +307,7 @@ object Ocbm {
     const val MGMT_ENTER_NCM: Byte = 0x06
     const val MGMT_SET_POLICY: Byte = 0x07
     const val MGMT_CONNECT_DEVICE: Byte = 0x08
+    const val MGMT_PAIR_WINDOW: Byte = 0x09
     const val MGMT_INFO: Byte = 0x81.toByte()
     const val MGMT_ACK: Byte = 0x82.toByte()
 

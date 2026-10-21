@@ -26,9 +26,9 @@ name: Release
 #   CARLINK_KEY_PASSWORD       password for that key
 #   PLAY_SERVICE_ACCOUNT_JSON  JSON key of a Google Cloud service account allowed to release Carlink3
 # Variable (… → Variables), optional
-#   CARLINK3_CALLER_CERTS      the bridge's caller pin, same as -Pcarlink3.callerCerts locally:
-#                              Play's "App signing key certificate" SHA-256 for com.enigy.carlink3.
-#                              Unset = the bridge checks the caller's package name only.
+#   CARLINK3_CALLER_CERTS      replaces the bridge's caller pin, same as -Pcarlink3.callerCerts locally.
+#                              Unset = the pins committed in bridge/build.gradle.kts (Play app signing,
+#                              upload and debug certificates).
 
 on:
   push:
@@ -71,7 +71,7 @@ jobs:
       # Full history: deciding whether the bridge changed needs the commit that last updated
       # app/carlink3_bridge.apk.
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
@@ -106,13 +106,13 @@ jobs:
           echo "::notice title=USB bridge::$why"
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
       - name: Install Android SDK packages
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "platforms;android-36" "build-tools;37.0.0" > /dev/null
@@ -217,7 +217,7 @@ jobs:
           sha256sum dist/*.aab dist/*.apk sideload/*.apk
 
       - name: Keep the files as a workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: carlink3-v${{ steps.out.outputs.code }}
           path: |
@@ -229,7 +229,7 @@ jobs:
       # then only accepts drafts); after the first rollout it publishes to the track's testers.
       - name: Upload to Google Play
         if: github.event_name == 'push' || (inputs.upload && github.ref == 'refs/heads/main')
-        uses: r0adkll/upload-google-play@v1
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.enigy.carlink3
@@ -253,7 +253,7 @@ jobs:
 
       - name: Publish GitHub Release
         if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           name: ${{ steps.tagmeta.outputs.title }}
           body: ${{ steps.tagmeta.outputs.body }}

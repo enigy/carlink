@@ -70,12 +70,12 @@ class OcbmShellInputTest {
         assertEquals(Ocbm.PM_WIRELESS_CP, mode)
         assertEquals(Ocbm.PM_WIRELESS_CP, c.lastProjMode)
 
-        val bits = Ocbm.BH_HCI_PRESENT or Ocbm.BH_IAP2D or Ocbm.BH_AIRPLAYD or 0x80 // an unknown high bit must survive
+        val bits = Ocbm.BH_HCI_PRESENT or Ocbm.BH_IAP2D or Ocbm.BH_AIRPLAYD or Ocbm.BH_PAIR_WINDOW // the high bit must survive
         t.deliver(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_BOX_HEALTH, bits.toByte()))
         assertEquals(bits, health)
         assertEquals(bits, c.lastBoxHealth)
         assertTrue(c.boxHealthKnown)
-        assertEquals("HCI|iap2d|airplayd", Ocbm.bhString(bits))
+        assertEquals("HCI|iap2d|airplayd|pair-window", Ocbm.bhString(bits))
 
         // A truncated frame is ignored, not misread as PM_NONE / health 0.
         t.deliver(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_PROJ_MODE))

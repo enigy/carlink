@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.car.app.model.CarIcon
 import androidx.car.app.navigation.model.Maneuver
 import androidx.core.graphics.drawable.IconCompat
+import com.carlink.logging.LogRedactor
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logNavi
@@ -374,7 +375,7 @@ object ManeuverMapper {
             heldManeuver = maneuver
             heldBitmap = composed
             logInfo(
-                "[ICON_STEP] $event cpType=${state.maneuverType} road=\"${state.roadName}\" " +
+                "[ICON_STEP] $event cpType=${state.maneuverType} road=\"${LogRedactor.place(state.roadName)}\" " +
                     "exitAngle=${state.exitAngle} — icon " +
                     if (composed != null) "composed ${composed.width}x${composed.height}" else "static fallback",
                 tag = Logger.Tags.NAVI,

@@ -2,6 +2,7 @@ package com.carlink.navigation
 
 import android.os.Handler
 import android.os.Looper
+import com.carlink.logging.LogRedactor
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logNavi
@@ -153,7 +154,7 @@ object OcbmNavigationFeed {
             if (m.exitInfo != null) {
                 logInfo(
                     "[EXIT_INFO] maneuver idx=$index cpType=${m.cpManeuverType} exit='${m.exitInfo}' " +
-                        "instruction='${m.instructionText}'",
+                        "instruction='${LogRedactor.place(m.instructionText)}'",
                     tag = Logger.Tags.NAVI,
                 )
             }

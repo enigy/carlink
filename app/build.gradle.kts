@@ -49,6 +49,16 @@ android {
     }
 
     signingConfigs {
+        // One committed debug key (keystores/debug.p12, password "android"; not a secret), so every
+        // machine's debug builds share a fingerprint the USB bridge can pin. Without it each build
+        // host signs with its own ~/.android/debug.keystore and a pinned bridge refuses the build.
+        getByName("debug") {
+            storeFile = rootProject.file("keystores/debug.p12")
+            storeType = "pkcs12"
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         create("release") {
             if (keystorePropertiesFile.exists()) {
                 storeFile = file(keystoreProperties["storeFile"] as String)
