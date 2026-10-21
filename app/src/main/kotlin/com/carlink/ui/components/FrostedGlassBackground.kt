@@ -24,6 +24,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import com.carlink.ui.settings.BackgroundLogoConfig
+import com.carlink.ui.theme.LocalCarlinkColors
 import kotlin.random.Random
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -34,11 +35,10 @@ private val GLASS_BLUR_RADIUS = 28.dp
 /** The glass is blurred at 1/BLUR_DOWNSCALE of the screen size, then scaled back up. */
 private const val BLUR_DOWNSCALE = 4f
 
-// Dark tint over the blurred scene so the settings text keeps its contrast. Below API 31
-// Modifier.blur is a no-op (no RenderEffect), so the sharp scene gets a heavier tint instead.
+// The surface tint over the blurred scene, so the settings text keeps its contrast, is per theme
+// (CarlinkColors.glassTint): 45% on dark, 82% on light, where dark text needs a pale ground. Below
+// API 31 Modifier.blur is a no-op (no RenderEffect), so the sharp scene gets a heavier tint instead.
 // gminfo3.7 is AAOS 12 (API 31/32) and gets the blur.
-private const val GLASS_TINT_ALPHA = 0.45f
-private const val GLASS_TINT_ALPHA_NO_BLUR = 0.75f
 
 // Grain: a tiled noise texture over the glass. It gives the dithered, frosted look and hides
 // the banding a smooth blur shows on the radio's panel. Seeded, so the pattern never changes.
@@ -66,7 +66,8 @@ fun FrostedGlassBackground(
     modifier: Modifier = Modifier,
 ) {
     val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    val tint = MaterialTheme.colorScheme.surface.copy(alpha = if (blurSupported) GLASS_TINT_ALPHA else GLASS_TINT_ALPHA_NO_BLUR)
+    val glass = LocalCarlinkColors.current
+    val tint = MaterialTheme.colorScheme.surface.copy(alpha = if (blurSupported) glass.glassTint else glass.glassTintNoBlur)
     val grain = remember { ShaderBrush(ImageShader(grainTile(), TileMode.Repeated, TileMode.Repeated)) }
 
     Box(modifier = modifier.fillMaxSize()) {

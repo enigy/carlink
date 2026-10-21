@@ -9,7 +9,10 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -86,7 +89,8 @@ private val LightColorScheme =
         // Surface container colors for cards and elevated surfaces (teal-tinted)
         surfaceContainerLowest = Color(0xFFFFFFFF),
         surfaceContainerLow = Color(0xFFEFF5F6),
-        surfaceContainer = Color(0xFFE9EFF0),
+        // White groups and cards on the pale pane (design "Light A"); E9EFF0 barely showed.
+        surfaceContainer = Color(0xFFFFFFFF),
         surfaceContainerHigh = Color(0xFFE3EAEB),
         surfaceContainerHighest = Color(0xFFDDE4E6),
         surfaceVariant = Color(0xFFDBE4E6),
@@ -159,12 +163,90 @@ fun CarlinkTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = CarlinkTypography,
-        content = content,
-    )
+    CompositionLocalProvider(LocalCarlinkColors provides if (darkTheme) DarkCarlinkColors else LightCarlinkColors) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = CarlinkTypography,
+            content = content,
+        )
+    }
 }
+
+/**
+ * Colours the M3 scheme has no role for, one set per theme. The dark set is what the settings
+ * screen always used; the light set is design "Light A" (2026-10-21), because the dark-only
+ * constants read at 1.2–2.6:1 on the light frost. Read through [LocalCarlinkColors].
+ */
+@Immutable
+data class CarlinkColors(
+    val dark: Boolean,
+    /** Red text and outlines on settings surfaces: M3 error tone 80 on dark, tone 40 on light. */
+    val errorText: Color,
+    val connectedFill: Color,
+    val connectedBorder: Color,
+    val connectedLabel: Color,
+    val connectedTile: Color,
+    val onConnectedTile: Color,
+    /** The selected category's icon tile and its icon. */
+    val selectedTile: Color,
+    val onSelectedTile: Color,
+    val disabledFill: Color,
+    val disabledText: Color,
+    /** Edge of groups and cards; on dark it matches their fill, so nothing shows. */
+    val cardEdge: Color,
+    val closeAppFill: Color,
+    val closeAppBorder: Color,
+    val dangerOutline: Color,
+    /** Surface tint over the blurred scene, and over the sharp scene where blur is unsupported. */
+    val glassTint: Float,
+    val glassTintNoBlur: Float,
+)
+
+private val DarkCarlinkColors =
+    CarlinkColors(
+        dark = true,
+        errorText = Color(0xFFFFB4AB),
+        connectedFill = Color(0xFF13303A),
+        connectedBorder = Color(0xFF1F4F59),
+        connectedLabel = Color(0xFF5FD5ED),
+        connectedTile = Color(0xFF004E5C),
+        onConnectedTile = Color(0xFFB5EEFF),
+        selectedTile = Color(0xFF00687A),
+        onSelectedTile = Color(0xFFB5EEFF),
+        // M3's own disabled button colours (onSurface at 12% and 38%), so dark looks as before.
+        disabledFill = Color(0xFFDDE4E5).copy(alpha = 0.12f),
+        disabledText = Color(0xFFDDE4E5).copy(alpha = 0.38f),
+        cardEdge = Color(0xFF1A2324),
+        closeAppFill = Color.Transparent,
+        closeAppBorder = Color(0xFF3F484A),
+        dangerOutline = Color(0xFF3F484A),
+        glassTint = 0.45f,
+        glassTintNoBlur = 0.75f,
+    )
+
+private val LightCarlinkColors =
+    CarlinkColors(
+        dark = false,
+        errorText = Color(0xFFBA1A1A),
+        connectedFill = Color(0xFFD3F2FA),
+        connectedBorder = Color(0xFF8FCFDF),
+        connectedLabel = Color(0xFF00566A),
+        connectedTile = Color(0xFF006780),
+        onConnectedTile = Color(0xFFFFFFFF),
+        selectedTile = Color(0xFF006780),
+        onSelectedTile = Color(0xFFFFFFFF),
+        disabledFill = Color(0xFFE3EAEB),
+        disabledText = Color(0xFF5B6567),
+        cardEdge = Color(0xFFD5DDDF),
+        closeAppFill = Color(0xFFFFFFFF),
+        closeAppBorder = Color(0xFFBA1A1A),
+        dangerOutline = Color(0xFF6F797A),
+        glassTint = 0.82f,
+        glassTintNoBlur = 0.9f,
+    )
+
+/** The current theme's [CarlinkColors]; dark outside [CarlinkTheme]. */
+val LocalCarlinkColors = staticCompositionLocalOf { DarkCarlinkColors }
 
 /**
  * App typography. Intentionally overrides only three roles (displayLarge, titleLarge,

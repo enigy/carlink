@@ -14,15 +14,12 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -43,8 +40,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
-import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.components.CarlinkDialog
 import com.carlink.ui.components.OnSettingsHidden
+import com.carlink.ui.theme.LocalCarlinkColors
 
 /** Display modes in the order the pane lists them (two by two on a wide pane). */
 private val MODE_ORDER =
@@ -138,7 +136,7 @@ private fun ModeCard(
         modifier = modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
         shape = SettingsStyle.GroupShape,
         color = colors.surfaceContainer,
-        border = BorderStroke(3.dp, if (selected) colors.primary else colors.surfaceContainer),
+        border = BorderStroke(3.dp, if (selected) colors.primary else LocalCarlinkColors.current.cardEdge),
     ) {
         Row(modifier = Modifier.heightIn(min = 128.dp).padding(horizontal = 28.dp, vertical = 22.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             RadioButton(selected = selected, onClick = null)
@@ -196,20 +194,14 @@ private fun LoadingScreenChoice() {
 /** Shown when a display mode was saved but held back by a live phone session. */
 @Composable
 internal fun DisplayModeDeferredNotice(onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(imageVector = Icons.Default.DisplaySettings, contentDescription = null) },
-        title = {
-            DialogSystemBars()
-            Text("Display mode saved")
-        },
-        text = {
-            Text(
-                "A phone session is active, so the new display mode applies at the next connection. " +
-                    "The current session keeps its layout.",
-            )
-        },
-        confirmButton = { TextButton(onClick = onDismiss, colors = ButtonDefaults.textButtonColors()) { Text("OK") } },
+    CarlinkDialog(
+        title = "Display mode saved",
+        text = "A phone session is active, so the new display mode applies at the next connection. The current session keeps its layout.",
+        confirmLabel = "OK",
+        onConfirm = onDismiss,
+        onDismiss = onDismiss,
+        icon = Icons.Default.DisplaySettings,
+        dismissLabel = null,
     )
 }
 

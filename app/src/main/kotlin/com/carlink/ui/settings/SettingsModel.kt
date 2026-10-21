@@ -100,7 +100,11 @@ object SettingsModel {
         return "$micText · ${buffer.label} buffer"
     }
 
-    fun clusterSummary(on: Boolean): String = if (on) "Directions on" else "Directions off"
+    /** Cluster: directions on or off, and whether any lane guidance test is switched on. */
+    fun clusterSummary(
+        on: Boolean,
+        laneTests: Boolean = false,
+    ): String = (if (on) "Directions on" else "Directions off") + if (laneTests) " · Lane tests on" else ""
 
     /** Troubleshoot: the fixes, and the logs that now live beside them; says when a drive log is running. */
     fun troubleshootSummary(driveLog: Boolean): String = if (driveLog) "Fixes and logs · Recording drive log" else "Fixes and logs"

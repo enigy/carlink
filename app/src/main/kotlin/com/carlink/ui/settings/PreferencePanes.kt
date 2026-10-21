@@ -121,5 +121,6 @@ internal fun ClusterPane(
                 )
             }
         }
+        LaneTestsGroup()
     }
 }

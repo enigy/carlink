@@ -24,15 +24,14 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -56,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -71,7 +71,7 @@ import com.carlink.ui.adaptive.asWindowInsets
 import com.carlink.ui.components.BoxStatusLine
 import com.carlink.ui.components.BridgeNotStartingPanel
 import com.carlink.ui.components.BridgeSetupPanel
-import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.components.CarlinkDialog
 import com.carlink.ui.components.ForestFogEffect
 import com.carlink.ui.components.LoadingStatusView
 import com.carlink.ui.components.LoadingSteps
@@ -215,27 +215,23 @@ private fun PairingCodeDialog(
     code: String,
     onAnswer: (Boolean) -> Unit,
 ) {
-    val colorScheme = MaterialTheme.colorScheme
-    AlertDialog(
-        onDismissRequest = {},
-        title = {
-            DialogSystemBars()
-            Text("Pair with iPhone?")
-        },
-        text = {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Text("Confirm that this code matches the one shown on the iPhone.")
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = code.chunked((code.length + 1) / 2).joinToString(" "),
-                    style = MaterialTheme.typography.displayMedium,
-                    color = colorScheme.primary,
-                )
-            }
-        },
-        confirmButton = { TextButton(onClick = { onAnswer(true) }) { Text("Pair") } },
-        dismissButton = { TextButton(onClick = { onAnswer(false) }) { Text("Cancel", color = colorScheme.error) } },
-    )
+    CarlinkDialog(
+        title = "Pair with iPhone?",
+        text = "Confirm that this code matches the one shown on the iPhone.",
+        confirmLabel = "Pair",
+        onConfirm = { onAnswer(true) },
+        onDismiss = { onAnswer(false) },
+        icon = Icons.Default.Link,
+        dismissible = false,
+    ) {
+        Text(
+            text = code.chunked((code.length + 1) / 2).joinToString(" "),
+            style = MaterialTheme.typography.displayMedium,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
+        )
+    }
 }
 
 /** The effects that bind the manager to the surface: init, one-shot start, night mode, state fan-out. */

@@ -14,13 +14,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PhoneIphone
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,8 +33,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.logging.logWarn
-import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.components.CarlinkDialog
+import com.carlink.ui.components.DialogWeight
 import com.carlink.ui.components.OnSettingsHidden
+import com.carlink.ui.theme.LocalCarlinkColors
 
 /**
  * Phones: the connected phone first, then the known list (the USB port and the adapter's bonded
@@ -131,7 +130,7 @@ private fun ConnectedPhoneCard(
         ) {
             PhoneTile(highlighted = true)
             Column(modifier = Modifier.weight(1f)) {
-                Text("CONNECTED NOW", style = SettingsStyle.SectionLabel, color = colors.primary)
+                Text("CONNECTED NOW", style = SettingsStyle.SectionLabel, color = LocalCarlinkColors.current.connectedLabel)
                 Text(phone.name, style = SettingsStyle.PaneTitle, modifier = Modifier.padding(top = 4.dp))
                 Text(phone.kind, style = SettingsStyle.RowSubtitle, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
@@ -177,16 +176,17 @@ private fun NoPhoneCard() {
 @Composable
 private fun PhoneTile(highlighted: Boolean) {
     val colors = MaterialTheme.colorScheme
+    val extra = LocalCarlinkColors.current
     Surface(
         modifier = Modifier.size(96.dp),
         shape = RoundedCornerShape(26.dp),
-        color = if (highlighted) colors.primaryContainer else colors.surfaceContainer,
+        color = if (highlighted) extra.connectedTile else colors.surfaceContainer,
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = Icons.Default.PhoneIphone,
                 contentDescription = null,
-                tint = if (highlighted) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                tint = if (highlighted) extra.onConnectedTile else colors.onSurfaceVariant,
                 modifier = Modifier.size(48.dp),
             )
         }
@@ -232,26 +232,19 @@ private fun RemoveDeviceDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            DialogSystemBars()
-            Text(if (device.bonded) "Forget ${device.name}?" else "Remove ${device.name}?")
-        },
-        text = {
-            Text(
-                if (device.bonded) {
-                    "The adapter forgets this phone too. Next time it connects, it pairs as a new phone."
-                } else {
-                    "The adapter is not paired with this phone, so only this app's history entry is removed."
-                },
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm, colors = ButtonDefaults.textButtonColors(contentColor = SettingsStyle.ErrorText)) {
-                Text(if (device.bonded) "Forget" else "Remove")
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    CarlinkDialog(
+        title = if (device.bonded) "Forget ${device.name}?" else "Remove ${device.name}?",
+        text =
+            if (device.bonded) {
+                "The adapter forgets this phone too. Next time it connects, it pairs as a new phone."
+            } else {
+                "The adapter is not paired with this phone, so only this app's history entry is removed."
+            },
+        confirmLabel = if (device.bonded) "Forget" else "Remove",
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+        icon = Icons.Default.PhoneIphone,
+        // Forgetting reaches into the adapter; removing a history entry does not.
+        weight = if (device.bonded) DialogWeight.DANGER else DialogWeight.NORMAL,
     )
 }

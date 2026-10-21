@@ -41,10 +41,12 @@ import com.carlink.logging.logWarn
 import com.carlink.media.CarlinkMediaBrowserService
 import com.carlink.media.MediaSessionManager
 import com.carlink.media.NowPlayingInfo
+import com.carlink.navigation.LaneActivity
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.OcbmNavigationFeed
 import com.carlink.navigation.compose.ComposedIconStore
 import com.carlink.ocbm.BinaryPlist
+import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.Ocbm
@@ -63,6 +65,7 @@ import com.carlink.ui.settings.AutoCallPath
 import com.carlink.ui.settings.CallAudioStore
 import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
+import com.carlink.ui.settings.LaneTestStore
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
@@ -191,6 +194,9 @@ class CarlinkManager(
 
         /** The box daemon's log (ocbmd stdout/stderr, tools/run_ocbmd.sh); tmpfs, so RAM-only. */
         private const val BOX_LOG_PATH = "/tmp/box.log"
+
+        /** How much of the box's reject line goes into the [LANES] refusal log line. */
+        private const val LANE_REFUSAL_LOG_CHARS = 160
 
         /** The other daemons' logs Save Logs also pulls (ocbmd's LOG_SRC table), with the file label each gets. */
         private val BOX_DAEMON_LOGS = listOf("/tmp/iap2d.log" to "iap2d", "/tmp/carplayd.log" to "carplayd", "/tmp/supervisor.log" to "supervisor")
@@ -1209,6 +1215,8 @@ class CarlinkManager(
         // `enablesHEVC` drives the box's `hevcInfo` lever (carplayd main.rs), and a stream iOS
         // encodes in a codec the decoder cannot take is a black screen with no error anywhere.
         val caps = VideoCodecs.probe(g.width, g.height, g.maxFps)
+        // Settings › Cluster › Ask iPhone for lanes: the proven set plus lane guidance only.
+        val askLanes = LaneTestStore.get(context).current.ask
         logInfo(
             "[CONFIG] decoders at ${g.width}x${g.height}@${g.maxFps}: h264=${caps.h264Decoder ?: "NONE"} " +
                 "hevc=${caps.hevcDecoder ?: "NONE"} -> enablesHEVC=${caps.hevc}",
@@ -1235,7 +1243,11 @@ class CarlinkManager(
                 oemIconImages = oemIconImages,
                 oemIconLabel = context.getString(R.string.app_name),
                 rightHandDrive = DriveSideStore.get(context).current == DriveSide.RIGHT,
+                metadataTier = if (askLanes) "extended" else "proven",
+                metadataSkip = if (askLanes) VehicleConfigSpec.LANES_ONLY_SKIP else emptyList(),
             )
+        LaneActivity.noteAsked(askLanes)
+        if (askLanes) logWarn("[LANES] asking the iPhone for lane guidance: tier extended, skip ${VehicleConfigSpec.LANES_ONLY_SKIP}", tag = Logger.Tags.NAVI)
         logInfo("[CONFIG] ${g.describe()}", tag = Logger.Tags.ADAPTR)
         return spec
     }
@@ -2678,7 +2690,7 @@ class CarlinkManager(
         logWarn("[UI_ACTION] Drive logging -> ${if (on) "on" else "off"}", tag = Logger.Tags.ADAPTR)
         DriveLogging.setEnabled(context, on)
         val c = client ?: return
-        if (on) {
+        if (on || LaneActivity.askedThisConnection.value) {
             armBoxLogStream(c)
         } else {
             c.setBoxLogStream(false)
@@ -2686,11 +2698,36 @@ class CarlinkManager(
         }
     }
 
-    /** After SUBSCRIBE (the box resets the stream to off per session): stream box lines into the drive log. */
+    /**
+     * After SUBSCRIBE (the box resets the stream to off per session): stream box lines into the drive
+     * log, and watch them for a refused lane request while one is out.
+     */
     private fun armBoxLogStream(c: OcbmClient) {
-        if (!DriveLog.recording) return
-        c.onBoxLog = { DriveLog.boxEntries(it) }
+        if (!DriveLog.recording && !LaneActivity.askedThisConnection.value) return
+        c.onBoxLog = { entries ->
+            if (DriveLog.recording) DriveLog.boxEntries(entries)
+            watchLaneRefusal(entries)
+        }
         c.setBoxLogStream(true)
+    }
+
+    /**
+     * The iPhone rejects an identification it does not accept (`RX 0x1D03 IdentificationRejected`
+     * in the box log), which costs the whole CarPlay session. When the rejected one asked for lanes,
+     * stop asking and reset the connection so the box gets the proven set again; otherwise every
+     * retry would carry the same request. Backfilled lines are an earlier session's and are skipped.
+     */
+    private fun watchLaneRefusal(entries: List<BoxLogEntry>) {
+        if (!LaneActivity.askedThisConnection.value) return
+        val refusal = entries.firstOrNull { it.flags and Ocbm.LOG_F_BACKFILL == 0 && "IdentificationRejected" in it.text } ?: return
+        LaneActivity.noteAsked(false)
+        LaneTestStore.get(context).markRefused(System.currentTimeMillis())
+        logWarn(
+            "[LANES] the iPhone refused the identification that asked for lanes (${refusal.text.take(LANE_REFUSAL_LOG_CHARS)}); " +
+                "turned 'Ask iPhone for lanes' off, resetting the connection",
+            tag = Logger.Tags.NAVI,
+        )
+        scope.launch { cleanSlateReset() }
     }
     // ---- Phone priority (enigy/ocbm phone-priority: MGMT_SET_POLICY / MGMT_CONNECT_DEVICE) -------
 
@@ -2781,6 +2818,7 @@ class CarlinkManager(
                 OcbmNavigationFeed.onRouteGuidance(obj)
             }
             "maneuver" -> OcbmNavigationFeed.onManeuver(obj)
+            "laneGuidance" -> OcbmNavigationFeed.onLaneGuidance(obj)
         }
     }
 
@@ -2797,7 +2835,7 @@ class CarlinkManager(
                     // 0 = no route. Claiming NAVIGATION app focus is the 3P way to tell AAOS the
                     // phone is now the navigator; a native maps app mid-route is told it lost it.
                     // Carlink3: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
-                    "routeGuidance", "maneuver" -> onNavigationJson(obj)
+                    "routeGuidance", "maneuver", "laneGuidance" -> onNavigationJson(obj)
                     else -> Unit
                 }
             }

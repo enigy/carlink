@@ -100,6 +100,7 @@ class SettingsModelTest {
         assertEquals("Car call path · Low buffer", SettingsModel.callsSummary(CallMicConfig.CAR_CALL_PATH, CallBufferConfig.LOW))
         assertEquals("Directions on", SettingsModel.clusterSummary(true))
         assertEquals("Directions off", SettingsModel.clusterSummary(false))
+        assertEquals("Directions on · Lane tests on", SettingsModel.clusterSummary(true, laneTests = true))
         assertEquals("Fixes and logs", SettingsModel.troubleshootSummary(false))
         assertEquals("Fixes and logs · Recording drive log", SettingsModel.troubleshootSummary(true))
     }

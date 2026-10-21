@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carlink.ui.components.NO_BACKGROUND_BRUSH
+import com.carlink.ui.theme.LocalCarlinkColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -84,7 +85,7 @@ private fun SceneCard(
         modifier = modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
         shape = RoundedCornerShape(24.dp),
         color = colors.surfaceContainer,
-        border = BorderStroke(3.dp, if (selected) colors.primary else colors.surfaceContainer),
+        border = BorderStroke(3.dp, if (selected) colors.primary else LocalCarlinkColors.current.cardEdge),
     ) {
         Column {
             SceneThumbnail(scene.drawableRes, Modifier.fillMaxWidth().aspectRatio(SCENE_ASPECT))

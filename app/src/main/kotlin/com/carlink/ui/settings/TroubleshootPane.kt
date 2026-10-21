@@ -13,11 +13,8 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.VideoSettings
 import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,7 +27,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.logging.logWarn
-import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.components.CarlinkDialog
+import com.carlink.ui.components.DialogWeight
 import com.carlink.ui.components.OnSettingsHidden
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -192,6 +190,7 @@ private class ConfirmSpec(
     val title: String,
     val text: String,
     val confirmLabel: String,
+    val weight: DialogWeight,
 )
 
 private val RESTART_WIRELESS_CONFIRM =
@@ -202,6 +201,7 @@ private val RESTART_WIRELESS_CONFIRM =
             "The adapter restarts its Bluetooth and Wi-Fi and advertises again. " +
                 "A wirelessly connected phone will drop and reconnect; a phone on the USB cable is not affected.",
         confirmLabel = "Restart wireless",
+        weight = DialogWeight.NORMAL,
     )
 
 private val REBOOT_CONFIRM =
@@ -213,6 +213,7 @@ private val REBOOT_CONFIRM =
                 "It is gone for about 50 seconds while it restarts and re-enumerates on USB; " +
                 "Android may then ask for USB permission again before the app reconnects.",
         confirmLabel = "Reboot",
+        weight = DialogWeight.CAUTION,
     )
 
 private val DISCONNECT_ADAPTER_CONFIRM =
@@ -223,6 +224,7 @@ private val DISCONNECT_ADAPTER_CONFIRM =
             "Ends the session with the adapter and releases it. Any live projection drops; " +
                 "the app stays open and reconnects when you use Reset connection or replug the adapter.",
         confirmLabel = "Disconnect",
+        weight = DialogWeight.DANGER,
     )
 
 private val RESET_CONNECTION_CONFIRM =
@@ -234,6 +236,7 @@ private val RESET_CONNECTION_CONFIRM =
                 "finish shutting the session down, then reconnects and starts a new session. " +
                 "The phone reconnects on its own; expect about 10 seconds without projection.",
         confirmLabel = "Reset",
+        weight = DialogWeight.NORMAL,
     )
 
 /** One confirmation shape for every disruptive adapter action. */
@@ -243,17 +246,14 @@ private fun ConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    val colorScheme = MaterialTheme.colorScheme
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(imageVector = spec.icon, contentDescription = null, tint = colorScheme.tertiary) },
-        title = {
-            DialogSystemBars() // keep the head unit's bars hidden while this window has focus
-            Text(spec.title)
-        },
-        text = { Text(spec.text) },
-        confirmButton = { TextButton(onClick = onConfirm) { Text(spec.confirmLabel, color = SettingsStyle.ErrorText) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    CarlinkDialog(
+        title = spec.title,
+        text = spec.text,
+        confirmLabel = spec.confirmLabel,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+        icon = spec.icon,
+        weight = spec.weight,
     )
 }
 

@@ -64,6 +64,11 @@ data class VehicleConfigSpec(
     val appDrivenSetup: Boolean = false,
     val metadataTier: String = "proven",
     /**
+     * Box feature names (`iap2-core/src/features.rs`) dropped from [metadataTier]'s declaration.
+     * Empty = the key is omitted. [LANES_ONLY_SKIP] narrows `extended` to the proven set plus lanes.
+     */
+    val metadataSkip: List<String> = emptyList(),
+    /**
      * Apple `limitedUIConfig` — WHICH elements iOS restricts once `setLimitedUI(true)` is sent.
      *
      * This is a DECLARATION, not the switch. The runtime on/off is `CMD_LIMITED_UI_ON/OFF` on
@@ -107,6 +112,7 @@ data class VehicleConfigSpec(
         require(maxFps == 30 || maxFps == 60) { "maxFPS must be 30 or 60; the box ignores anything else" }
         require(width > 0 && height > 0) { "pixelDimensions must be positive" }
         require(metadataTier in LEGAL_TIERS) { "metadata tier must be one of $LEGAL_TIERS" }
+        require(metadataSkip.all { SKIP_TOKEN.matches(it) }) { "metadata skip names are lower_snake_case feature names" }
         // Legality, ported from the macOS host (VehicleConfig.swift PanelRule / ViewArea2Rule): a
         // config that iOS tears the session down for must never be constructible. Callers clamp
         // BEFORE constructing (DisplayProfile.toGeometry); this is the last line, not the policy.
@@ -123,6 +129,17 @@ data class VehicleConfigSpec(
          * Identify reject that costs the whole CarPlay session, not just the metadata.
          */
         val LEGAL_TIERS = setOf("proven", "extended", "all")
+
+        /**
+         * Lane guidance with as little else as possible: `extended` minus every extended feature
+         * except `lane_guidance`, which declares only 0x5204 in Identify param 7 and rides the
+         * proven route-guidance subscribe (0x5200). Settings › Cluster › Ask iPhone for lanes.
+         * Never skip `route_guidance` here: the box would then declare 0x5204 without its owner,
+         * an unrecoverable 0x1D03 (`features.rs` Trigger::RidesOn).
+         */
+        val LANES_ONLY_SKIP = listOf("communications", "call_history", "power", "app_discovery", "destination", "device_info")
+
+        private val SKIP_TOKEN = Regex("[a-z][a-z_]*")
     }
 }
 
@@ -399,6 +416,7 @@ object VehicleConfigYaml {
 
         line("metadata:")
         line("  tier: ${s.metadataTier}")
+        if (s.metadataSkip.isNotEmpty()) line("  skip: [${s.metadataSkip.joinToString(", ")}]")
     }
 
     fun renderBytes(s: VehicleConfigSpec): ByteArray = render(s).toByteArray(Charsets.UTF_8)

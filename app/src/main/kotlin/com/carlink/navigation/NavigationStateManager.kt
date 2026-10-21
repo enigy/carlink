@@ -54,6 +54,9 @@ data class NavigationState(
     val nextRoundaboutExit: Int? = null,
     val nextExitAngle: Int? = null,
     val nextExitInfo: String? = null,
+    // Lane guidance for the approaching step (iAP2 0x5204 forwarded by the OCBM box, or the
+    // cluster lane probe); empty when the phone sent none. Sent as Step lanes in the Trip.
+    val lanes: List<LaneHint> = emptyList(),
 ) {
     /** [236] Cluster/HUD text for the approaching step: "Exit 273 · Wade Green Rd", or just the road. */
     val stepCue: String? get() = exitCue(exitInfo, roadName)

@@ -2,6 +2,7 @@ package com.carlink.navigation
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logNavi
@@ -59,6 +60,23 @@ object OcbmNavigationFeed {
     private var currentIndex: Int? = null
     private var guidance = NavigationState()
     private var routeDirty = false
+
+    // ---- Lane guidance (iAP2 0x5204 via the box's `kind=laneGuidance`) --------------------------
+
+    /** Lane blocks by LaneGuidanceIndex, each lane by its index within the block. */
+    private val laneBlocks = HashMap<Int, HashMap<Int, LaneRecord>>()
+
+    /** When each lane block last changed (elapsedRealtime), for the unlinked fallback. */
+    private val laneBlockAt = HashMap<Int, Long>()
+
+    /** Maneuver index -> the lane block it links to (0x5202 param 12, `linkedLaneGuidance`). */
+    private val linkedLanes = HashMap<Int, Int>()
+
+    /** The source of the last published lanes, so a change is logged once rather than per tick. */
+    private var lastLaneSource = ""
+
+    /** How long an unlinked lane block counts as "the lanes for now" after it last changed. */
+    private const val LANE_FRESH_MS = 15_000L
     private var published = 0L
 
     /** `kind=routeGuidance` — trip summary and the index of the maneuver being approached. */
@@ -123,6 +141,7 @@ object OcbmNavigationFeed {
             val changed = maneuvers[index] != m
             maneuvers[index] = m
             if (changed) routeDirty = true
+            if (obj.has("linkedLaneGuidance")) linkedLanes[index] = obj.optInt("linkedLaneGuidance")
             if (m.exitInfo != null) {
                 logInfo(
                     "[EXIT_INFO] maneuver idx=$index cpType=${m.cpManeuverType} exit='${m.exitInfo}' " +
@@ -134,6 +153,24 @@ object OcbmNavigationFeed {
             val cur = currentIndex
             val isLiveOrNext = cur != null && (index == cur || index == nextIndexAfter(cur))
             if (changed && isLiveOrNext) publishLocked()
+        }
+    }
+
+    /**
+     * `kind=laneGuidance` — one lane of one lane-guidance block (iAP2 0x5204). Every new or changed
+     * lane is logged, so a drive's trail shows exactly what the phone sent and how it linked.
+     */
+    fun onLaneGuidance(obj: JSONObject) {
+        if (!obj.has("index")) return
+        synchronized(lock) {
+            val block = obj.optInt("guidanceIndex", -1)
+            val rec = LaneRecord(lane = obj.optInt("index"), status = obj.optInt("laneStatus", 0), angle = obj.optInt("laneAngle", 0))
+            val lanes = laneBlocks.getOrPut(block) { HashMap() }
+            if (lanes[rec.lane] == rec) return
+            lanes[rec.lane] = rec
+            laneBlockAt[block] = SystemClock.elapsedRealtime()
+            logInfo("[LANES] rx block=$block lane=${rec.lane} status=${rec.status} angle=${rec.angle} cur=$currentIndex", tag = Logger.Tags.NAVI)
+            if (currentIndex != null) publishLocked()
         }
     }
 
@@ -149,6 +186,10 @@ object OcbmNavigationFeed {
         zeroRecords = 0
         main.removeCallbacks(endRunnable)
         maneuvers.clear()
+        laneBlocks.clear()
+        laneBlockAt.clear()
+        linkedLanes.clear()
+        lastLaneSource = ""
         currentIndex = null
         guidance = NavigationState()
         routeDirty = false
@@ -175,6 +216,7 @@ object OcbmNavigationFeed {
                     nextRoadName = next?.instructionText?.takeIf { it.isNotEmpty() } ?: next?.postManeuverRoadName,
                     nextExitAngle = next?.exitAngle,
                     nextExitInfo = next?.exitInfo,
+                    lanes = lanesForLocked(cur),
                 )
             }
         published++
@@ -183,6 +225,32 @@ object OcbmNavigationFeed {
                 "exit=${state.exitInfo} remain=${state.remainDistance}m next=${state.nextManeuverType}@${state.nextRoadName}"
         }
         NavigationStateManager.publish(state)
+    }
+
+    /**
+     * Lanes for the approaching maneuver: the block it links to; else the most recently changed
+     * block while fresh (the link is not always sent, and the box does not forward 0x5201's
+     * LaneGuidanceCurrentIndex). The source is logged on change so the trail shows which rule fired.
+     * The test pattern (Settings › Cluster) is applied later, by [ClusterStep].
+     */
+    private fun lanesForLocked(cur: Int?): List<LaneHint> {
+        val linked = cur?.let { linkedLanes[it] }?.let { b -> laneBlocks[b]?.let { b to it } }
+        val newest = laneBlockAt.maxByOrNull { it.value }
+        val fresh = newest?.takeIf { SystemClock.elapsedRealtime() - it.value < LANE_FRESH_MS }?.key
+        val latest = fresh?.let { b -> laneBlocks[b]?.let { b to it } }
+        val (source, lanes) =
+            when {
+                linked != null -> "linked block ${linked.first}" to LaneGuidance.fromRecords(linked.second.values)
+                latest != null -> "latest block ${latest.first}" to LaneGuidance.fromRecords(latest.second.values)
+                else -> "none" to emptyList<LaneHint>()
+            }
+        val tag = "$source $lanes"
+        if (tag != lastLaneSource) {
+            lastLaneSource = tag
+            logInfo("[LANES] cur=$cur lanes from $source: ${lanes.joinToString { "${it.angle}${if (it.recommended) "*" else ""}" }}", tag = Logger.Tags.NAVI)
+        }
+        LaneActivity.noteLanes(lanes)
+        return lanes
     }
 
     private fun JSONObject.optIntOr(

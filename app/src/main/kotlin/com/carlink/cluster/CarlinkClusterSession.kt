@@ -11,7 +11,6 @@ import androidx.car.app.navigation.NavigationManager
 import androidx.car.app.navigation.NavigationManagerCallback
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.navigation.model.RoutingInfo
-import androidx.car.app.navigation.model.Step
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.carlink.logging.Logger
@@ -19,8 +18,8 @@ import com.carlink.logging.logError
 import com.carlink.logging.logInfo
 import com.carlink.logging.logNavi
 import com.carlink.logging.logWarn
+import com.carlink.navigation.ClusterStep
 import com.carlink.navigation.DistanceFormatter
-import com.carlink.navigation.ManeuverMapper
 import com.carlink.navigation.NavigationState
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.TripBuilder
@@ -245,18 +244,15 @@ class CarlinkClusterScreen(
         }
 
         return try {
-            val maneuver = ManeuverMapper.buildManeuver(state, carContext)
-
-            val stepBuilder = Step.Builder()
-            stepBuilder.setManeuver(maneuver)
-            state.stepCue?.let { stepBuilder.setCue(it) } // [236] exit label first when known
+            // [236] exit label first when known; the lane guidance tests ride on the step too.
+            val step = ClusterStep.primary(state, carContext)
 
             val distance = DistanceFormatter.toDistance(state.remainDistance)
 
             val routingInfo =
                 RoutingInfo
                     .Builder()
-                    .setCurrentStep(stepBuilder.build(), distance)
+                    .setCurrentStep(step, distance)
                     .build()
 
             logNavi {

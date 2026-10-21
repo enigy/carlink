@@ -71,6 +71,7 @@ import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeDeferredNotice
 import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.settings.DisplayPane
+import com.carlink.ui.settings.LaneTestStore
 import com.carlink.ui.settings.PhonesPane
 import com.carlink.ui.settings.ScrollColumn
 import com.carlink.ui.settings.SettingsCategory
@@ -79,6 +80,7 @@ import com.carlink.ui.settings.SettingsModel
 import com.carlink.ui.settings.SettingsStyle
 import com.carlink.ui.settings.TroubleshootPane
 import com.carlink.ui.settings.rememberSettingsLiveState
+import com.carlink.ui.theme.LocalCarlinkColors
 import com.carlink.util.EdgeInsets
 
 /**
@@ -246,12 +248,13 @@ private fun categorySummaries(
     val callAudio = remember { CallAudioStore.get(context) }
     val mic by callAudio.callMicFlow.collectAsState()
     val buffer by callAudio.callBufferFlow.collectAsState()
+    val laneTests by remember { LaneTestStore.get(context) }.flow.collectAsState()
     val live = panes.live
     return mapOf(
         SettingsCategory.PHONES to SettingsModel.phonesSummary(live.connectedPhone, live.devices.size),
         SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo),
         SettingsCategory.CALLS to SettingsModel.callsSummary(mic, buffer),
-        SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn),
+        SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn, laneTests.anyOn),
         SettingsCategory.TROUBLESHOOT to SettingsModel.troubleshootSummary(live.driveLog),
         SettingsCategory.ADAPTER to SettingsModel.adapterSummary(panes.carlinkManager.adapterName, live.box),
     )
@@ -287,6 +290,7 @@ private fun CategoryItem(
 ) {
     val colors = MaterialTheme.colorScheme
     val view = LocalView.current
+    val extra = LocalCarlinkColors.current
     val fg = if (selected) colors.onPrimaryContainer else colors.onSurface
     Surface(
         selected = selected,
@@ -307,7 +311,8 @@ private fun CategoryItem(
             Surface(
                 modifier = Modifier.size(64.dp),
                 shape = RoundedCornerShape(20.dp),
-                color = if (selected) SELECTED_TILE else colors.surfaceContainerHigh,
+                color = if (selected) extra.selectedTile else colors.surfaceContainerHigh,
+                contentColor = if (selected) extra.onSelectedTile else fg,
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(category.icon, contentDescription = null, modifier = Modifier.size(32.dp))
@@ -329,9 +334,6 @@ private fun CategoryItem(
         }
     }
 }
-
-/** The selected category's tile: one step lighter than the row's primary container. */
-private val SELECTED_TILE = Color(0xFF00687A)
 
 /** The right-hand pane: a lifted surface that scrolls, its scroll reset per category, with [ScrollColumn] beside it. */
 @Composable

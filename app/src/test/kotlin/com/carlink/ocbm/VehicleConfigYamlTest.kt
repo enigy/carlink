@@ -305,4 +305,29 @@ metadata:
         assertTrue("rightHandDrive line missing:\n$doc", doc.lines().contains("rightHandDrive: true"))
         assertFalse(doc.contains("rightHandDrive: false"))
     }
+
+    /** Settings › Cluster › Ask iPhone for lanes: the box's flow-sequence skip list, after the tier. */
+    @Test
+    fun `the lanes-only request ends the document with the tier and its skip list`() {
+        val doc = VehicleConfigYaml.render(VehicleConfigSpec(metadataTier = "extended", metadataSkip = VehicleConfigSpec.LANES_ONLY_SKIP))
+        assertTrue(
+            doc,
+            doc.endsWith(
+                "metadata:\n  tier: extended\n  skip: [communications, call_history, power, app_discovery, destination, device_info]\n",
+            ),
+        )
+        assertFalse("lanes ride route guidance; skipping it is an unrecoverable reject", "route_guidance" in VehicleConfigSpec.LANES_ONLY_SKIP)
+        assertFalse("the default document has no skip key", VehicleConfigYaml.render(VehicleConfigSpec()).contains("skip:"))
+    }
+
+    @Test
+    fun `a skip name that could break the flow sequence is refused`() {
+        var threw = false
+        try {
+            VehicleConfigSpec(metadataSkip = listOf("power], tier: all"))
+        } catch (_: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw)
+    }
 }

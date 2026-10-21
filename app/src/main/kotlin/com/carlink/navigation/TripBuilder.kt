@@ -48,11 +48,9 @@ object TripBuilder {
         // ONTO at that approaching maneuver (not the road you're currently on). [194] wrongly promoted
         // state.next* (the maneuver AFTER the approaching one) to the primary step, which put the HUD
         // text one turn AHEAD; reverted here. state.next* stays a look-ahead preview only.
-        val maneuver = ManeuverMapper.buildManeuver(state, context)
-        val stepBuilder = Step.Builder()
-        stepBuilder.setManeuver(maneuver)
-        // [236] "Exit 273 · road" when the exit label is known, else the road name.
-        state.stepCue?.let { stepBuilder.setCue(it) }
+        // [236] "Exit 273 · road" when the exit label is known, else the road name; lane guidance
+        // tests from Settings › Cluster ride on it (ClusterStep).
+        val step = ClusterStep.primary(state, context)
 
         val stepEstimate =
             TravelEstimate
@@ -61,7 +59,7 @@ object TripBuilder {
                     eta,
                 ).build()
 
-        tripBuilder.addStep(stepBuilder.build(), stepEstimate)
+        tripBuilder.addStep(step, stepEstimate)
 
         // Next step — look-ahead preview (the maneuver AFTER the one being approached).
         if (state.hasNextStep) {

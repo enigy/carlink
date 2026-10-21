@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,12 +41,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import com.carlink.ui.theme.LocalCarlinkColors
 
 /**
  * Type and colour for the merged settings screen (design "Merged A"), sized for a head unit at
  * arm's length: 26 sp row titles, 20 sp secondary lines. Colours the theme does not carry — a
  * readable error red on the dark surface, the connected-phone tint — live here so every pane
- * agrees on them.
+ * agrees on them. Those colours come from [LocalCarlinkColors], so light and dark each get their own.
  */
 internal object SettingsStyle {
     val PaneTitle = TextStyle(fontSize = 34.sp, fontWeight = FontWeight.Medium)
@@ -55,11 +57,23 @@ internal object SettingsStyle {
     val SectionLabel = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.08.em)
     val Action = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Medium)
 
-    /** M3 dark-theme error tone 80: legible as text on the dark surfaces (the scheme's error is tone 40). */
-    val ErrorText = Color(0xFFFFB4AB)
-    val ConnectedFill = Color(0xFF13303A)
-    val ConnectedBorder = Color(0xFF1F4F59)
-    val DisabledText = Color(0xFF6B7576)
+    /** Red that reads as text on this theme's settings surfaces (the scheme's error is too dark on dark). */
+    val ErrorText: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalCarlinkColors.current.errorText
+    val ConnectedFill: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalCarlinkColors.current.connectedFill
+    val ConnectedBorder: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalCarlinkColors.current.connectedBorder
+    val DisabledText: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalCarlinkColors.current.disabledText
 
     val RowMinHeight = 104.dp
     val ActionHeight = 64.dp
@@ -110,6 +124,7 @@ internal fun SettingsGroup(
         modifier = modifier.fillMaxWidth(),
         shape = SettingsStyle.GroupShape,
         color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, LocalCarlinkColors.current.cardEdge),
     ) {
         Column(content = content)
     }
@@ -197,6 +212,7 @@ internal fun RowAction(
     weight: ActionWeight = ActionWeight.NORMAL,
 ) {
     val colors = MaterialTheme.colorScheme
+    val extra = LocalCarlinkColors.current
     val shapeModifier = modifier.heightIn(min = SettingsStyle.ActionHeight)
     val padding = PaddingValues(horizontal = 28.dp)
     when (weight) {
@@ -206,7 +222,13 @@ internal fun RowAction(
                 enabled = enabled,
                 modifier = shapeModifier,
                 contentPadding = padding,
-                colors = ButtonDefaults.buttonColors(containerColor = colors.secondaryContainer, contentColor = colors.onSecondaryContainer),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = colors.secondaryContainer,
+                        contentColor = colors.onSecondaryContainer,
+                        disabledContainerColor = extra.disabledFill,
+                        disabledContentColor = extra.disabledText,
+                    ),
             ) { Text(label, style = SettingsStyle.Action) }
         ActionWeight.DANGER ->
             Button(
@@ -223,7 +245,7 @@ internal fun RowAction(
                 enabled = enabled,
                 modifier = shapeModifier,
                 contentPadding = padding,
-                border = BorderStroke(2.dp, if (enabled && weight == ActionWeight.CAUTION) tint else colors.outlineVariant),
+                border = BorderStroke(2.dp, if (enabled && weight == ActionWeight.CAUTION) tint else extra.dangerOutline),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = tint),
             ) { Text(label, style = SettingsStyle.Action) }
         }

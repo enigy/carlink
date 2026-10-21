@@ -14,7 +14,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PhoneIphone
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -22,7 +21,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,10 +32,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.carlink.ui.components.DialogSystemBars
+import com.carlink.ui.components.CarlinkDialog
+import com.carlink.ui.components.DialogWeight
 import com.carlink.ui.components.OnSettingsHidden
 import com.carlink.ui.settings.ConnectedPhone
 import com.carlink.ui.settings.SettingsStyle
+import com.carlink.ui.theme.LocalCarlinkColors
 import kotlinx.coroutines.launch
 
 /** Back, the title, which phone is connected, and Close app. */
@@ -104,36 +104,31 @@ private fun CloseAppButton(onCloseApp: suspend () -> Unit) {
     OutlinedButton(
         onClick = { showConfirm = true },
         modifier = Modifier.heightIn(min = 72.dp),
-        border = BorderStroke(2.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = SettingsStyle.ErrorText),
+        border = BorderStroke(2.dp, LocalCarlinkColors.current.closeAppBorder),
+        colors = ButtonDefaults.outlinedButtonColors(containerColor = LocalCarlinkColors.current.closeAppFill, contentColor = SettingsStyle.ErrorText),
     ) {
         Icon(Icons.Default.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(28.dp))
         Text("Close app", style = SettingsStyle.Action, modifier = Modifier.padding(start = 12.dp))
     }
     if (showConfirm) {
-        AlertDialog(
-            onDismissRequest = { showConfirm = false },
-            title = {
-                DialogSystemBars()
-                Text("Close app?")
+        CarlinkDialog(
+            title = "Close app?",
+            text = "This will stop all connections and close the app.",
+            confirmLabel = "Close",
+            onConfirm = {
+                closing = true
+                scope.launch {
+                    try {
+                        onCloseApp()
+                    } finally {
+                        activity?.finishAffinity()
+                    }
+                }
             },
-            text = { Text("This will stop all connections and close the app.") },
-            confirmButton = {
-                TextButton(
-                    enabled = !closing,
-                    onClick = {
-                        closing = true
-                        scope.launch {
-                            try {
-                                onCloseApp()
-                            } finally {
-                                activity?.finishAffinity()
-                            }
-                        }
-                    },
-                ) { Text("Close", color = SettingsStyle.ErrorText) }
-            },
-            dismissButton = { TextButton(onClick = { showConfirm = false }) { Text("Cancel") } },
+            onDismiss = { showConfirm = false },
+            icon = Icons.Default.PowerSettingsNew,
+            weight = DialogWeight.DANGER,
+            confirmEnabled = !closing,
         )
     }
 }
