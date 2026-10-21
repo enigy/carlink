@@ -1721,10 +1721,17 @@ class CarlinkManager(
     ) {
         if (mode == projectionMode && health == boxHealth && known == boxHealthKnown) return
         if (mode != projectionMode) logInfo("[STATUS] adapter mode -> ${Ocbm.pmName(mode)}", tag = Logger.Tags.ADAPTR)
+        // The pairing window just closed (it closes 10 s after a new phone bonds): ask for the bond
+        // list again, so a phone added through "Add phone" shows up without reopening Settings.
+        val pairWindowClosed = boxHealthKnown && boxHealth and Ocbm.BH_PAIR_WINDOW != 0 && health and Ocbm.BH_PAIR_WINDOW == 0
         projectionMode = mode
         boxHealth = health
         boxHealthKnown = known
         callback?.onBoxStatusChanged(mode, health, known)
+        if (pairWindowClosed) {
+            logInfo("[PAIRING] window closed — refreshing the phone list", tag = Logger.Tags.ADAPTR)
+            refreshDeviceList()
+        }
         val text = boxStatusText()
         synchronized(boxStatusListeners) { boxStatusListeners.toList() }.forEach { it.onBoxStatus(text) }
     }

@@ -27,8 +27,8 @@ name: Release
 #   PLAY_SERVICE_ACCOUNT_JSON  JSON key of a Google Cloud service account allowed to release Carlink3
 # Variable (… → Variables), optional
 #   CARLINK3_CALLER_CERTS      replaces the bridge's caller pin, same as -Pcarlink3.callerCerts locally.
-#                              Unset = the pins committed in bridge/build.gradle.kts (Play app signing,
-#                              upload and debug certificates).
+#                              Unset = the pins committed in bridge/build.gradle.kts (Play app signing
+#                              and upload certificates; only debug bridges also take the debug key).
 
 on:
   push:
