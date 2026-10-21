@@ -33,8 +33,10 @@ unit hands USB devices to) and answers only Carlink3, so installing it replaces 
 To check the download: `shasum -a 256 carlink3_bridge.apk` on macOS, `sha256sum carlink3_bridge.apk`
 on Linux, or `Get-FileHash carlink3_bridge.apk -Algorithm SHA256` in Windows PowerShell.
 
-The same APK is attached to each [GitHub Release](https://github.com/enigy/carlink3/releases) as
-`carlink3_bridge-<version>.apk`. When the bridge version changes, replace `app/carlink3_bridge.apk`
+Each [GitHub Release](https://github.com/enigy/carlink3/releases) also attaches the bridge as
+`carlink3_bridge-<version>.apk`. The release workflow rebuilds it every time, so even with unchanged
+source that file has its own SHA-256 (v13's is `966d1cfb…`); the hash above is for
+`app/carlink3_bridge.apk` only. When the bridge version changes, replace `app/carlink3_bridge.apk`
 with the release's signed APK and update the version and SHA-256 above.
 
 ## Status
