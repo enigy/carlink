@@ -36,46 +36,57 @@ class TurnAlertTest {
     }
 
     @Test
-    fun `warning time grows from 15 s at 25 mph to 30 s at 60 mph`() {
-        assertEquals(15.0, TurnAlert.leadSeconds(10.0, AlertTiming.STANDARD), 1e-9)
-        assertEquals(15.0, TurnAlert.leadSeconds(25.0, AlertTiming.STANDARD), 1e-9)
-        assertEquals(22.5, TurnAlert.leadSeconds(42.5, AlertTiming.STANDARD), 1e-9)
-        assertEquals(30.0, TurnAlert.leadSeconds(60.0, AlertTiming.STANDARD), 1e-9)
-        assertEquals(30.0, TurnAlert.leadSeconds(80.0, AlertTiming.STANDARD), 1e-9)
-        assertEquals(39.0, TurnAlert.leadSeconds(60.0, AlertTiming.EARLIER), 1e-9)
-        assertEquals(22.5, TurnAlert.leadSeconds(60.0, AlertTiming.LATER), 1e-9)
+    fun `warning time is a straight line between the 25 and 60 mph settings, held outside them`() {
+        assertEquals(36.0, TurnAlert.leadSeconds(10.0, AlertTiming.STANDARD), 1e-9)
+        assertEquals(36.0, TurnAlert.leadSeconds(25.0, AlertTiming.STANDARD), 1e-9)
+        assertEquals(48.0, TurnAlert.leadSeconds(42.5, AlertTiming.STANDARD), 1e-9)
+        assertEquals(60.0, TurnAlert.leadSeconds(60.0, AlertTiming.STANDARD), 1e-9)
+        assertEquals(60.0, TurnAlert.leadSeconds(80.0, AlertTiming.STANDARD), 1e-9)
+        assertEquals(72.0, TurnAlert.leadSeconds(25.0, AlertTiming.EARLIER), 1e-9)
+        assertEquals(120.0, TurnAlert.leadSeconds(60.0, AlertTiming.EARLIER), 1e-9)
+        assertEquals(14.4, TurnAlert.leadSeconds(25.0, AlertTiming.LATER), 1e-9)
+        assertEquals(30.0, TurnAlert.leadSeconds(60.0, AlertTiming.LATER), 1e-9)
     }
 
     @Test
-    fun `standard timing gives the owner's two examples`() {
+    fun `each timing starts at the owner's distances at 25 and 60 mph`() {
         val mi = TurnAlert.METERS_PER_MILE
-        assertEquals(0.50, TurnAlert.startMeters(60 * TurnAlert.MPS_PER_MPH, AlertTiming.STANDARD) / mi, 0.005)
-        assertEquals(0.10, TurnAlert.startMeters(25 * TurnAlert.MPS_PER_MPH, AlertTiming.STANDARD) / mi, 0.005)
+        val expected =
+            mapOf(
+                AlertTiming.EARLIER to (0.5 to 2.0),
+                AlertTiming.STANDARD to (0.25 to 1.0),
+                AlertTiming.LATER to (0.1 to 0.5),
+            )
+        for ((timing, miles) in expected) {
+            assertEquals(miles.first, TurnAlert.startMeters(25 * TurnAlert.MPS_PER_MPH, timing) / mi, 0.001)
+            assertEquals(miles.second, TurnAlert.startMeters(60 * TurnAlert.MPS_PER_MPH, timing) / mi, 0.001)
+        }
     }
 
     @Test
     fun `normal outside the zone, flashing inside, solid for the last 3 s`() {
-        // 60 mph = 26.8 m/s from 1200 m out: the alert starts 805 m out, the solid frame 80 m out.
-        var t = drive(60.0, fromM = 1200.0, fromS = 0, toS = 7) // 1012 m
+        // Standard, 60 mph = 26.8 m/s from 2000 m out: the alert starts 1 mi (1609 m) out, the solid frame 80 m out.
+        var t = drive(60.0, fromM = 2000.0, fromS = 0, toS = 7) // 1812 m
         assertEquals(Phase.NORMAL, TurnAlert.phase(on, t))
-        t = drive(60.0, fromM = 1200.0, fromS = 8, toS = 22) // 610 m
+        t = drive(60.0, fromM = 2000.0, fromS = 8, toS = 22) // 1410 m
         assertEquals(Phase.FLASH, TurnAlert.phase(on, t))
-        t = drive(60.0, fromM = 1200.0, fromS = 23, toS = 42) // 73 m, 2.7 s
+        t = drive(60.0, fromM = 2000.0, fromS = 23, toS = 72) // 69 m, 2.6 s
         assertEquals(Phase.SOLID, TurnAlert.phase(on, t))
     }
 
     @Test
     fun `without the solid option the last 3 s keep flashing`() {
-        val t = drive(60.0, fromM = 1200.0, fromS = 0, toS = 42)
+        val t = drive(60.0, fromM = 2000.0, fromS = 0, toS = 72)
         assertEquals(Phase.FLASH, TurnAlert.phase(on.copy(solidLast = false), t))
     }
 
     @Test
     fun `the distance is carried forward between updates`() {
-        // Last update 839 m out at 60 mph: two seconds later the car is inside the 805 m zone.
-        val t = drive(60.0, fromM = 920.0, fromS = 0, toS = 3)
+        // Last update 1669 m out at ~60 mph (the alert starts ~1620 m out): three seconds later the
+        // car is ~80 m closer, inside the zone, with no update in between.
+        val t = drive(60.0, fromM = 1750.0, fromS = 0, toS = 3)
         assertEquals(Phase.NORMAL, TurnAlert.phase(on, t))
-        assertEquals(Phase.FLASH, TurnAlert.phase(on, t + 2_000))
+        assertEquals(Phase.FLASH, TurnAlert.phase(on, t + 3_000))
     }
 
     @Test

@@ -14,11 +14,12 @@ import com.carlink.ui.settings.TurnAlertStore
  * and HUD turn icon flashes between its normal frame and a colored one, then holds the colored
  * frame for the last [SOLID_SECONDS] if the driver chose that.
  *
- * WHEN. Warning time grows with speed: [MIN_LEAD_S] at [LEAD_LOW_MPH] or slower, [MAX_LEAD_S] at
- * [LEAD_HIGH_MPH] or faster, a straight line between, scaled by Start alerting. Standard gives
- * 0.10 mi at 25 mph and 0.50 mi at 60 mph. Carlink3 cannot read the vehicle's speed, so it is the
- * rate the iPhone's distance-to-turn counts down over the last few updates. Below [MOVING_MPS]
- * (stopped, or the speed is not known yet after a new step) nothing flashes.
+ * WHEN. Start alerting sets a distance at [LEAD_LOW_MPH] and one at [LEAD_HIGH_MPH] (Standard:
+ * 0.25 mi and 1 mi). Those are warning times (Standard: 36 s and 60 s); the time is a straight line
+ * between them and held at the end values outside, and the distance is speed times that time.
+ * Carlink3 cannot read the vehicle's speed, so it is the rate the iPhone's distance-to-turn counts
+ * down over the last few updates. Below [MOVING_MPS] (stopped, or the speed is not known yet after
+ * a new step) nothing flashes.
  *
  * HOW. [observe] takes each new navigation state; the cluster session's ticker asks [phase] and
  * flips [coloredBeat] at the flash rate, and [decorate] picks the frame for the trip. While the
@@ -32,10 +33,9 @@ object TurnAlert {
     /** The final approach held on the colored frame when Solid for the last 3 seconds is on. */
     const val SOLID_SECONDS = 3.0
 
-    private const val MIN_LEAD_S = 15.0
-    private const val MAX_LEAD_S = 30.0
     private const val LEAD_LOW_MPH = 25.0
     private const val LEAD_HIGH_MPH = 60.0
+    private const val SECONDS_PER_HOUR = 3600.0
     const val MPS_PER_MPH = 0.44704
     const val METERS_PER_MILE = 1609.344
 
@@ -81,13 +81,15 @@ object TurnAlert {
     /** Which frame a flashing icon shows next. Flipped by the cluster session's ticker. */
     @Volatile var coloredBeat = false
 
-    /** Warning time at [mph], before the Start alerting factor. */
+    /** Warning time at [mph] for [timing]: its two distances as times, a straight line between. */
     fun leadSeconds(
         mph: Double,
         timing: AlertTiming,
     ): Double {
-        val slope = (MAX_LEAD_S - MIN_LEAD_S) / (LEAD_HIGH_MPH - LEAD_LOW_MPH)
-        return (MIN_LEAD_S + (mph - LEAD_LOW_MPH) * slope).coerceIn(MIN_LEAD_S, MAX_LEAD_S) * timing.factor
+        val low = timing.milesAt25 * SECONDS_PER_HOUR / LEAD_LOW_MPH
+        val high = timing.milesAt60 * SECONDS_PER_HOUR / LEAD_HIGH_MPH
+        val f = ((mph - LEAD_LOW_MPH) / (LEAD_HIGH_MPH - LEAD_LOW_MPH)).coerceIn(0.0, 1.0)
+        return low + (high - low) * f
     }
 
     /** Distance before the turn where the alert starts, at [mps]. */

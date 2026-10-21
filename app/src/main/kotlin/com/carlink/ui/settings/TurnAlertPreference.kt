@@ -5,15 +5,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** When the alert starts, against the speed-based default (Settings › Cluster › Start alerting). */
+/**
+ * How far before a turn the alert starts (Settings › Cluster › Start alerting), as the owner set it:
+ * a distance at 25 mph and one at 60 mph. Between the two, [com.carlink.navigation.TurnAlert]
+ * interpolates the warning TIME, so the distance grows smoothly with speed.
+ */
 enum class AlertTiming(
     val code: String,
     override val label: String,
-    val factor: Double,
+    val milesAt25: Double,
+    val milesAt60: Double,
 ) : Labelled {
-    EARLIER("earlier", "Earlier", 1.3),
-    STANDARD("standard", "Standard", 1.0),
-    LATER("later", "Later", 0.75),
+    EARLIER("earlier", "Earlier", 0.5, 2.0),
+    STANDARD("standard", "Standard", 0.25, 1.0),
+    LATER("later", "Later", 0.1, 0.5),
     ;
 
     companion object {
