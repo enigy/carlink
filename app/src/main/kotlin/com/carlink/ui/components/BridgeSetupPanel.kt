@@ -29,16 +29,15 @@ import androidx.compose.ui.unit.dp
 import com.carlink.ui.theme.AutomotiveDimens
 
 /** Where the bridge APK is published; shown so a new user can put it on a USB drive. */
-private const val BRIDGE_APK_LOCATION = "github.com/enigy/carlink3 → Releases → carlink3_bridge-*.apk"
+private const val BRIDGE_APK_LOCATION = "github.com/enigy/carlink3 → app/carlink3_bridge.apk, or Releases"
 
 private val TextColor = Color(0xFFDDE4E5) // the overlay's fixed light text colour
 
 /**
  * Shown on the connecting screen in place of the status words while the USB bridge
- * (android.car.usb.handler) isn't installed (Carlink2 [210]). Unlike Carlink2, Carlink3 still
- * connects without it — in-process, with a USB permission prompt after every power-up and no
- * cluster icons — so this explains what the bridge adds and offers the head unit's built-in Files
- * app to install it from a USB drive. MainActivity re-checks on resume, so the panel goes away once
+ * (android.car.usb.handler) isn't installed (Carlink2 [210]). Carlink3 has no USB access of its own,
+ * so without the bridge it can't reach the adapter at all; this says so and offers the head unit's
+ * built-in Files app to install it from a USB drive. MainActivity re-checks on resume, so the panel goes away once
  * the user comes back.
  */
 @Composable
@@ -47,8 +46,8 @@ fun BridgeSetupPanel(onOpenFiles: () -> Boolean) {
         SetupPanelSpec(
             title = "USB bridge not installed",
             body =
-                "Carlink3 is connecting without its USB bridge. It works, but you'll be asked for USB permission " +
-                    "after every power-up and the cluster can't show turn icons. To install the bridge while parked:\n" +
+                "Carlink3 needs its USB bridge to reach the adapter, and to show turn icons on the cluster. " +
+                    "To install it while parked:\n" +
                     "1. Copy the bridge APK to a USB drive ($BRIDGE_APK_LOCATION).\n" +
                     "2. Plug the drive into a free USB port.\n" +
                     "3. Tap Open Files, open the drive, and tap the APK. If asked, allow Files to install apps.\n" +

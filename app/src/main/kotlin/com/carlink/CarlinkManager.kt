@@ -52,7 +52,6 @@ import com.carlink.ocbm.OcbmAvLanes
 import com.carlink.ocbm.OcbmClient
 import com.carlink.ocbm.OemIcon
 import com.carlink.ocbm.RawBulkTransport
-import com.carlink.ocbm.UsbBulkTransport
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
 import com.carlink.ocbm.seam.SeamPipe
@@ -91,7 +90,7 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * Central orchestrator for the CarPlay-only app against the **open OCBM userspace** on a
  * CPC200-CCPA:
- * - USB device lifecycle ([UsbBulkTransport]) and the OCBM session ([OcbmClient])
+ * - The adapter link through the USB bridge ([BridgeBulkTransport]) and the OCBM session ([OcbmClient])
  * - Video via [VideoRenderer] (H.264 or HEVC, whichever iOS negotiated), fed from `CH_VIDEO` through the forward-encrypted seam
  * - Audio via [MediaAudioPlayer] (media: PCM wired / AAC-LC wireless) and [VoiceRouter] (telephony/Siri/alert/nav)
  * - Microphone capture gated by the box's own `CT_UPLINK`, shipped over `CH_MIC`
@@ -164,7 +163,10 @@ class CarlinkManager(
 
         private const val USB_WAIT_PERIOD_MS = 3000L
 
-        private const val USB_FIND_ATTEMPTS = 10 // same budget findDevice() uses
+        private const val USB_FIND_ATTEMPTS = 10 // × USB_WAIT_PERIOD_MS: ~30 s to find the adapter
+
+        /** Without the bridge Carlink3 can't reach the adapter (it has no USB access of its own). */
+        private const val INSTALL_BRIDGE_STATUS = "Install the Carlink3 USB bridge"
 
         /** How long a bridge permission prompt may stay unanswered before the start gives up. */
         private const val BRIDGE_PROMPT_WAIT_MS = 30_000L
@@ -433,9 +435,9 @@ class CarlinkManager(
     private var callback: Callback? = null
 
     // ---- OCBM session -----------------------------------------------------------------------
-    // One transport + one client PER SESSION, by contract: OcbmClient.stop() is terminal and
-    // UsbBulkTransport has no reopen, so reconnecting means constructing a fresh pair. Both are
-    // cheap — neither holds a Context or native resources beyond the claimed interface.
+    // One transport + one client PER SESSION, by contract: OcbmClient.stop() is terminal and a
+    // bridge session has no reopen, so reconnecting means constructing a fresh pair. Both are
+    // cheap — neither holds a Context or native resources beyond the bridge's socket.
     private var transport: RawBulkTransport? = null
     private var client: OcbmClient? = null
 
@@ -983,32 +985,32 @@ class CarlinkManager(
         }
 
     /**
-     * Find the adapter and claim its USB interface, or null if we should abandon the start.
+     * Find the adapter and open it through the USB bridge, or null if we should abandon the start.
      *
-     * Split out of [startImpl] so the release re-checks below do not push it over detekt's
-     * return-count limit, and because "get me a claimed transport" is a coherent step on its own.
+     * The bridge is required: Carlink3 has no USB access of its own (removed 2026-10-21, the way
+     * Carlink2 did in [204]), so it never holds a USB permission or shows a USB dialog. Without the
+     * bridge there is nothing to retry: the start stops at "Install the Carlink3 USB bridge" (the
+     * connecting screen shows its setup panel) and MainActivity starts again once it is installed.
      *
-     * The [released] re-checks are the point of this function. [findDevice] can burn ~80 s worst
-     * case (10 x 3 s scans plus 20 x 250 ms permission polls), and `release()` runs OUTSIDE
-     * [lifecycleMutex], so the flag can flip under an in-flight start. Without them a released
-     * manager goes on to claim the interface and bring up a full session — a zombie holding the
-     * claim against its own replacement, whose start then fails with a claim error and, at
-     * attempt 0, schedules no retry. `release()` also cancels [scope], so the zombie's state
-     * posts silently no-op and nothing on screen explains it.
+     * The [released] re-checks in [acquireBridgeTransport] matter: finding the adapter can take
+     * ~30 s and the permission prompt up to 30 s more, and `release()` runs OUTSIDE [lifecycleMutex],
+     * so the flag can flip under an in-flight start. Without them a released manager goes on to open
+     * the adapter and bring up a full session — a zombie holding it against its own replacement.
      */
     private suspend fun acquireTransport(): RawBulkTransport? {
         if (CarlinkBridge.isInstalled(context)) return acquireBridgeTransport()
-        logInfo("[BRIDGE] USB bridge not installed — claiming the adapter in-process", tag = Logger.Tags.USB)
-        return acquireUsbTransport()
+        logWarn("[BRIDGE] USB bridge not installed — Carlink3 can't reach the adapter without it", tag = Logger.Tags.USB)
+        cancelReconnect() // nothing changes by retrying until it is installed
+        handleFailedStart(INSTALL_BRIDGE_STATUS)
+        return null
     }
 
     /**
-     * Carlink3: the preferred path. The sideloaded bridge (`android.car.usb.handler`, module
-     * `:bridge`) holds the USB permission the platform grants it silently on every attach and
-     * relays the raw bulk stream over a socket, so this app never asks for USB permission itself
-     * and stays Play-shippable. Device discovery only needs `UsbManager.deviceList`, which is
-     * readable without permission. A boot-time attach the platform never granted gets the
-     * bridge's one-tap prompt ([ICarlinkBridge.requestPermission]) and a short poll.
+     * The sideloaded bridge (`android.car.usb.handler`, module `:bridge`) holds the USB permission the
+     * platform grants it silently on every attach and relays the raw bulk stream over a socket, so
+     * this app never asks for USB permission itself and stays Play-shippable. Device discovery only
+     * needs `UsbManager.deviceList`, which is readable without permission. A boot-time attach the
+     * platform never granted gets the bridge's one-tap prompt ([ICarlinkBridge.requestPermission]).
      */
     private suspend fun acquireBridgeTransport(): RawBulkTransport? {
         val dev = awaitAdapterListed()
@@ -1020,13 +1022,14 @@ class CarlinkManager(
         if (released) return null
         val bridge = bindRawStreamBridge() ?: return null
         if (!awaitBridgePermission(bridge, dev.deviceName)) {
-            handleFailedStart("USB permission denied")
+            // The bridge asks once per attach and a denial sticks until the adapter re-enumerates.
+            handleFailedStart("USB permission denied — unplug and replug the adapter")
             return null
         }
         return openViaBridge(bridge, dev.deviceName)
     }
 
-    /** The adapter from `UsbManager.deviceList` (no permission needed), polled with [findDevice]'s budget. */
+    /** The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s. */
     private suspend fun awaitAdapterListed(): android.hardware.usb.UsbDevice? {
         var attempts = 0
         while (attempts < USB_FIND_ATTEMPTS) {
@@ -1139,36 +1142,6 @@ class CarlinkManager(
             return null
         }
         logInfo("[BRIDGE] ${t.bridgeStatus()}", tag = Logger.Tags.USB)
-        return t
-    }
-
-    /** Fallback when no bridge is installed (bench, emulator): claim USB in-process, prompting if needed. */
-    private suspend fun acquireUsbTransport(): UsbBulkTransport? {
-        val t = UsbBulkTransport(context, usbLog)
-
-        val dev = findDevice(t)
-        if (dev == null) {
-            logError("Failed to find the OCBM adapter", tag = Logger.Tags.USB)
-            handleFailedStart("Adapter not found")
-            return null
-        }
-        if (released) {
-            logWarn("[LIFECYCLE] released during device discovery — abandoning start", tag = Logger.Tags.ADAPTR)
-            return null
-        }
-
-        setStatusText("Adapter found — opening...")
-        if (!t.open(dev)) {
-            logError("Failed to claim the adapter's USB interface", tag = Logger.Tags.USB)
-            handleFailedStart("USB permission denied")
-            return null
-        }
-        if (released) {
-            logWarn("[LIFECYCLE] released during USB open — closing and abandoning", tag = Logger.Tags.ADAPTR)
-            t.stop()
-            return null
-        }
-
         return t
     }
 
@@ -3174,38 +3147,6 @@ class CarlinkManager(
     }
 
     /**
-     * Find the adapter, polling for a USB permission grant rather than awaiting the broadcast —
-     * on this head unit the permission dialog frequently never appears and the broadcast is
-     * often lost, so a blocking wait deadlocks bring-up.
-     */
-    private suspend fun findDevice(t: UsbBulkTransport): android.hardware.usb.UsbDevice? {
-        var attempts = 0
-        while (attempts < 10) {
-            val dev = t.findQuiet()
-            if (dev != null) {
-                if (t.hasPermission(dev)) {
-                    log("OCBM adapter found")
-                    return dev
-                }
-                t.requestPermissionAsync(dev)
-                // The dialog may be up now: MainActivity holds its cluster steps meanwhile.
-                UsbPermissionPrompt.set(true)
-                try {
-                    repeat(20) {
-                        if (t.hasPermission(dev)) return dev
-                        delay(250)
-                    }
-                } finally {
-                    UsbPermissionPrompt.set(false)
-                }
-            }
-            attempts++
-            delay(USB_WAIT_PERIOD_MS)
-        }
-        return null
-    }
-
-    /**
      * Error handler for session failures.
      *
      * Callable from the OCBM read thread, the detach broadcast (main), and client-owned threads —
@@ -3299,7 +3240,7 @@ class CarlinkManager(
     /**
      * Failure exit for [startImpl] before a client exists. These paths used to just return, which
      * silently killed an in-progress reconnect chain: after an adapter reboot (~50 s to
-     * re-enumerate) attempt 1 fired at +2 s, findDevice timed out, and the remaining attempts
+     * re-enumerate) attempt 1 fired at +2 s, the adapter search timed out, and the remaining attempts
      * never ran despite MAX_RECONNECT_ATTEMPTS.
      */
     private fun handleFailedStart(statusMsg: String) {

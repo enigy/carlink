@@ -94,8 +94,9 @@ private const val CLUSTER_RELAUNCH_MS = 2_000L
  *  - The persisted [DisplayMode] applied to the window ([applyDisplayMode]); the content area it leaves is what the session declares.
  *  - In-place session rebuild via [reinitialize] (display-mode / content-area changes; the user-facing
  *    Reset Connection / Reset Device are `CarlinkManager.cleanSlateReset`, not a rebuild).
- *  - USB attach (onNewIntent, via manifest intent-filter) + detach (BroadcastReceiver)
- *    handling for faster disconnect detection than USB-transfer error paths provide.
+ *  - USB attach + detach broadcasts (BroadcastReceiver): reconnect when the adapter returns, and
+ *    notice an unplug faster than the session's error paths would. The app never opens USB itself;
+ *    only the bridge does.
  *  - Compose UI host: the top-level [CarlinkApp] composable keeps [MainScreen]
  *    continuously composed (to preserve the VideoSurface / HWC plane) and slides
  *    [SettingsScreen] on top (SettingsOverlay) rather than replacing it.
@@ -302,8 +303,8 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Carlink2 [210]: is the USB bridge installed? Checked at start and on every resume, so coming
-     * back from installing it in Files hides the setup panel. Unlike Carlink2 nothing is held off
-     * meanwhile — Carlink3 connects in-process without the bridge; the next session picks it up.
+     * back from installing it in Files hides the setup panel. The bridge is Carlink3's only way to the
+     * adapter, so a fresh install also starts the connection.
      */
     private fun checkBridgeInstalled() {
         val installed = CarlinkBridge.isInstalled(this)
@@ -314,7 +315,12 @@ class MainActivity : ComponentActivity() {
         if (!installed) {
             logWarn("[BRIDGE_SETUP] USB bridge not installed — showing the setup panel", tag = "MAIN")
         } else if (previous == false) {
-            logInfo("[BRIDGE_SETUP] USB bridge installed — the next session will use it", tag = "MAIN")
+            // The bridge is Carlink3's only way to the adapter, so a start that stopped at "Install
+            // the Carlink3 USB bridge" is waiting for exactly this: connect now.
+            logInfo("[BRIDGE_SETUP] USB bridge installed — connecting", tag = "MAIN")
+            carlinkManager?.let { manager ->
+                lifecycleScope.launch(Dispatchers.IO) { manager.startIfDisconnected("USB bridge installed") }
+            }
         }
     }
 
@@ -367,27 +373,6 @@ class MainActivity : ComponentActivity() {
             return true
         }
         return super.onKeyDown(keyCode, event)
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        // Only re-launch cluster binding for actual USB re-attach events.
-        // The "bring back" REORDER_TO_FRONT intent from launchCarAppActivity()
-        // also arrives here (singleTop) — must NOT re-trigger the launch cycle.
-        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
-            // Auto-connect when adapter re-enumerates (e.g., after reboot or replug)
-            val manager = carlinkManager
-            if (manager != null && manager.state == CarlinkManager.State.DISCONNECTED) {
-                logInfo("[LIFECYCLE] Manager disconnected — auto-starting connection", tag = "MAIN")
-                // lifecycleScope (not an unowned CoroutineScope): an unowned launch outlived
-                // reinitialize()/onDestroy and could drive a released manager through a full
-                // start() against torn-down state. Activity destruction now cancels it.
-                // startIfDisconnected: the attach broadcast may already have started this one.
-                lifecycleScope.launch(Dispatchers.IO) {
-                    manager.startIfDisconnected("Adapter attach intent")
-                }
-            }
-        }
     }
 
     override fun onDestroy() {

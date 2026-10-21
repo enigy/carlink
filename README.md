@@ -44,8 +44,9 @@ with the release's signed APK and update the version and SHA-256 above.
 
 - **Transport:** the bridge relays the adapter's bulk stream raw (API 3) and the app reaches it through
   `BridgeBulkTransport`, an implementation of OCBM's `RawBulkTransport`; `OcbmClient` is unchanged. The
-  app tries the bridge first (silent USB permission; one-tap prompt for a boot-time attach) and only claims
-  USB in-process when no bridge is installed.
+  bridge is required: the app has no USB access of its own (no USB permission, no USB dialog, no claim on
+  the device), like Carlink2 since its [204]. The bridge gets USB permission silently on every attach and
+  shows a one-tap prompt for an adapter that attached during boot.
 - **Cluster/HUD navigation:** Carlink2's Templates Host pipeline (`cluster/`, `navigation/`, the compose
   icon store) is ported verbatim. `navigation/OcbmNavigationFeed` turns the box's `routeGuidance` /
   `maneuver` JSON (`CH_METADATA`) into the `NavigationState` it renders, including the exit label

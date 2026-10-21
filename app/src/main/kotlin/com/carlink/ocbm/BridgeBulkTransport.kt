@@ -15,14 +15,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * The bridge owns the adapter: it holds the USB permission the platform grants its package silently
  * on every attach, claims the bulk interface, and relays the OCBM byte stream unchanged over a
- * socket. This class is the display-app end of that socket. It knows nothing about OCBM framing —
- * [OcbmClient]'s `Reassembler` does the same job it does over [UsbBulkTransport], which stays as the
- * fallback when no bridge is installed (bench, emulator).
+ * socket. This class is the display-app end of that socket, and the ONLY way Carlink3 reaches the
+ * adapter: the app has no USB access of its own (removed 2026-10-21, as Carlink2 did in [204]), so
+ * it never holds a USB permission, never shows a USB dialog, and needs the bridge installed. It knows
+ * nothing about OCBM framing; [OcbmClient]'s `Reassembler` handles that.
  *
  * Inbound: a read thread copies each chunk from the socket into a reused buffer and hands it to the
- * read handler, like [UsbBulkTransport]. EOF or an IOException means the bridge closed the session
+ * read handler. EOF or an IOException means the bridge closed the session
  * (device detached, bridge restarted): the dead handler fires once, off the read thread.
- * Outbound: [writeBulk] is one Binder call per ≤16 KiB chunk, matching the in-app transport's chunking.
+ * Outbound: [writeBulk] is one Binder call per ≤16 KiB chunk, matching the adapter's bulk chunking.
  */
 class BridgeBulkTransport(
     private val bridge: ICarlinkBridge,
@@ -35,11 +36,15 @@ class BridgeBulkTransport(
         private const val WRITE_CHUNK = 16384
         private const val WRITE_TIMEOUT_MS = 2000
 
+        /** The OCBM adapter: CPC200-CCPA running the OCBM userspace (accessory gadget). */
+        const val VID_CARLINKIT = 0x1314
+        const val PID_OCBM = 0x2d00
+
         /** The OCBM adapter if attached, by VID/PID — readable without USB permission. */
         fun findAdapter(context: Context): UsbDevice? {
             val usb = context.applicationContext.getSystemService(Context.USB_SERVICE) as UsbManager
             return usb.deviceList.values.firstOrNull {
-                it.vendorId == UsbBulkTransport.VID_CARLINKIT && it.productId == UsbBulkTransport.PID_OCBM
+                it.vendorId == VID_CARLINKIT && it.productId == PID_OCBM
             }
         }
     }

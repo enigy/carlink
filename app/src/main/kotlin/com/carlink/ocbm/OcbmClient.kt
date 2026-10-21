@@ -188,9 +188,9 @@ class OcbmClient(
         private set
 
     /**
-     * True once [stop] has run. The instance is single-use BY CONTRACT: `UsbBulkTransport.stop()` nulls
-     * its connection and may defer the interface release, and there is no reopen — so a "restartable"
-     * client would be a lie that fails at the first write. Reconnecting means a fresh transport and a
+     * True once [stop] has run. The instance is single-use BY CONTRACT: stopping the transport ends its
+     * bridge session (the socket closes) and there is no reopen — so a "restartable" client would be a
+     * lie that fails at the first write. Reconnecting means a fresh transport and a
      * fresh client, which is cheap: this object holds no Context and no native resources.
      */
     @Volatile var stopped = false
