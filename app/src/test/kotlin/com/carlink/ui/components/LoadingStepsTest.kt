@@ -100,6 +100,7 @@ class LoadingStepsTest {
         assertEquals("Adapter not responding — reboot adapter", action("Adapter not responding — reboot adapter"))
         assertEquals("Adapter rebooting...", action("Adapter rebooting..."))
         assertEquals("USB permission denied", action("USB permission denied"))
+        assertEquals("Allow USB access for the adapter when asked", action("Allow USB access for the adapter when asked"))
         assertNull(action("Waiting for phone..."))
         assertNull(action("Reconnecting (2/5)..."))
     }

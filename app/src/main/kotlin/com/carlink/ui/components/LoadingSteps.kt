@@ -32,6 +32,7 @@ internal object LoadingSteps {
             "adapter rebooting",
             "usb bridge",
             "usb permission denied",
+            "allow usb access",
         )
 
     // The phone's session has started (the first stream key). Checked before PHONE_WORDS. Only this:

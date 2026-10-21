@@ -64,6 +64,7 @@ import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.theme.CarlinkTheme
 import com.carlink.usb.CarlinkBridge
+import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
 import com.carlink.util.FilesLauncher
 import com.carlink.util.LogCallback
@@ -232,6 +233,10 @@ class MainActivity : ComponentActivity() {
         ClusterNavigation.applyComponentState(this)
         checkBridgeInstalled()
         application.registerActivityLifecycleCallbacks(carAppActivityWindow)
+        // Cluster steps held during a USB permission prompt run when it closes.
+        lifecycleScope.launch {
+            UsbPermissionPrompt.open.collect { open -> if (!open) releaseHeldClusterSteps() }
+        }
         if (ClusterNavigation.isEnabled(this)) {
             Handler(Looper.getMainLooper()).postDelayed({
                 if (!isDestroyed && !isFinishing) launchCarAppActivity()
@@ -785,8 +790,53 @@ class MainActivity : ComponentActivity() {
 
     private var clusterConnectCount = 0
 
-    /** Launch the hidden CarAppActivity; retried after 4 s if a previous session is still alive. */
+    // A launch or bring-back held while a USB permission prompt was open ([UsbPermissionPrompt]).
+    private var heldClusterLaunch = false
+    private var heldBringBack = false
+
+    /**
+     * Run what [UsbPermissionPrompt] held, once the prompt has closed: the launch first (it schedules
+     * its own bring-back), otherwise just the bring-back. Main thread.
+     */
+    private fun releaseHeldClusterSteps() {
+        if (isDestroyed || isFinishing) return
+        when {
+            heldClusterLaunch -> {
+                heldClusterLaunch = false
+                heldBringBack = false
+                logInfo("[CLUSTER] USB permission prompt closed — launching the held CarAppActivity", tag = "MAIN")
+                launchCarAppActivity()
+            }
+            heldBringBack -> {
+                heldBringBack = false
+                logInfo("[CLUSTER] USB permission prompt closed — bringing MainActivity back", tag = "MAIN")
+                bringMainActivityBack()
+            }
+        }
+    }
+
+    private fun bringMainActivityBack() {
+        val bringBack =
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION
+            }
+        startActivity(bringBack)
+        logInfo("[CLUSTER] Brought MainActivity back to foreground", tag = "MAIN")
+    }
+
+    /**
+     * Launch the hidden CarAppActivity; retried after 4 s if a previous session is still alive.
+     *
+     * Held while a USB permission prompt is open ([UsbPermissionPrompt]), and so is the bring-back
+     * after it: either one put over the system dialog paused it and left the whole screen ignoring
+     * touches (emulator, 2026-10-20). Both run once the prompt closes ([releaseHeldClusterSteps]).
+     */
     private fun launchCarAppActivity() {
+        if (UsbPermissionPrompt.isOpen) {
+            if (!heldClusterLaunch) logInfo("[CLUSTER] USB permission prompt open — holding the CarAppActivity launch", tag = "MAIN")
+            heldClusterLaunch = true
+            return
+        }
         if (ClusterBindingState.sessionAlive) {
             logInfo("[CLUSTER] Cluster session still alive — will retry after teardown", tag = "MAIN")
             Handler(Looper.getMainLooper()).postDelayed({
@@ -807,13 +857,13 @@ class MainActivity : ComponentActivity() {
             logInfo("[CLUSTER] Launched CarAppActivity for Templates Host binding", tag = "MAIN")
             // It only needs the front for the handshake; bring this activity back after ~1 s.
             Handler(Looper.getMainLooper()).postDelayed({
-                if (!isDestroyed && !isFinishing) {
-                    val bringBack =
-                        Intent(this@MainActivity, MainActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION
-                        }
-                    startActivity(bringBack)
-                    logInfo("[CLUSTER] Brought MainActivity back to foreground", tag = "MAIN")
+                when {
+                    isDestroyed || isFinishing -> Unit
+                    UsbPermissionPrompt.isOpen -> {
+                        logInfo("[CLUSTER] USB permission prompt open — holding the bring-back", tag = "MAIN")
+                        heldBringBack = true
+                    }
+                    else -> bringMainActivityBack()
                 }
             }, CLUSTER_BRING_BACK_MS)
         } catch (e: Exception) {

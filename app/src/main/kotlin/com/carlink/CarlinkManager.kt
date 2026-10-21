@@ -65,6 +65,7 @@ import com.carlink.ui.settings.CallAudioStore
 import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
 import com.carlink.usb.CarlinkBridge
+import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
 import com.carlink.util.LogCallback
 import com.carlink.util.PanelGeometry
@@ -165,7 +166,11 @@ class CarlinkManager(
 
         private const val USB_FIND_ATTEMPTS = 10 // same budget findDevice() uses
 
-        private const val BRIDGE_PERMISSION_POLLS = 40 // 40 × 250 ms = 10 s for the one-tap prompt
+        /** How long a bridge permission prompt may stay unanswered before the start gives up. */
+        private const val BRIDGE_PROMPT_WAIT_MS = 30_000L
+
+        /** Status while the system USB permission prompt is up (an action line on the connecting screen). */
+        private const val ALLOW_USB_STATUS = "Allow USB access for the adapter when asked"
 
         private const val BRIDGE_PERMISSION_POLL_MS = 250L
 
@@ -1052,19 +1057,54 @@ class CarlinkManager(
         return bridge
     }
 
-    /** True once the bridge holds USB permission for [name]; asks once (one-tap prompt) and polls. */
+    /**
+     * True once the bridge holds USB permission for [name]; asks once (one-tap prompt) and waits for
+     * the answer.
+     *
+     * While the prompt may be on screen, [UsbPermissionPrompt] is set so MainActivity keeps its
+     * cluster activity off it, and the status asks the driver to allow it. The wait follows the
+     * prompt itself ([awaitPromptAnswer]) rather than a fixed 10 s: a prompt still open when the
+     * old timer ran out was abandoned while on screen, and the cluster launch it had been holding
+     * then covered it.
+     */
     private suspend fun awaitBridgePermission(
         bridge: ICarlinkBridge,
         name: String,
     ): Boolean {
         if (awaitGrant(bridge, name, BRIDGE_GRANT_GRACE_POLLS)) return true
         val prompt = runCatching { bridge.requestPermission(name) }.getOrDefault(BridgeContract.PERMISSION_DENIED)
-        logInfo("[BRIDGE] no USB permission for $name — prompt result $prompt; waiting", tag = Logger.Tags.USB)
-        val granted = awaitGrant(bridge, name, BRIDGE_PERMISSION_POLLS)
+        logInfo("[BRIDGE] no USB permission for $name — prompt result $prompt; waiting for an answer", tag = Logger.Tags.USB)
+        UsbPermissionPrompt.set(true)
+        setStatusText(ALLOW_USB_STATUS)
+        val granted =
+            try {
+                awaitPromptAnswer(bridge, name)
+            } finally {
+                UsbPermissionPrompt.set(false)
+            }
         if (!granted) {
             logError("[BRIDGE] still no USB permission for $name — ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
         }
         return granted
+    }
+
+    /**
+     * Wait while the bridge's prompt is unanswered: until the bridge holds permission, the prompt
+     * was denied (or the adapter left), or [BRIDGE_PROMPT_WAIT_MS] passes. After the first call,
+     * `requestPermission` only reports the state for that device instance (PENDING until answered),
+     * so polling it shows nothing new to the driver.
+     */
+    private suspend fun awaitPromptAnswer(
+        bridge: ICarlinkBridge,
+        name: String,
+    ): Boolean {
+        val deadline = android.os.SystemClock.elapsedRealtime() + BRIDGE_PROMPT_WAIT_MS
+        while (android.os.SystemClock.elapsedRealtime() < deadline && !bridge.hasPermission(name)) {
+            val state = runCatching { bridge.requestPermission(name) }.getOrDefault(BridgeContract.PERMISSION_DENIED)
+            if (state == BridgeContract.PERMISSION_DENIED || state == BridgeContract.PERMISSION_NO_DEVICE) break
+            delay(BRIDGE_PERMISSION_POLL_MS)
+        }
+        return bridge.hasPermission(name)
     }
 
     /** True as soon as the bridge holds permission for [name], checking up to [polls] times. */
@@ -3148,9 +3188,15 @@ class CarlinkManager(
                     return dev
                 }
                 t.requestPermissionAsync(dev)
-                repeat(20) {
-                    if (t.hasPermission(dev)) return dev
-                    delay(250)
+                // The dialog may be up now: MainActivity holds its cluster steps meanwhile.
+                UsbPermissionPrompt.set(true)
+                try {
+                    repeat(20) {
+                        if (t.hasPermission(dev)) return dev
+                        delay(250)
+                    }
+                } finally {
+                    UsbPermissionPrompt.set(false)
                 }
             }
             attempts++
