@@ -252,6 +252,24 @@ internal fun RowAction(
     }
 }
 
+/** A row whose choice sits under its words, so long option labels never squeeze the title. */
+@Suppress("LongParameterList") // the row's words, its options and the callback
+@Composable
+internal fun <T : Labelled> ChoiceSetting(
+    title: String,
+    options: List<T>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    icon: ImageVector? = null,
+) {
+    Column(modifier = modifier.padding(bottom = 24.dp)) {
+        SettingRow(title = title, subtitle = subtitle, icon = icon)
+        ChoiceRow(options = options, selected = selected, onSelect = onSelect, modifier = Modifier.padding(start = 88.dp, end = 32.dp))
+    }
+}
+
 /** A labelled single choice as a segmented row; applies the moment it is tapped. */
 @Composable
 internal fun <T : Labelled> ChoiceRow(

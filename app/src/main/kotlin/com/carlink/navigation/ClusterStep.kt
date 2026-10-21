@@ -27,7 +27,8 @@ object ClusterStep {
         state: NavigationState,
         context: Context,
     ): Step {
-        val base = ManeuverMapper.buildManeuver(state, context)
+        // Turn alert (Settings › Cluster): the normal or colored frame while it is on, else unchanged.
+        val base = TurnAlert.decorate(ManeuverMapper.buildManeuver(state, context), context)
         val tests = LaneTestStore.get(context).current
         val lanes =
             when (tests.source) {

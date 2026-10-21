@@ -22,6 +22,8 @@ import com.carlink.logging.logWarn
 import com.carlink.navigation.NavigationState
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.TripBuilder
+import com.carlink.navigation.TurnAlert
+import com.carlink.ui.settings.TurnAlertStore
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -105,6 +107,9 @@ class ClusterMainSession : Session() {
          */
         private const val ARRIVAL_ZONE_M = 50
 
+        /** How often the turn alert checks its phase while the icon is not flashing. */
+        private const val ALERT_POLL_MS = 250L
+
         /** First live session wins; cleared on destroy so a fresh binding chain can take over. */
         private val primarySession = AtomicReference<ClusterMainSession?>(null)
     }
@@ -167,6 +172,9 @@ class ClusterMainSession : Session() {
 
         sessionScope.launch {
             collectNavigationState()
+        }
+        sessionScope.launch {
+            turnAlertTicker()
         }
 
         lifecycle.addObserver(
@@ -231,9 +239,60 @@ class ClusterMainSession : Session() {
             debounceJob =
                 scope?.launch {
                     delay(200)
-                    processStateUpdate(state)
+                    onNewState(state)
                 }
         }
+    }
+
+    /**
+     * A new navigation state: the turn alert learns the distance from it, then it goes to the
+     * cluster, unless the icon is flashing. Then the ticker sends the latest state on its next beat,
+     * so the cluster never gets a second trip carrying the frame it already shows.
+     */
+    private fun onNewState(state: NavigationState) {
+        val now = SystemClock.elapsedRealtime()
+        TurnAlert.observe(state, now)
+        val phase = TurnAlert.phase(TurnAlertStore.get(carContext).current, now)
+        if (phase != TurnAlert.Phase.FLASH) setAlertPhase(phase, now)
+        if (TurnAlert.phaseNow == TurnAlert.Phase.FLASH && state.isActive && isNavigating) return
+        processStateUpdate(state)
+    }
+
+    /**
+     * Turn alert (Settings › Cluster): flips the flash beat at the chosen speed and is the only
+     * sender of trips while the icon flashes; outside that it checks the phase every
+     * [ALERT_POLL_MS] and sends one trip when it changes (start of the solid frame, end of the alert).
+     */
+    private suspend fun turnAlertTicker() {
+        while (true) {
+            val cfg = TurnAlertStore.get(carContext).current
+            val now = SystemClock.elapsedRealtime()
+            val phase = TurnAlert.phase(cfg, now)
+            val changed = setAlertPhase(phase, now)
+            val state = NavigationStateManager.state.value
+            val canSend = state.isActive && isNavigating
+            if (phase == TurnAlert.Phase.FLASH) {
+                TurnAlert.coloredBeat = !TurnAlert.coloredBeat
+                if (canSend) processStateUpdate(state)
+                delay(cfg.speed.cycleMs / 2)
+            } else {
+                if (changed && canSend) processStateUpdate(state)
+                delay(ALERT_POLL_MS)
+            }
+        }
+    }
+
+    /** Record [phase]; true when it changed. Logged: the drive log is how an alert is checked after a drive. */
+    private fun setAlertPhase(
+        phase: TurnAlert.Phase,
+        now: Long,
+    ): Boolean {
+        val was = TurnAlert.phaseNow
+        if (phase == was) return false
+        TurnAlert.phaseNow = phase
+        TurnAlert.coloredBeat = false
+        logInfo("[TURN_ALERT] $was -> $phase (${TurnAlert.describe(now)})", tag = Logger.Tags.CLUSTER)
+        return true
     }
 
     // Translates navigation state into NavigationManager Trip updates; branch count = state cases.
