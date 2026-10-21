@@ -22,7 +22,7 @@ grant — superseded by `:bridge`).
 
 1. Install Carlink3 from Google Play. <!-- TODO: Play link -->
 2. Copy [`app/carlink3_bridge.apk`](app/carlink3_bridge.apk) (Carlink3 USB Bridge 1.0.3) to a USB drive.
-   SHA-256: `dc4e10e2abc424f1eff27195544cc5e04a47f305ef2a06731684c4278ae7a94f`
+   SHA-256: `966d1cfb21eace59a71533e7118a8a0a2533cf251fc3d6b210e9c194a91d92af' carlink3_bridge-1.0.3.apk
 3. While parked, open Carlink3. It shows **USB bridge not installed** with an **Open Files** button
    that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK.
    If asked, allow Files to install apps.
