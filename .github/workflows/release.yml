@@ -1,9 +1,12 @@
 name: Release
 
-# Builds the Play bundle (AAB) for com.enigy.carlink3 and the sideloaded USB bridge APK, both
-# signed with the upload key; uploads the AAB to Google Play; attaches the AAB and the bridge APK
-# to a GitHub Release. Mirrors Carlink2's release.yml; the differences are the package name, the
-# `sideload` flavor in the task and output names, and the CARLINK3_* names.
+# Builds the Play bundle (AAB) for com.enigy.carlink3, signed with the upload key; uploads it to
+# Google Play; attaches the AAB and the sideloaded USB bridge APK to a GitHub Release. The bridge is
+# rebuilt (and signed) only when its source (bridge/, bridge-api/) changed since the commit that last
+# updated app/carlink3_bridge.apk, or when a manual run ticks "rebuild_bridge"; otherwise that
+# committed APK is attached as is, so its SHA-256 stays the same from release to release. Mirrors
+# Carlink2's release.yml; the differences are the package name, the `sideload` flavor in the task
+# and output names, the CARLINK3_* names, and the bridge reuse.
 #
 # Triggers
 #   - Push a tag vNNN, where NNN == appVersionCode in app/build.gradle.kts: build, upload to the
@@ -46,6 +49,10 @@ on:
         description: Upload the AAB to Google Play
         type: boolean
         default: true
+      rebuild_bridge:
+        description: Rebuild the USB bridge even if its source is unchanged (e.g. after changing CARLINK3_CALLER_CERTS)
+        type: boolean
+        default: false
 
 permissions:
   contents: write # create the GitHub Release and attach its files
@@ -61,8 +68,42 @@ jobs:
       # Overrides the root build.gradle.kts redirect (~/.cache/gradle-builds) so outputs are easy to find.
       BUILD_ROOT: ${{ github.workspace }}/build-out
     steps:
+      # Full history: deciding whether the bridge changed needs the commit that last updated
+      # app/carlink3_bridge.apk.
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Checkout stores the pushed tag as a lightweight ref, which drops the annotated tag's message
+      # that "Title the release from the tag message" reads (v12 and v13 published with the commit
+      # message instead). Fetch the real tag object over it.
+      - name: Restore the annotated tag
+        if: github.ref_type == 'tag'
+        run: git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+
+      # The bridge is sideloaded by hand, so a rebuild with unchanged source only produces a new file
+      # with a new SHA-256 for users to check against. Reuse the committed, already-signed
+      # app/carlink3_bridge.apk unless the bridge source changed since that APK was committed, or a
+      # manual run asks for a rebuild (the bridge bakes in CARLINK3_CALLER_CERTS, which git can't see).
+      - name: Decide whether to rebuild the USB bridge
+        id: bridge
+        env:
+          FORCE: ${{ inputs.rebuild_bridge }}
+        run: |
+          committed=app/carlink3_bridge.apk
+          base=$(git log -1 --format=%H -- "$committed")
+          if [ "$FORCE" = "true" ]; then
+            build=true; why="rebuild requested (rebuild_bridge)"
+          elif [ ! -f "$committed" ] || [ -z "$base" ]; then
+            build=true; why="no committed $committed"
+          elif ! git diff --quiet "$base" HEAD -- bridge bridge-api; then
+            build=true; why="bridge source changed since ${base:0:7}, which committed $committed"
+          else
+            build=false; why="bridge source unchanged since ${base:0:7}; attaching the committed $committed"
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "::notice title=USB bridge::$why"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -135,10 +176,13 @@ jobs:
       - name: Build AAB and bridge APK
         env:
           CALLER_CERTS: ${{ vars.CARLINK3_CALLER_CERTS }}
+          BUILD_BRIDGE: ${{ steps.bridge.outputs.build }}
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/gradle.log"
-          if ! ./gradlew :app:bundleSideloadRelease :app:assembleSideloadRelease :bridge:assembleRelease \
+          bridge_task=""
+          [ "$BUILD_BRIDGE" = "true" ] && bridge_task=":bridge:assembleRelease"
+          if ! ./gradlew :app:bundleSideloadRelease :app:assembleSideloadRelease $bridge_task \
               -Pcarlink.buildRoot="$BUILD_ROOT" \
               -Pcarlink3.callerCerts="$CALLER_CERTS" 2>&1 | tee "$log"; then
             msg=$( { grep '^e: ' "$log"; sed -n '/What went wrong:/,/^\* Try:/p' "$log" | grep -v '^\* Try:'; } | head -40)
@@ -152,12 +196,19 @@ jobs:
 
       - name: Collect outputs
         id: out
+        env:
+          BUILD_BRIDGE: ${{ steps.bridge.outputs.build }}
         run: |
           code=$(sed -n 's/^ *val appVersionCode = \([0-9][0-9]*\)$/\1/p' app/build.gradle.kts)
           bridge=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' bridge/build.gradle.kts)
           mkdir -p dist sideload
           cp "$BUILD_ROOT/app/outputs/bundle/sideloadRelease/app-sideload-release.aab" "dist/carlink3-v$code.aab"
-          cp "$BUILD_ROOT/bridge/outputs/apk/release/bridge-release.apk" "dist/carlink3_bridge-$bridge.apk"
+          if [ "$BUILD_BRIDGE" = "true" ]; then
+            cp "$BUILD_ROOT/bridge/outputs/apk/release/bridge-release.apk" "dist/carlink3_bridge-$bridge.apk"
+            echo "::warning title=USB bridge rebuilt::Commit dist/carlink3_bridge-$bridge.apk as app/carlink3_bridge.apk and update its version and SHA-256 in README.md, so later releases reuse it."
+          else
+            cp app/carlink3_bridge.apk "dist/carlink3_bridge-$bridge.apk"
+          fi
           cp "$BUILD_ROOT/app/outputs/apk/sideload/release/app-sideload-release.apk" "sideload/carlink3-v$code.apk"
           cp "$BUILD_ROOT/app/outputs/mapping/sideloadRelease/mapping.txt" "dist/mapping-v$code.txt"
           echo "aab=dist/carlink3-v$code.aab" >> "$GITHUB_OUTPUT"
