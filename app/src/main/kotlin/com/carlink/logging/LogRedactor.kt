@@ -16,7 +16,10 @@ import com.carlink.BuildConfig
  */
 object LogRedactor {
     // Six octets, not part of a longer colon-hex run (a certificate fingerprint stays whole).
-    private val MAC = Regex("(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{2}[:-]){4}([0-9A-Fa-f]{2})[:-]([0-9A-Fa-f]{2})(?![0-9A-Fa-f:])")
+    // `[-:]`, never `[:-]`: Android's ICU regex engine reads a class that opens with `[:` as a POSIX
+    // property (`[:alpha:]`) and throws, so v16 crashed on the first redacted line. Desktop Java
+    // accepts it, which is why the JVM tests passed (AndroidRegexTest now guards the whole app).
+    private val MAC = Regex("(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{2}[-:]){4}([0-9A-Fa-f]{2})[-:]([0-9A-Fa-f]{2})(?![0-9A-Fa-f:])")
     private val IDENTITY_NAME = Regex("\"(name|deviceName)\":\"[^\"]*\"")
 
     fun line(text: String): String {
