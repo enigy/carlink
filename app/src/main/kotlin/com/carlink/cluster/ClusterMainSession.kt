@@ -12,6 +12,8 @@ import androidx.car.app.navigation.NavigationManager
 import androidx.car.app.navigation.NavigationManagerCallback
 import androidx.car.app.navigation.model.MessageInfo
 import androidx.car.app.navigation.model.NavigationTemplate
+import androidx.car.app.navigation.model.Trip
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.carlink.logging.Logger
@@ -85,6 +87,20 @@ class ClusterMainSession : Session() {
      */
     private var arrivalLatched = false
 
+    /**
+     * The resend burst after navigation (re)starts ([startResendBurst]). GM drops trips that arrive
+     * while it is still putting up its cluster card, and a parked car at the start of a route sends
+     * no more: v17 showed a blank HUD at "Start on …" (2026-10-21) where the flash test, which
+     * re-sent every 0.5 s, showed the card.
+     */
+    private var resendJob: Job? = null
+
+    /** Whether the last state seen was an active route, so a route starting can start a burst. */
+    private var lastActive = false
+
+    /** Step type of the last logged trip, so [logTrip] speaks on a new step and not on every tick. */
+    private var lastLoggedType: Int? = null
+
     companion object {
         /** Terminal CPManeuverType values that indicate navigation is complete. */
         private val TERMINAL_MANEUVER_TYPES = intArrayOf(
@@ -109,6 +125,13 @@ class ClusterMainSession : Session() {
 
         /** How often the turn alert checks its phase while the icon is not flashing. */
         private const val ALERT_POLL_MS = 250L
+
+        /** The resend burst: one trip per [RESEND_INTERVAL_MS], [RESEND_COUNT] times. */
+        private const val RESEND_INTERVAL_MS = 1_000L
+        private const val RESEND_COUNT = 10
+
+        /** Outside a burst or a new step, one trip line per this many trips. */
+        private const val TRIP_LOG_EVERY = 30L
 
         /** First live session wins; cleared on destroy so a fresh binding chain can take over. */
         private val primarySession = AtomicReference<ClusterMainSession?>(null)
@@ -176,6 +199,9 @@ class ClusterMainSession : Session() {
         sessionScope.launch {
             turnAlertTicker()
         }
+        // A cluster (re)connect mid-route: GM may not take the first trip, and a parked car sends
+        // no more, so resend the current one for a few seconds.
+        startResendBurst("cluster session created")
 
         lifecycle.addObserver(
             object : DefaultLifecycleObserver {
@@ -251,11 +277,65 @@ class ClusterMainSession : Session() {
      */
     private fun onNewState(state: NavigationState) {
         val now = SystemClock.elapsedRealtime()
+        val routeStarting = state.isActive && !lastActive
+        lastActive = state.isActive
         TurnAlert.observe(state, now)
         val phase = TurnAlert.phase(TurnAlertStore.get(carContext).current, now)
         if (phase != TurnAlert.Phase.FLASH) setAlertPhase(phase, now)
         if (TurnAlert.phaseNow == TurnAlert.Phase.FLASH && state.isActive && isNavigating) return
         processStateUpdate(state)
+        if (routeStarting) startResendBurst("route started")
+    }
+
+    /**
+     * Resend the current trip once a second for [RESEND_COUNT] seconds. GM drops trips that land
+     * while it is still creating its cluster turn card, and when the car is parked the state does
+     * not change, so v17 sent nothing more and the HUD stayed blank (the flash test build, which
+     * re-sent twice a second, showed the card). A short burst rather than a steady repeat: identical
+     * trips sent continuously made the HUD redraw the icon larger every few flashes. Skipped while
+     * the turn alert flashes, when its ticker is the only sender.
+     */
+    private fun startResendBurst(why: String) {
+        resendJob?.cancel()
+        resendJob =
+            scope?.launch {
+                logInfo("[CLUSTER_MAIN] resending the trip for ${RESEND_COUNT}s ($why)", tag = Logger.Tags.CLUSTER)
+                repeat(RESEND_COUNT) { i ->
+                    delay(RESEND_INTERVAL_MS)
+                    val state = NavigationStateManager.state.value
+                    if (state.isActive && isNavigating && TurnAlert.phaseNow != TurnAlert.Phase.FLASH) {
+                        processStateUpdate(state, "resend ${i + 1}/$RESEND_COUNT")
+                    }
+                }
+            }
+    }
+
+    /**
+     * One line per trip on a new step and during a resend burst, else every [TRIP_LOG_EVERY]th:
+     * release builds log nothing else about trips, so a blank HUD was invisible in the drive log.
+     * Step type, distance and the icon's kind only (no road names).
+     */
+    private fun logTrip(
+        trip: Trip,
+        state: NavigationState,
+        sent: Long,
+        reason: String,
+    ) {
+        val newStep = lastLoggedType != state.maneuverType
+        if (!newStep && !reason.startsWith("resend") && sent % TRIP_LOG_EVERY != 0L) return
+        lastLoggedType = state.maneuverType
+        val icon =
+            when (trip.steps.firstOrNull()?.maneuver?.icon?.icon?.type) {
+                IconCompat.TYPE_BITMAP -> "bitmap"
+                IconCompat.TYPE_RESOURCE -> "resource"
+                null -> "none"
+                else -> "other"
+            }
+        logInfo(
+            "[CLUSTER_MAIN] trip #$sent sent ($reason): cpType=${state.maneuverType} dist=${state.remainDistance}m icon=$icon " +
+                "lanes=${trip.steps.firstOrNull()?.lanes?.size ?: 0}",
+            tag = Logger.Tags.CLUSTER,
+        )
     }
 
     /**
@@ -297,7 +377,10 @@ class ClusterMainSession : Session() {
 
     // Translates navigation state into NavigationManager Trip updates; branch count = state cases.
     @Suppress("CyclomaticComplexMethod", "LongMethod")
-    private fun processStateUpdate(state: NavigationState) {
+    private fun processStateUpdate(
+        state: NavigationState,
+        reason: String = "state",
+    ) {
         val navManager = navigationManager
         if (navManager == null) {
             logWarn("[CLUSTER_MAIN] NavigationManager is null — cannot relay", tag = Logger.Tags.CLUSTER)
@@ -330,6 +413,7 @@ class ClusterMainSession : Session() {
                 try {
                     navManager.navigationStarted()
                     isNavigating = true
+                    startResendBurst("navigation re-started")
                 } catch (e: Exception) {
                     logError(
                         "[CLUSTER_MAIN] navigationStarted() failed: ${e.message}",
@@ -346,7 +430,8 @@ class ClusterMainSession : Session() {
                 // Nav-output heartbeat for the [NAV_HEALTH] diagnostic. See
                 // [ClusterBindingState.lastRelayElapsedMs].
                 ClusterBindingState.lastRelayElapsedMs = SystemClock.elapsedRealtime()
-                ClusterBindingState.relayCount.incrementAndGet()
+                val sent = ClusterBindingState.relayCount.incrementAndGet()
+                logTrip(trip, state, sent, reason)
                 logNavi {
                     "[CLUSTER_MAIN] Trip relayed: maneuver=${state.maneuverType}, " +
                         "dist=${state.remainDistance}m, road=${state.roadName}" +
