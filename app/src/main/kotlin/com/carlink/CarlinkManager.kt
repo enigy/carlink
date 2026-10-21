@@ -169,6 +169,17 @@ class CarlinkManager(
 
         private const val BRIDGE_PERMISSION_POLL_MS = 250L
 
+        /**
+         * Polls (× [BRIDGE_PERMISSION_POLL_MS] = 2 s) for the platform's own grant before prompting. The
+         * fixed USB handler path broadcasts USB_DEVICE_ATTACHED and only THEN grants the bridge, so a
+         * start the broadcast triggered can arrive a moment early; prompting then would show a needless
+         * dialog for a permission that is milliseconds away (Carlink2 kept the same grace, [204]).
+         */
+        private const val BRIDGE_GRANT_GRACE_POLLS = 8
+
+        /** After Reboot adapter, search for it if no attach broadcast has arrived by then. */
+        private const val REBOOT_FALLBACK_MS = 15_000L
+
         private const val MAX_RECONNECT_ATTEMPTS = 5
 
         /** The box daemon's log (ocbmd stdout/stderr, tools/run_ocbmd.sh); tmpfs, so RAM-only. */
@@ -951,6 +962,22 @@ class CarlinkManager(
         }
 
     /**
+     * [start], but only if nothing has started meanwhile — checked under the lifecycle lock, so two
+     * triggers for the same attach (the broadcast and an attach intent, or the reboot fallback) can't
+     * tear down the session the first one just began ([startImpl] restarts a live client).
+     */
+    suspend fun startIfDisconnected(reason: String) =
+        lifecycleMutex.withLock {
+            if (released || state != State.DISCONNECTED) {
+                logInfo("[USB] $reason — state=$state, not starting", tag = Logger.Tags.USB)
+            } else {
+                logInfo("[USB] $reason — connecting", tag = Logger.Tags.USB)
+                cancelReconnect()
+                withContext(Dispatchers.IO) { startImpl() }
+            }
+        }
+
+    /**
      * Find the adapter and claim its USB interface, or null if we should abandon the start.
      *
      * Split out of [startImpl] so the release re-checks below do not push it over detekt's
@@ -1030,19 +1057,27 @@ class CarlinkManager(
         bridge: ICarlinkBridge,
         name: String,
     ): Boolean {
-        if (bridge.hasPermission(name)) return true
+        if (awaitGrant(bridge, name, BRIDGE_GRANT_GRACE_POLLS)) return true
         val prompt = runCatching { bridge.requestPermission(name) }.getOrDefault(BridgeContract.PERMISSION_DENIED)
         logInfo("[BRIDGE] no USB permission for $name — prompt result $prompt; waiting", tag = Logger.Tags.USB)
-        var waited = 0
-        while (!bridge.hasPermission(name) && waited < BRIDGE_PERMISSION_POLLS) {
-            delay(BRIDGE_PERMISSION_POLL_MS)
-            waited++
-        }
-        val granted = bridge.hasPermission(name)
+        val granted = awaitGrant(bridge, name, BRIDGE_PERMISSION_POLLS)
         if (!granted) {
             logError("[BRIDGE] still no USB permission for $name — ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
         }
         return granted
+    }
+
+    /** True as soon as the bridge holds permission for [name], checking up to [polls] times. */
+    private suspend fun awaitGrant(
+        bridge: ICarlinkBridge,
+        name: String,
+        polls: Int,
+    ): Boolean {
+        repeat(polls) {
+            if (bridge.hasPermission(name)) return true
+            delay(BRIDGE_PERMISSION_POLL_MS)
+        }
+        return bridge.hasPermission(name)
     }
 
     /** Open [name] through the bridge and wrap the returned socket; null (reported) on failure or if released meanwhile. */
@@ -1709,10 +1744,41 @@ class CarlinkManager(
         }
     }
 
-    suspend fun rebootAdapter() =
+    suspend fun rebootAdapter() {
         lifecycleMutex.withLock {
             withContext(Dispatchers.IO) { rebootAdapterImpl() }
         }
+        // Normally the adapter's USB_DEVICE_ATTACHED broadcast reconnects ([onUsbDeviceAttached]).
+        // Should that broadcast never come, search anyway once the adapter has had time to return
+        // (the OCBM box was back on USB within ~10 s on the emulator, 2026-10-20); the search itself
+        // keeps scanning for a while, so a slower box is still found.
+        scope.launch {
+            delay(REBOOT_FALLBACK_MS)
+            if (rebootAtMs != 0L) startIfDisconnected("no attach broadcast ${REBOOT_FALLBACK_MS / 1000}s after the reboot")
+        }
+    }
+
+    /** When [rebootAdapter] ran (elapsedRealtime), until the adapter is seen again; 0 = not waiting. */
+    @Volatile private var rebootAtMs = 0L
+
+    /**
+     * A known adapter attached (USB_DEVICE_ATTACHED broadcast, MainActivity's USB receiver).
+     *
+     * With the USB bridge installed this broadcast is Carlink3's only sign that the adapter is back:
+     * the platform hands the attach INTENT to the bridge (the fixed USB handler), so MainActivity's
+     * onNewIntent never sees it. Without this, Reboot adapter left Carlink3 DISCONNECTED until the
+     * app was reopened (emulator, 2026-10-20). Carlink2's receiver had the attach action; the port
+     * dropped it. A replug after Disconnect adapter reconnects the same way, as its text promises.
+     */
+    fun onUsbDeviceAttached() {
+        if (released) return
+        val since = rebootAtMs
+        if (since != 0L) {
+            rebootAtMs = 0L
+            logInfo("[REBOOT] adapter back on USB ${(android.os.SystemClock.elapsedRealtime() - since) / 1000}s after the reboot", tag = Logger.Tags.USB)
+        }
+        scope.launch { startIfDisconnected("Adapter attached") }
+    }
 
     private fun rebootAdapterImpl() {
         // Escalation counters are deliberately preserved: reboot is user-initiated recovery, not
@@ -1739,7 +1805,8 @@ class CarlinkManager(
         clearCachedMediaMetadata()
         clearSessionUiState()
         setState(State.DISCONNECTED)
-        setStatusText("Adapter rebooting (~50 s)...")
+        rebootAtMs = android.os.SystemClock.elapsedRealtime()
+        setStatusText("Adapter rebooting...")
     }
 
     /**

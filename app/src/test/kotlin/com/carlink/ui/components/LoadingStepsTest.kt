@@ -98,7 +98,7 @@ class LoadingStepsTest {
     fun onlyMessagesThatNeedTheDriverComeThroughAsTheActionLine() {
         assertEquals("Pairing code: 123456", action("Pairing code: 123456"))
         assertEquals("Adapter not responding — reboot adapter", action("Adapter not responding — reboot adapter"))
-        assertEquals("Adapter rebooting (~50 s)...", action("Adapter rebooting (~50 s)..."))
+        assertEquals("Adapter rebooting...", action("Adapter rebooting..."))
         assertEquals("USB permission denied", action("USB permission denied"))
         assertNull(action("Waiting for phone..."))
         assertNull(action("Reconnecting (2/5)..."))

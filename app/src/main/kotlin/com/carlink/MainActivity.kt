@@ -173,7 +173,7 @@ class MainActivity : ComponentActivity() {
         }
 
     /**
-     * BroadcastReceiver for USB device detachment events.
+     * BroadcastReceiver for USB device attach and detach events.
      *
      * Provides immediate detection when the Carlinkit adapter is physically
      * disconnected, enabling faster recovery than waiting for USB transfer errors
@@ -186,15 +186,19 @@ class MainActivity : ComponentActivity() {
                 context: Context,
                 intent: Intent,
             ) {
-                if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent.action) {
-                    val device =
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-                        } else {
-                            @Suppress("DEPRECATION")
-                            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                        }
-
+                val device =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    }
+                if (UsbManager.ACTION_USB_DEVICE_ATTACHED == intent.action) {
+                    if (device != null && KnownDevices.isKnownDevice(device.vendorId, device.productId)) {
+                        logInfo("[USB_ATTACH] Carlinkit device attached: path=${device.deviceName}", tag = "MAIN")
+                        carlinkManager?.onUsbDeviceAttached()
+                    }
+                } else if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent.action) {
                     device?.let {
                         // Only handle if it's a known Carlinkit device
                         if (KnownDevices.isKnownDevice(it.vendorId, it.productId)) {
@@ -373,8 +377,9 @@ class MainActivity : ComponentActivity() {
                 // lifecycleScope (not an unowned CoroutineScope): an unowned launch outlived
                 // reinitialize()/onDestroy and could drive a released manager through a full
                 // start() against torn-down state. Activity destruction now cancels it.
+                // startIfDisconnected: the attach broadcast may already have started this one.
                 lifecycleScope.launch(Dispatchers.IO) {
-                    manager.start()
+                    manager.startIfDisconnected("Adapter attach intent")
                 }
             }
         }
@@ -738,13 +743,18 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Registers the USB detachment BroadcastReceiver.
+     * Registers the USB attach/detach BroadcastReceiver.
      *
      * This enables immediate detection of physical adapter removal,
      * providing faster recovery than waiting for USB transfer errors.
      */
     private fun registerUsbDetachReceiver() {
-        val filter = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        // ATTACHED too: with the bridge installed the platform gives the attach INTENT to the bridge,
+        // so this broadcast is the only way Carlink3 learns the adapter is back after a reboot or replug.
+        val filter =
+            IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED).apply {
+                addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(usbDetachReceiver, filter, RECEIVER_NOT_EXPORTED)
         } else {
