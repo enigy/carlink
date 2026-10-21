@@ -21,8 +21,8 @@ grant — superseded by `:bridge`).
 ## Install
 
 1. Install Carlink3 from Google Play. <!-- TODO: Play link -->
-2. Copy [`app/carlink3_bridge.apk`](app/carlink3_bridge.apk) (Carlink3 USB Bridge 1.0.3) to a USB drive.
-   SHA-256: `966d1cfb21eace59a71533e7118a8a0a2533cf251fc3d6b210e9c194a91d92af' carlink3_bridge-1.0.3.apk
+2. Copy [`app/carlink3_bridge.apk`](app/carlink3_bridge.apk) (Carlink3 USB Bridge 1.0.4) to a USB drive.
+   SHA-256: `def49ea644ff5d24c9f0e62aaa29709e7a4cb291047919949122b59101daea95`
 3. While parked, open Carlink3. It shows **USB bridge not installed** with an **Open Files** button
    that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK.
    If asked, allow Files to install apps.
@@ -30,14 +30,17 @@ grant — superseded by `:bridge`).
 
 The bridge uses the same package name as Carlink2's (`android.car.usb.handler`, the name GM's head
 unit hands USB devices to) and answers only Carlink3, so installing it replaces Carlink2's bridge.
+From 1.0.4 it answers only a Carlink3 signed by this project (the Play app-signing or upload
+certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store.
 To check the download: `shasum -a 256 carlink3_bridge.apk` on macOS, `sha256sum carlink3_bridge.apk`
 on Linux, or `Get-FileHash carlink3_bridge.apk -Algorithm SHA256` in Windows PowerShell.
 
 Each [GitHub Release](https://github.com/enigy/carlink3/releases) also attaches the bridge as
-`carlink3_bridge-<version>.apk`. The release workflow rebuilds it every time, so even with unchanged
-source that file has its own SHA-256 (v13's is `966d1cfb…`); the hash above is for
-`app/carlink3_bridge.apk` only. When the bridge version changes, replace `app/carlink3_bridge.apk`
-with the release's signed APK and update the version and SHA-256 above.
+`carlink3_bridge-<version>.apk`. The release workflow rebuilds it only when `bridge/` or
+`bridge-api/` changed since this file was last committed, and otherwise attaches this file, so the
+hash above holds until the next bridge change (v16 built 1.0.4; earlier releases' attachments have
+their own hashes). When the bridge changes, replace `app/carlink3_bridge.apk` with the release's
+signed APK and update the version and SHA-256 above.
 
 ## Status
 
@@ -85,8 +88,8 @@ the AAB to Google Play (`com.enigy.carlink3`) and attaches both to a GitHub Rele
 - **Play Console, once:** create the app (`com.enigy.carlink3`), grant the existing service account
   release rights to it, and upload the first AAB from the workflow artifact by hand — the API only
   accepts drafts until an app has been rolled out once (the step then fails with
-  `status=completed`; rerun after the first manual rollout). Set the `CARLINK3_CALLER_CERTS`
-  variable to the app-signing certificate SHA-256 afterwards so the bridge pins its caller.
+  `status=completed`; rerun after the first manual rollout). The bridge's caller pins are committed in
+  `bridge/build.gradle.kts`; a `CARLINK3_CALLER_CERTS` repository variable replaces the release list.
 - **Local release builds** need a `keystore.properties` next to `settings.gradle.kts` (gitignored,
   same keys the workflow writes). Without it, release variants build unsigned and debug is unaffected.
 
