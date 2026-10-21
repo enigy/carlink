@@ -9,9 +9,14 @@ import kotlin.math.abs
 
 /** One lane as the cluster gets it: the direction it leads and whether to be in it. */
 data class LaneHint(
-    /** Degrees, Apple's convention: 0 straight, +90 right, -90 left, ±180 back. */
+    /**
+     * Degrees, Apple's convention: 0 straight, +90 right, -90 left, ±180 back. For a lane to be
+     * in, the direction the route takes from it.
+     */
     val angle: Int,
     val recommended: Boolean,
+    /** The lane's other directions (a straight-or-right lane taken right has others = [0]). */
+    val others: List<Int> = emptyList(),
 )
 
 /** One lane record from the box's `kind=laneGuidance` JSON (iAP2 0x5204 LaneInformation). */
@@ -19,7 +24,12 @@ data class LaneRecord(
     val lane: Int,
     /** 0 do not take, 1 usable, 2 preferred. */
     val status: Int,
+    /** The lane's first direction (`laneAngle`). */
     val angle: Int,
+    /** Every direction the lane leads (`laneAngles`, from a box that sends them); else just [angle]. */
+    val angles: List<Int> = listOf(angle),
+    /** The direction the route takes from this lane (`laneAngleHighlight`), when sent. */
+    val highlight: Int? = null,
 )
 
 /**
@@ -34,11 +44,19 @@ object LaneGuidance {
     private const val NORMAL_MAX = 135
     private const val U_TURN_MIN = 175
 
-    /** Records of one guidance block, in lane order, to hints. "Preferred" lanes win; else "usable". */
+    /**
+     * Records of one guidance block, in lane order, to hints. "Preferred" lanes win; else "usable".
+     * A lane to be in points the way the route goes from it (its highlighted direction), with its
+     * other directions kept to draw beside it.
+     */
     fun fromRecords(records: Collection<LaneRecord>): List<LaneHint> {
         val ordered = records.sortedBy { it.lane }
         val anyPreferred = ordered.any { it.status == 2 }
-        return ordered.map { r -> LaneHint(r.angle, if (anyPreferred) r.status == 2 else r.status == 1) }
+        return ordered.map { r ->
+            val recommended = if (anyPreferred) r.status == 2 else r.status == 1
+            val main = if (recommended) r.highlight ?: r.angle else r.angle
+            LaneHint(main, recommended, r.angles.filter { it != main }.distinct())
+        }
     }
 
     /** The androidx [LaneDirection] shape for an Apple lane angle. */

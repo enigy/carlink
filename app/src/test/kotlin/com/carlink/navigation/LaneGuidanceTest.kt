@@ -2,6 +2,7 @@ package com.carlink.navigation
 
 import androidx.car.app.navigation.model.LaneDirection
 import androidx.car.app.navigation.model.Maneuver
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -50,25 +51,94 @@ class LaneGuidanceTest {
         if (linked != null) put("linkedLaneGuidance", linked)
     }
 
+    @Suppress("LongParameterList") // one field per JSON key the box sends
     private fun lane(
         block: Int,
         index: Int,
         status: Int,
         angle: Int,
+        count: Int? = null,
+        angles: List<Int>? = null,
+        highlight: Int? = null,
     ) = JSONObject().apply {
         put("kind", "laneGuidance")
         put("guidanceIndex", block)
         put("index", index)
         put("laneStatus", status)
         put("laneAngle", angle)
+        if (count != null) put("laneCount", count)
+        if (angles != null) put("laneAngles", JSONArray(angles))
+        if (highlight != null) put("laneAngleHighlight", highlight)
     }
 
-    private fun guidance(cur: Int) =
-        JSONObject().apply {
-            put("kind", "routeGuidance")
-            put("routeGuidanceState", 1)
-            put("currentManeuverIndex", cur)
+    private fun guidance(
+        cur: Int,
+        showLanes: Boolean? = null,
+        laneBlock: Int? = null,
+    ) = JSONObject().apply {
+        put("kind", "routeGuidance")
+        put("routeGuidanceState", 1)
+        put("currentManeuverIndex", cur)
+        if (showLanes != null) put("presentLaneGuidance", if (showLanes) 1 else 0)
+        if (laneBlock != null) put("laneGuidanceCurrentIndex", laneBlock)
+    }
+
+    private val lanesNow get() = NavigationStateManager.state.value.lanes
+
+    @Test
+    fun theIphoneSaysWhichBlockToShowAndWhen() {
+        OcbmNavigationFeed.onManeuver(maneuver(1))
+        OcbmNavigationFeed.onRouteGuidance(guidance(1, showLanes = false, laneBlock = 0))
+        // The whole route's blocks arrive at once, as on the 2026-10-21 drive.
+        for (b in 0..3) {
+            OcbmNavigationFeed.onLaneGuidance(lane(b, 0, 0, 0))
+            OcbmNavigationFeed.onLaneGuidance(lane(b, 1, 2, 90))
         }
+        assertTrue("not showing yet: no lanes, and no guess at the newest block", lanesNow.isEmpty())
+        OcbmNavigationFeed.onRouteGuidance(guidance(1, showLanes = true, laneBlock = 2))
+        assertEquals(listOf(LaneHint(0, false), LaneHint(90, true)), lanesNow)
+        OcbmNavigationFeed.onRouteGuidance(guidance(1, showLanes = false, laneBlock = 2))
+        assertTrue(lanesNow.isEmpty())
+    }
+
+    @Test
+    fun withoutALinkOrCurrentIndexNothingIsGuessed() {
+        OcbmNavigationFeed.onManeuver(maneuver(1))
+        OcbmNavigationFeed.onRouteGuidance(guidance(1))
+        OcbmNavigationFeed.onLaneGuidance(lane(13, 0, 2, 0))
+        assertTrue(lanesNow.isEmpty())
+    }
+
+    @Test
+    fun aReSentBlockDropsTheLanesOfTheOldRoute() {
+        OcbmNavigationFeed.onManeuver(maneuver(1, linked = 0))
+        OcbmNavigationFeed.onRouteGuidance(guidance(1))
+        for (i in 0..4) OcbmNavigationFeed.onLaneGuidance(lane(0, i, 0, 0))
+        assertEquals(5, lanesNow.size)
+        OcbmNavigationFeed.onLaneGuidance(lane(0, 0, 2, 0))
+        OcbmNavigationFeed.onLaneGuidance(lane(0, 1, 0, 90))
+        assertEquals(listOf(LaneHint(0, true), LaneHint(90, false)), lanesNow)
+    }
+
+    @Test
+    fun laneCountHoldsTheBlockUntilItIsComplete() {
+        OcbmNavigationFeed.onManeuver(maneuver(1))
+        OcbmNavigationFeed.onRouteGuidance(guidance(1, showLanes = true, laneBlock = 4))
+        OcbmNavigationFeed.onLaneGuidance(lane(4, 0, 0, 0, count = 3))
+        OcbmNavigationFeed.onLaneGuidance(lane(4, 1, 2, 0, count = 3))
+        assertTrue("2 of 3 lanes: not published yet", lanesNow.isEmpty())
+        OcbmNavigationFeed.onLaneGuidance(lane(4, 2, 0, 90, count = 3))
+        assertEquals(3, lanesNow.size)
+    }
+
+    @Test
+    fun aLaneToBeInPointsTheWayTheRouteGoes() {
+        OcbmNavigationFeed.onManeuver(maneuver(1))
+        OcbmNavigationFeed.onRouteGuidance(guidance(1, showLanes = true, laneBlock = 0))
+        OcbmNavigationFeed.onLaneGuidance(lane(0, 0, 0, 0, count = 2))
+        OcbmNavigationFeed.onLaneGuidance(lane(0, 1, 2, 0, count = 2, angles = listOf(0, 90), highlight = 90))
+        assertEquals(listOf(LaneHint(0, false), LaneHint(90, true, others = listOf(0))), lanesNow)
+    }
 
     @Test
     fun linkedBlockReachesTheCurrentStep() {
@@ -83,8 +153,7 @@ class LaneGuidanceTest {
     fun noLanesUntilThePhoneSendsSome() {
         OcbmNavigationFeed.onManeuver(maneuver(1))
         OcbmNavigationFeed.onRouteGuidance(guidance(1))
-        val lanes = NavigationStateManager.state.value.lanes
-        assertTrue(lanes.isEmpty())
+        assertTrue(lanesNow.isEmpty())
     }
 
     @Test

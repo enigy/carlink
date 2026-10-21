@@ -134,8 +134,12 @@ internal object LaneIconComposer {
         return icon
     }
 
-    /** "4 lanes: 0 0 45* 90*" for the trail; * marks a lane to be in. */
-    fun describe(lanes: List<LaneHint>): String = "${lanes.size} lanes: " + lanes.joinToString(" ") { "${it.angle}${if (it.recommended) "*" else ""}" }
+    /** "4 lanes: 0 0 90*(+0) 90*" for the trail; * marks a lane to be in, (+…) its other directions. */
+    fun describe(lanes: List<LaneHint>): String =
+        "${lanes.size} lanes: " +
+            lanes.joinToString(" ") { lane ->
+                lane.angle.toString() + (if (lane.recommended) "*" else "") + if (lane.others.isEmpty()) "" else lane.others.joinToString(",", "(+", ")")
+            }
 
     private fun drawTurnIcon(
         base: Maneuver,
@@ -172,7 +176,11 @@ internal object LaneIconComposer {
         drawable.draw(canvas)
     }
 
-    /** A row of lane arrows inside [area]: dashed dividers, lit lanes to be in, the rest grey. */
+    /**
+     * A row of lane arrows inside [area]: dashed dividers, lit lanes to be in, the rest grey. A
+     * lane's other directions are drawn grey under its main one, so a straight-or-right lane taken
+     * right shows both arrows with the right one lit.
+     */
     private fun drawLanes(
         canvas: Canvas,
         lanes: List<LaneHint>,
@@ -212,8 +220,10 @@ internal object LaneIconComposer {
                 strokeJoin = Paint.Join.ROUND
             }
         lanes.forEachIndexed { i, lane ->
-            pen.color = if (lane.recommended) LANE_ON else LANE_OFF
             val cx = area.left + cw * (i + 0.5f)
+            pen.color = LANE_OFF
+            lane.others.forEach { canvas.drawPath(glyph(cx, glyphTop, glyphTop + glyphH, cw, it), pen) }
+            pen.color = if (lane.recommended) LANE_ON else LANE_OFF
             canvas.drawPath(glyph(cx, glyphTop, glyphTop + glyphH, cw, lane.angle), pen)
         }
     }

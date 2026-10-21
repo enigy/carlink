@@ -40,7 +40,9 @@ object ClusterStep {
                 state.stepCue?.let { builder.setCue(it) }
                 if (tests.strip && lanes.isNotEmpty()) {
                     lanes.forEach { lane ->
-                        builder.addLane(Lane.Builder().addDirection(LaneDirection.create(LaneGuidance.shapeFor(lane.angle), lane.recommended)).build())
+                        val directions = Lane.Builder().addDirection(LaneDirection.create(LaneGuidance.shapeFor(lane.angle), lane.recommended))
+                        lane.others.forEach { directions.addDirection(LaneDirection.create(LaneGuidance.shapeFor(it), false)) }
+                        builder.addLane(directions.build())
                     }
                     builder.setLanesImage(LaneIconComposer.lanesImage(lanes))
                 }

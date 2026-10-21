@@ -75,6 +75,14 @@ class LaneIconComposerTest {
     }
 
     @Test
+    fun aLaneWithSeveralDirectionsDrawsAndDescribesThemAll() {
+        val split = listOf(LaneHint(0, false), LaneHint(90, true, others = listOf(0)))
+        val m = LaneIconComposer.maneuver(rightTurn(), split, LaneTestConfig(icon = LaneIconMode.LANES), ctx)
+        assertEquals(512 to 512, bitmapSize(m))
+        assertEquals("2 lanes: 0 90*(+0)", LaneIconComposer.describe(split))
+    }
+
+    @Test
     fun theLaneStripIsThreeToOne() {
         val icon = LaneIconComposer.lanesImage(lanes).icon!!
         assertEquals(512 to 170, icon.bitmap!!.width to icon.bitmap!!.height)

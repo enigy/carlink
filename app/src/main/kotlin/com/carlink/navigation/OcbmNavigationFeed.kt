@@ -2,7 +2,6 @@ package com.carlink.navigation
 
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logNavi
@@ -63,11 +62,20 @@ object OcbmNavigationFeed {
 
     // ---- Lane guidance (iAP2 0x5204 via the box's `kind=laneGuidance`) --------------------------
 
-    /** Lane blocks by LaneGuidanceIndex, each lane by its index within the block. */
+    /**
+     * Lane blocks by LaneGuidanceIndex, each lane by its index within the block. The iPhone sends
+     * every block of the route at once when the route starts or changes (the 2026-10-21 drive: 9 to
+     * 14 at a time, then nothing until the next re-route), and says in 0x5201 which one to show.
+     */
     private val laneBlocks = HashMap<Int, HashMap<Int, LaneRecord>>()
 
-    /** When each lane block last changed (elapsedRealtime), for the unlinked fallback. */
-    private val laneBlockAt = HashMap<Int, Long>()
+    /**
+     * 0x5201 PresentLaneGuidance and LaneGuidanceCurrentIndex, forwarded by a box built from the OCBM
+     * branch `lane-guidance-index`. Null until the box sends them; older boxes never do, and then
+     * only a maneuver's own link (`linkedLaneGuidance`) can pick a block.
+     */
+    private var laneShowing: Boolean? = null
+    private var laneCurrent: Int? = null
 
     /** Maneuver index -> the lane block it links to (0x5202 param 12, `linkedLaneGuidance`). */
     private val linkedLanes = HashMap<Int, Int>()
@@ -75,8 +83,6 @@ object OcbmNavigationFeed {
     /** The source of the last published lanes, so a change is logged once rather than per tick. */
     private var lastLaneSource = ""
 
-    /** How long an unlinked lane block counts as "the lanes for now" after it last changed. */
-    private const val LANE_FRESH_MS = 15_000L
     private var published = 0L
 
     /** `kind=routeGuidance` — trip summary and the index of the maneuver being approached. */
@@ -99,6 +105,8 @@ object OcbmNavigationFeed {
                 main.removeCallbacks(endRunnable)
             }
             if (obj.has("currentManeuverIndex")) currentIndex = obj.optInt("currentManeuverIndex")
+            if (obj.has("presentLaneGuidance")) laneShowing = obj.optInt("presentLaneGuidance") != 0
+            if (obj.has("laneGuidanceCurrentIndex")) laneCurrent = obj.optInt("laneGuidanceCurrentIndex")
             guidance =
                 guidance.copy(
                     status = if (active > 0) 1 else guidance.status,
@@ -157,21 +165,42 @@ object OcbmNavigationFeed {
     }
 
     /**
-     * `kind=laneGuidance` — one lane of one lane-guidance block (iAP2 0x5204). Every new or changed
-     * lane is logged, so a drive's trail shows exactly what the phone sent and how it linked.
+     * `kind=laneGuidance` — one lane of one lane-guidance block (iAP2 0x5204). The box splits each
+     * 0x5204 into one record per lane, lane 0 first, so lane 0 starts the block afresh: a block number
+     * is reused by the next route, and its old lanes must not linger (the 2026-10-21 drive showed a
+     * re-sent 3-lane block still carrying lanes 3 and 4 of the previous route). `laneCount`, from a
+     * box that sends it, trims the block and holds the publish until the block is complete.
      */
     fun onLaneGuidance(obj: JSONObject) {
         if (!obj.has("index")) return
         synchronized(lock) {
             val block = obj.optInt("guidanceIndex", -1)
-            val rec = LaneRecord(lane = obj.optInt("index"), status = obj.optInt("laneStatus", 0), angle = obj.optInt("laneAngle", 0))
+            val rec = laneRecord(obj)
+            val count = if (obj.has("laneCount")) obj.optInt("laneCount") else null
             val lanes = laneBlocks.getOrPut(block) { HashMap() }
+            if (rec.lane == 0) lanes.clear()
+            if (count != null) lanes.keys.removeAll { it >= count }
             if (lanes[rec.lane] == rec) return
             lanes[rec.lane] = rec
-            laneBlockAt[block] = SystemClock.elapsedRealtime()
-            logInfo("[LANES] rx block=$block lane=${rec.lane} status=${rec.status} angle=${rec.angle} cur=$currentIndex", tag = Logger.Tags.NAVI)
-            if (currentIndex != null) publishLocked()
+            logInfo(
+                "[LANES] rx block=$block lane=${rec.lane}${count?.let { "/$it" } ?: ""} status=${rec.status} angles=${rec.angles} " +
+                    "highlight=${rec.highlight} cur=$currentIndex",
+                tag = Logger.Tags.NAVI,
+            )
+            if (currentIndex != null && (count == null || lanes.size >= count)) publishLocked()
         }
+    }
+
+    private fun laneRecord(obj: JSONObject): LaneRecord {
+        val angle = obj.optInt("laneAngle", 0)
+        val angles = obj.optJSONArray("laneAngles")?.let { arr -> List(arr.length()) { arr.optInt(it) } }?.takeIf { it.isNotEmpty() } ?: listOf(angle)
+        return LaneRecord(
+            lane = obj.optInt("index"),
+            status = obj.optInt("laneStatus", 0),
+            angle = angles.first(),
+            angles = angles,
+            highlight = if (obj.has("laneAngleHighlight")) obj.optInt("laneAngleHighlight") else null,
+        )
     }
 
     fun clear() {
@@ -187,7 +216,8 @@ object OcbmNavigationFeed {
         main.removeCallbacks(endRunnable)
         maneuvers.clear()
         laneBlocks.clear()
-        laneBlockAt.clear()
+        laneShowing = null
+        laneCurrent = null
         linkedLanes.clear()
         lastLaneSource = ""
         currentIndex = null
@@ -228,26 +258,27 @@ object OcbmNavigationFeed {
     }
 
     /**
-     * Lanes for the approaching maneuver: the block it links to; else the most recently changed
-     * block while fresh (the link is not always sent, and the box does not forward 0x5201's
-     * LaneGuidanceCurrentIndex). The source is logged on change so the trail shows which rule fired.
-     * The test pattern (Settings › Cluster) is applied later, by [ClusterStep].
+     * Lanes to show now. When the box forwards 0x5201's PresentLaneGuidance, the iPhone decides:
+     * the block it names (LaneGuidanceCurrentIndex) while it is presenting lanes, nothing while it is
+     * not. Older boxes leave only the approaching maneuver's own link. There is deliberately no
+     * "newest block" guess: the iPhone sends the whole route's blocks at once, so the newest is the
+     * route's LAST junction (v14 showed that, and only for 15 s after each route start). The source
+     * is logged on change; the test pattern (Settings › Cluster) is applied later, by [ClusterStep].
      */
     private fun lanesForLocked(cur: Int?): List<LaneHint> {
-        val linked = cur?.let { linkedLanes[it] }?.let { b -> laneBlocks[b]?.let { b to it } }
-        val newest = laneBlockAt.maxByOrNull { it.value }
-        val fresh = newest?.takeIf { SystemClock.elapsedRealtime() - it.value < LANE_FRESH_MS }?.key
-        val latest = fresh?.let { b -> laneBlocks[b]?.let { b to it } }
-        val (source, lanes) =
+        val current = laneCurrent
+        val (source, block) =
             when {
-                linked != null -> "linked block ${linked.first}" to LaneGuidance.fromRecords(linked.second.values)
-                latest != null -> "latest block ${latest.first}" to LaneGuidance.fromRecords(latest.second.values)
-                else -> "none" to emptyList<LaneHint>()
+                laneShowing == false -> "none (the iPhone is not showing lanes)" to null
+                laneShowing == true && current != null -> "current block $current" to current
+                else -> cur?.let { linkedLanes[it] }?.let { "linked block $it" to it } ?: ("none" to null)
             }
+        val lanes = block?.let { laneBlocks[it] }?.let { LaneGuidance.fromRecords(it.values) } ?: emptyList()
         val tag = "$source $lanes"
         if (tag != lastLaneSource) {
             lastLaneSource = tag
-            logInfo("[LANES] cur=$cur lanes from $source: ${lanes.joinToString { "${it.angle}${if (it.recommended) "*" else ""}" }}", tag = Logger.Tags.NAVI)
+            val missing = if (block != null && lanes.isEmpty()) " (block not received)" else ""
+            logInfo("[LANES] cur=$cur lanes from $source$missing: ${LaneIconComposer.describe(lanes)}", tag = Logger.Tags.NAVI)
         }
         LaneActivity.noteLanes(lanes)
         return lanes
