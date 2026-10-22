@@ -45,12 +45,13 @@ internal object LaneIconComposer {
     // The lane strip for `Step.setLanesImage`: one cell per lane rather than a fixed 3:1 strip. GM
     // fits the picture into its own lane slot, so a mostly empty 512 px strip with two lanes in it came
     // out small on the cluster (truck, 2026-10-21). Only as wide as the lanes need, and the arrows fill
-    // the height with a heavier stroke.
+    // the height with a heavier stroke. The slot is 74 dp tall at most (the library's 500 x 74 dp
+    // box, and the 6:1 the lane strip card found, truck 2026-10-22), so the picture's height cannot
+    // grow on the HUD: no margin, the caps reach the edges, and a stroke and head as heavy as fit.
     private const val STRIP_CELL_W = 120
     private const val STRIP_HEIGHT = 160
-    private const val STRIP_MARGIN = 6f
-    private const val STRIP_STROKE = 18f
-    private const val STRIP_HEAD = 32f
+    private const val STRIP_STROKE = 26f
+    private const val STRIP_HEAD = 40f
 
     private const val LANE_ON = Color.WHITE
     private val LANE_OFF = Color.rgb(0x70, 0x78, 0x7A)
@@ -134,7 +135,7 @@ internal object LaneIconComposer {
         }
         val width = max(1, lanes.size) * STRIP_CELL_W
         val bmp = Bitmap.createBitmap(width, STRIP_HEIGHT, Bitmap.Config.ARGB_8888)
-        val area = RectF(STRIP_MARGIN, STRIP_MARGIN, width - STRIP_MARGIN, STRIP_HEIGHT - STRIP_MARGIN)
+        val area = RectF(0f, 0f, width.toFloat(), STRIP_HEIGHT.toFloat())
         drawLanes(Canvas(bmp), lanes, area, band = false, bold = true)
         val icon = CarIcon.Builder(IconCompat.createWithBitmap(bmp)).build()
         synchronized(lock) {
@@ -201,7 +202,7 @@ internal object LaneIconComposer {
         if (lanes.isEmpty()) return
         val n = lanes.size
         val cw = area.width() / n
-        // [bold]: the lane strip, whose arrows fill the cell height (round caps sit in the margin).
+        // [bold]: the lane strip, whose arrows fill the cell height (round caps reach its edges).
         val stroke = if (bold) STRIP_STROKE else (cw * STROKE_PER_LANE).coerceIn(MIN_STROKE, MAX_STROKE)
         val glyphH = if (bold) area.height() - stroke else min(area.height() - 2 * stroke, cw * GLYPH_HEIGHT_PER_LANE)
         val head = if (bold) STRIP_HEAD else max(MIN_HEAD, cw * HEAD_PER_LANE)
