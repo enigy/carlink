@@ -9,15 +9,14 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.RectF
-import android.graphics.Typeface
 import androidx.car.app.model.CarIcon
 import androidx.car.app.navigation.model.Maneuver
 import androidx.core.graphics.drawable.IconCompat
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
+import com.carlink.ui.settings.LaneGuidanceConfig
 import com.carlink.ui.settings.LaneIconMode
-import com.carlink.ui.settings.LaneTestConfig
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -33,11 +32,9 @@ import kotlin.math.sin
  * - [LaneIconMode.ARROW]: the turn arrow shrunk into the top of the square, the lane row beneath.
  * - [LaneIconMode.LANES]: the whole square is lanes; the lanes to be in are lit on a teal band.
  * - [lanesImage]: a separate 6:1 lane strip for `Step.setLanesImage`, which GM places itself.
- * - [LaneTestConfig.card]: a calibration card in place of the turn icon, to see how GM crops,
- *   scales and tints it.
  *
  * Turn icons are 512 px, like [com.carlink.navigation.compose.ComposedIconStore]'s icons, on
- * transparent: the lanes to be in in [LaneTestConfig.laneColor] (white by default), the rest grey.
+ * transparent: the lanes to be in in [LaneGuidanceConfig.laneColor] (white by default), the rest grey.
  * The last result is kept, so a step's distance ticks reuse one bitmap.
  */
 internal object LaneIconComposer {
@@ -107,7 +104,6 @@ internal object LaneIconComposer {
         val base: Maneuver,
         val lanes: List<LaneHint>,
         val mode: LaneIconMode,
-        val card: Boolean,
         val color: Int,
     )
 
@@ -136,35 +132,29 @@ internal object LaneIconComposer {
     private var lastManeuver: Maneuver? = null
     private var lastStripKey: Pair<List<LaneHint>, Int>? = null
     private var lastStrip: CarIcon? = null
-    private val card: Bitmap by lazy { CalibrationCard.draw(SIZE) }
 
     /**
-     * [base] with its icon redrawn for the lane tests, or [base] itself when they draw nothing:
-     * the card when [LaneTestConfig.card] is on, else lanes per [LaneTestConfig.icon] when there
-     * are [lanes]. Any failure falls back to [base]; the turn icon must never go missing.
+     * [base] with lanes drawn into its icon per [LaneGuidanceConfig.icon], or [base] itself when that
+     * is off or there are no [lanes]. Any failure falls back to [base]; the turn icon must never go
+     * missing.
      */
     fun maneuver(
         base: Maneuver,
         lanes: List<LaneHint>,
-        tests: LaneTestConfig,
+        cfg: LaneGuidanceConfig,
         context: Context,
     ): Maneuver {
-        if (!tests.card && (tests.icon == LaneIconMode.OFF || lanes.isEmpty())) return base
-        val key = Key(base, lanes, tests.icon, tests.card, tests.laneArgb)
+        if (cfg.icon == LaneIconMode.OFF || lanes.isEmpty()) return base
+        val key = Key(base, lanes, cfg.icon, cfg.laneArgb)
         synchronized(lock) {
             if (key == lastKey && lastKey?.base === base) lastManeuver?.let { return it }
         }
         val built =
-            runCatching {
-                val bitmap = if (tests.card) card else drawTurnIcon(base, lanes, tests, context)
-                base.withIcon(bitmap)
-            }.onFailure {
-                logWarn("[LANES] could not draw the lane icon, keeping the plain one: ${it.message}", tag = Logger.Tags.NAVI)
-            }.getOrNull() ?: return base
-        logInfo(
-            "[LANES] turn icon: " + if (tests.card) "calibration card" else "${tests.icon.label}, ${describe(lanes)}",
-            tag = Logger.Tags.NAVI,
-        )
+            runCatching { base.withIcon(drawTurnIcon(base, lanes, cfg, context)) }
+                .onFailure {
+                    logWarn("[LANES] could not draw the lane icon, keeping the plain one: ${it.message}", tag = Logger.Tags.NAVI)
+                }.getOrNull() ?: return base
+        logInfo("[LANES] turn icon: ${cfg.icon.label}, ${describe(lanes)}", tag = Logger.Tags.NAVI)
         synchronized(lock) {
             lastKey = key
             lastManeuver = built
@@ -201,16 +191,16 @@ internal object LaneIconComposer {
     private fun drawTurnIcon(
         base: Maneuver,
         lanes: List<LaneHint>,
-        tests: LaneTestConfig,
+        cfg: LaneGuidanceConfig,
         context: Context,
     ): Bitmap {
         val bmp = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
-        if (tests.icon == LaneIconMode.ARROW) {
+        if (cfg.icon == LaneIconMode.ARROW) {
             drawBaseIcon(canvas, base, context)
-            drawLanes(canvas, lanes, ARROW_LANES, band = false, color = tests.laneArgb)
+            drawLanes(canvas, lanes, ARROW_LANES, band = false, color = cfg.laneArgb)
         } else {
-            drawLanes(canvas, lanes, ALL_LANES, band = true, color = tests.laneArgb)
+            drawLanes(canvas, lanes, ALL_LANES, band = true, color = cfg.laneArgb)
         }
         return bmp
     }
@@ -440,97 +430,5 @@ internal object LaneIconComposer {
         if (roundaboutExitAngle > 0) b.setRoundaboutExitAngle(roundaboutExitAngle)
         b.setIcon(CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build())
         return b.build()
-    }
-}
-
-/** Settings › Cluster › Turn icon calibration card, drawn once (see [LaneIconComposer]). Positions are for 512 px. */
-private object CalibrationCard {
-    /** White, greys, then the app's teal, amber, red and a green. */
-    private val BARS =
-        intArrayOf(
-            Color.WHITE,
-            Color.rgb(0x9E, 0x9E, 0x9E),
-            Color.rgb(0x4A, 0x4A, 0x4A),
-            Color.rgb(0x5F, 0xD5, 0xED),
-            Color.rgb(0xFF, 0xB9, 0x51),
-            Color.rgb(0xFF, 0x54, 0x49),
-            Color.rgb(0x4C, 0xD9, 0x64),
-        )
-
-    /** A different colour in each corner, so a flip or rotation shows. */
-    private val CORNERS =
-        listOf(
-            Triple(Color.rgb(0xFF, 0x54, 0x49), 16f to 16f, "TL"),
-            Triple(Color.rgb(0x5F, 0xD5, 0xED), 448f to 16f, "TR"),
-            Triple(Color.rgb(0xFF, 0xB9, 0x51), 16f to 448f, "BL"),
-            Triple(Color.rgb(0x5B, 0x8C, 0xFF), 448f to 448f, "BR"),
-        )
-
-    /**
-     * The calibration card: white edge and ticks (cropping), a 64 px grid (scaling), four coloured
-     * corners (flips) and colour bars (does GM keep colour or tint everything one shade).
-     */
-    fun draw(size: Int): Bitmap {
-        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val c = Canvas(bmp)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        c.drawColor(Color.rgb(0x1A, 0x22, 0x24))
-        paint.style = Paint.Style.STROKE
-        paint.color = Color.rgb(0x3A, 0x42, 0x43)
-        paint.strokeWidth = 2f
-        for (g in 64 until size step 64) {
-            c.drawLine(g.toFloat(), 0f, g.toFloat(), size.toFloat(), paint)
-            c.drawLine(0f, g.toFloat(), size.toFloat(), g.toFloat(), paint)
-        }
-        paint.color = Color.WHITE
-        paint.strokeWidth = 3f
-        for (x in 32 until size step 32) {
-            val len = if (x % 64 == 0) 36f else 22f
-            val v = x.toFloat()
-            c.drawLine(v, 8f, v, len, paint)
-            c.drawLine(v, size - 8f, v, size - len, paint)
-            c.drawLine(8f, v, len, v, paint)
-            c.drawLine(size - 8f, v, size - len, v, paint)
-        }
-        paint.strokeWidth = 4f
-        c.drawLine(256f, 216f, 256f, 296f, paint)
-        c.drawLine(216f, 256f, 296f, 256f, paint)
-        paint.strokeWidth = 8f
-        c.drawRect(4f, 4f, size - 4f, size - 4f, paint)
-
-        paint.style = Paint.Style.FILL
-        BARS.forEachIndexed { i, color ->
-            paint.color = color
-            c.drawRect(32f + i * 64, 336f, 96f + i * 64, 408f, paint)
-        }
-        drawLabels(c, paint)
-        return bmp
-    }
-
-    private fun drawLabels(
-        c: Canvas,
-        paint: Paint,
-    ) {
-        val text =
-            Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = Typeface.DEFAULT_BOLD
-                textAlign = Paint.Align.CENTER
-            }
-        CORNERS.forEach { (color, at, label) ->
-            paint.color = color
-            c.drawRect(at.first, at.second, at.first + 48, at.second + 48, paint)
-            text.color = Color.BLACK
-            text.textSize = 20f
-            c.drawText(label, at.first + 24, at.second + 32, text)
-        }
-        text.color = Color.WHITE
-        text.textSize = 48f
-        c.drawText("CARLINK3", 256f, 150f, text)
-        text.color = Color.rgb(0x9E, 0x9E, 0x9E)
-        text.textSize = 28f
-        c.drawText("512 x 512", 256f, 196f, text)
-        text.color = Color.WHITE
-        c.drawText("L", 120f, 452f, text)
-        c.drawText("R", 392f, 452f, text)
     }
 }

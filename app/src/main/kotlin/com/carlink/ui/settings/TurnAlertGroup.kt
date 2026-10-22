@@ -52,17 +52,20 @@ import kotlinx.coroutines.delay
 /**
  * Settings › Cluster › Turn alert (design "Turn approach alert", 2026-10-21): flash the cluster
  * and HUD turn icon as the car nears a turn ([TurnAlert]). Rows on the left, a live preview of the
- * chosen color, style and speed on the right.
+ * chosen color, style and speed on the right, which stays in view while the rows scroll past
+ * ([stickyIn]).
  */
 @Composable
 internal fun TurnAlertGroup(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val store = remember { TurnAlertStore.get(context) }
     val cfg by store.flow.collectAsState()
+    val pane = LocalPaneScroll.current
+    val section = remember { StickySection() }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SectionLabel("Turn alert", modifier = Modifier.padding(top = 8.dp))
         SettingsGroup {
-            Row(verticalAlignment = Alignment.Top) {
+            Row(verticalAlignment = Alignment.Top, modifier = Modifier.trackSection(section, pane)) {
                 Column(modifier = Modifier.weight(1f)) {
                     SwitchRow(
                         title = "Turn alert",
@@ -76,7 +79,8 @@ internal fun TurnAlertGroup(modifier: Modifier = Modifier) {
                     )
                     TurnAlertRows(cfg, store, Modifier.alpha(if (cfg.enabled) 1f else DISABLED_ALPHA))
                 }
-                TurnAlertPreview(cfg, Modifier.padding(24.dp))
+                // Stays in view while the rows scroll past, so changes can be watched as they are made.
+                TurnAlertPreview(cfg, Modifier.stickyIn(section, pane, margin = 16.dp).padding(24.dp))
             }
         }
     }
@@ -164,7 +168,7 @@ private fun ColorRow(
 }
 
 /**
- * A round color choice, also used by Settings › Cluster › Lane guidance tests. The ring sits outside
+ * A round color choice, also used by Settings › Cluster › Lane guidance. The ring sits outside
  * the color with a gap, so it shows around white too; a hairline edge keeps white visible on a
  * light surface.
  */

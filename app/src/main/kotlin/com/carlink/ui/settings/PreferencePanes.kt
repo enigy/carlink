@@ -122,6 +122,6 @@ internal fun ClusterPane(
             }
         }
         TurnAlertGroup()
-        LaneTestsGroup()
+        LaneGuidanceGroup()
     }
 }

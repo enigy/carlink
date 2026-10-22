@@ -66,7 +66,7 @@ import com.carlink.ui.settings.AutoCallPath
 import com.carlink.ui.settings.CallAudioStore
 import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
-import com.carlink.ui.settings.LaneTestStore
+import com.carlink.ui.settings.LaneGuidanceStore
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
@@ -1219,7 +1219,7 @@ class CarlinkManager(
         // encodes in a codec the decoder cannot take is a black screen with no error anywhere.
         val caps = VideoCodecs.probe(g.width, g.height, g.maxFps)
         // Settings › Cluster › Ask iPhone for lanes: the proven set plus lane guidance only.
-        val askLanes = LaneTestStore.get(context).current.ask
+        val askLanes = LaneGuidanceStore.get(context).current.ask
         logInfo(
             "[CONFIG] decoders at ${g.width}x${g.height}@${g.maxFps}: h264=${caps.h264Decoder ?: "NONE"} " +
                 "hevc=${caps.hevcDecoder ?: "NONE"} -> enablesHEVC=${caps.hevc}",
@@ -2732,7 +2732,7 @@ class CarlinkManager(
         if (!LaneActivity.askedThisConnection.value) return
         val refusal = entries.firstOrNull { it.flags and Ocbm.LOG_F_BACKFILL == 0 && "IdentificationRejected" in it.text } ?: return
         LaneActivity.noteAsked(false)
-        LaneTestStore.get(context).markRefused(System.currentTimeMillis())
+        LaneGuidanceStore.get(context).markRefused(System.currentTimeMillis())
         logWarn(
             "[LANES] the iPhone refused the identification that asked for lanes (${refusal.text.take(LANE_REFUSAL_LOG_CHARS)}); " +
                 "turned 'Ask iPhone for lanes' off, resetting the connection",

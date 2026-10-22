@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -71,7 +72,9 @@ import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeDeferredNotice
 import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.settings.DisplayPane
-import com.carlink.ui.settings.LaneTestStore
+import com.carlink.ui.settings.LaneGuidanceStore
+import com.carlink.ui.settings.LocalPaneScroll
+import com.carlink.ui.settings.PaneScroll
 import com.carlink.ui.settings.PhonesPane
 import com.carlink.ui.settings.ScrollColumn
 import com.carlink.ui.settings.SettingsCategory
@@ -248,13 +251,13 @@ private fun categorySummaries(
     val callAudio = remember { CallAudioStore.get(context) }
     val mic by callAudio.callMicFlow.collectAsState()
     val buffer by callAudio.callBufferFlow.collectAsState()
-    val laneTests by remember { LaneTestStore.get(context) }.flow.collectAsState()
+    val laneGuidance by remember { LaneGuidanceStore.get(context) }.flow.collectAsState()
     val live = panes.live
     return mapOf(
         SettingsCategory.PHONES to SettingsModel.phonesSummary(live.connectedPhone, live.devices.size),
         SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo),
         SettingsCategory.CALLS to SettingsModel.callsSummary(mic, buffer),
-        SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn, laneTests.anyOn),
+        SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn, laneGuidance.anyOn),
         SettingsCategory.TROUBLESHOOT to SettingsModel.troubleshootSummary(live.driveLog),
         SettingsCategory.ADAPTER to SettingsModel.adapterSummary(panes.carlinkManager.adapterName, live.box),
     )
@@ -349,15 +352,19 @@ private fun DetailPane(
     ) {
         key(category) {
             val scroll = rememberScrollState()
+            val pane = remember(scroll) { PaneScroll(scroll) }
             Row {
-                Column(
-                    modifier =
-                        Modifier
-                            .weight(1f)
-                            .verticalScroll(scroll)
-                            .padding(start = 56.dp, end = 32.dp, top = 40.dp, bottom = 40.dp),
-                    content = content,
-                )
+                CompositionLocalProvider(LocalPaneScroll provides pane) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .onGloballyPositioned { pane.viewport = it }
+                                .verticalScroll(scroll)
+                                .padding(start = 56.dp, end = 32.dp, top = 40.dp, bottom = 40.dp),
+                        content = content,
+                    )
+                }
                 // Scroll cue 2: page buttons and a thumb, only when the page is taller than the pane.
                 ScrollColumn(scroll)
             }

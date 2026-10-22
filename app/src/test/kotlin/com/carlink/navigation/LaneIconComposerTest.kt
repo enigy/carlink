@@ -8,8 +8,8 @@ import androidx.core.graphics.drawable.IconCompat
 import androidx.test.core.app.ApplicationProvider
 import com.carlink.R
 import com.carlink.ui.settings.InlayColor
+import com.carlink.ui.settings.LaneGuidanceConfig
 import com.carlink.ui.settings.LaneIconMode
-import com.carlink.ui.settings.LaneTestConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
@@ -17,7 +17,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
-/** The lane tests' turn icons: nothing changes while they are off, a 512 px bitmap when they draw. */
+/** Lane guidance turn icons: nothing changes while they are off, a 512 px bitmap when they draw. */
 @RunWith(RobolectricTestRunner::class)
 class LaneIconComposerTest {
     private val ctx get() = ApplicationProvider.getApplicationContext<Context>()
@@ -39,14 +39,14 @@ class LaneIconComposerTest {
     @Test
     fun offOrNoLanesKeepsTheOriginalManeuver() {
         val base = rightTurn()
-        assertSame(base, LaneIconComposer.maneuver(base, lanes, LaneTestConfig(), ctx))
-        assertSame(base, LaneIconComposer.maneuver(base, emptyList(), LaneTestConfig(icon = LaneIconMode.ARROW), ctx))
+        assertSame(base, LaneIconComposer.maneuver(base, lanes, LaneGuidanceConfig(), ctx))
+        assertSame(base, LaneIconComposer.maneuver(base, emptyList(), LaneGuidanceConfig(icon = LaneIconMode.ARROW), ctx))
     }
 
     @Test
     fun bothLayoutsDrawA512SquareAndKeepTheType() {
         for (mode in listOf(LaneIconMode.ARROW, LaneIconMode.LANES)) {
-            val m = LaneIconComposer.maneuver(rightTurn(), lanes, LaneTestConfig(icon = mode), ctx)
+            val m = LaneIconComposer.maneuver(rightTurn(), lanes, LaneGuidanceConfig(icon = mode), ctx)
             assertEquals(Maneuver.TYPE_TURN_NORMAL_RIGHT, m.type)
             assertEquals(512 to 512, bitmapSize(m))
         }
@@ -55,14 +55,8 @@ class LaneIconComposerTest {
     @Test
     fun theSameStepReusesItsBitmap() {
         val base = rightTurn()
-        val tests = LaneTestConfig(icon = LaneIconMode.ARROW)
+        val tests = LaneGuidanceConfig(icon = LaneIconMode.ARROW)
         assertSame(LaneIconComposer.maneuver(base, lanes, tests, ctx), LaneIconComposer.maneuver(base, lanes, tests, ctx))
-    }
-
-    @Test
-    fun theCalibrationCardNeedsNoLanes() {
-        val m = LaneIconComposer.maneuver(rightTurn(), emptyList(), LaneTestConfig(card = true), ctx)
-        assertEquals(512 to 512, bitmapSize(m))
     }
 
     @Test
@@ -73,14 +67,14 @@ class LaneIconComposerTest {
                 .setRoundaboutExitNumber(3)
                 .setIcon(CarIcon.Builder(IconCompat.createWithResource(ctx, R.drawable.cp_maneuver_02_right_turn)).build())
                 .build()
-        val m = LaneIconComposer.maneuver(base, lanes, LaneTestConfig(icon = LaneIconMode.LANES), ctx)
+        val m = LaneIconComposer.maneuver(base, lanes, LaneGuidanceConfig(icon = LaneIconMode.LANES), ctx)
         assertEquals(3, m.roundaboutExitNumber)
     }
 
     @Test
     fun aLaneWithSeveralDirectionsDrawsAndDescribesThemAll() {
         val split = listOf(LaneHint(0, false), LaneHint(90, true, others = listOf(0)))
-        val m = LaneIconComposer.maneuver(rightTurn(), split, LaneTestConfig(icon = LaneIconMode.LANES), ctx)
+        val m = LaneIconComposer.maneuver(rightTurn(), split, LaneGuidanceConfig(icon = LaneIconMode.LANES), ctx)
         assertEquals(512 to 512, bitmapSize(m))
         assertEquals("2 lanes: 0 90*(+0)", LaneIconComposer.describe(split))
     }

@@ -1,7 +1,6 @@
 package com.carlink.navigation
 
 import androidx.car.app.navigation.model.LaneDirection
-import androidx.car.app.navigation.model.Maneuver
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -165,35 +164,5 @@ class LaneGuidanceTest {
         val seen = LaneActivity.seen.value!!
         assertEquals(2, seen.lanes)
         assertEquals(1, seen.recommended)
-    }
-
-    private fun hints(vararg lanes: Pair<Int, Boolean>) = lanes.map { LaneHint(it.first, it.second) }
-
-    @Test
-    fun testPatternLightsTheLanesOnTheTurnSide() {
-        assertEquals(hints(0 to false, 90 to true), LaneGuidance.testPattern(Maneuver.TYPE_TURN_NORMAL_RIGHT, step = 0))
-        assertEquals(hints(0 to false, 0 to false, 90 to true, 90 to true), LaneGuidance.testPattern(Maneuver.TYPE_TURN_NORMAL_RIGHT, step = 2))
-        assertEquals(
-            hints(-90 to true, -90 to true, 0 to false, 0 to false, 90 to false),
-            LaneGuidance.testPattern(Maneuver.TYPE_TURN_NORMAL_LEFT, step = 3),
-        )
-        assertEquals(hints(0 to false, 45 to true), LaneGuidance.testPattern(Maneuver.TYPE_KEEP_RIGHT, step = 5))
-    }
-
-    @Test
-    fun testPatternGoingStraightLightsTheMiddle() {
-        assertEquals(
-            hints(-90 to false, 0 to true, 0 to true, 0 to true, 0 to true, 90 to false),
-            LaneGuidance.testPattern(Maneuver.TYPE_STRAIGHT, step = 4),
-        )
-        assertEquals(hints(0 to false, 0 to true, 0 to false), LaneGuidance.testPattern(Maneuver.TYPE_STRAIGHT, step = 1))
-    }
-
-    @Test
-    fun testPatternAlwaysHasTwoToSixLanes() {
-        for (step in -12..12) {
-            val n = LaneGuidance.testPattern(Maneuver.TYPE_TURN_SHARP_LEFT, step).size
-            assertTrue("step $step gave $n lanes", n in 2..6)
-        }
     }
 }
