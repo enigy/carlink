@@ -28,7 +28,9 @@ class LaneGuidanceTest {
         assertEquals(LaneDirection.SHAPE_SLIGHT_RIGHT, LaneGuidance.shapeFor(30))
         assertEquals(LaneDirection.SHAPE_NORMAL_LEFT, LaneGuidance.shapeFor(-90))
         assertEquals(LaneDirection.SHAPE_SHARP_RIGHT, LaneGuidance.shapeFor(150))
-        assertEquals(LaneDirection.SHAPE_U_TURN_LEFT, LaneGuidance.shapeFor(-180))
+        // GM's templates host crashed on U-turn lane shapes (2026-10-22): sent as sharp turns.
+        assertEquals(LaneDirection.SHAPE_SHARP_LEFT, LaneGuidance.shapeFor(-180))
+        assertEquals(LaneDirection.SHAPE_SHARP_RIGHT, LaneGuidance.shapeFor(180))
     }
 
     @Test

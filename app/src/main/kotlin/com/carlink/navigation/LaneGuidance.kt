@@ -41,7 +41,6 @@ object LaneGuidance {
     private const val STRAIGHT_MAX = 10
     private const val SLIGHT_MAX = 45
     private const val NORMAL_MAX = 135
-    private const val U_TURN_MIN = 175
 
     /**
      * Records of one guidance block, in lane order, to hints. "Preferred" lanes win; else "usable".
@@ -58,7 +57,16 @@ object LaneGuidance {
         }
     }
 
-    /** The androidx [LaneDirection] shape for an Apple lane angle. */
+    /**
+     * The androidx [LaneDirection] shape for an Apple lane angle, as sent to GM in Step lanes.
+     *
+     * Never a U-turn shape: a back-the-way-you-came lane is sent as a sharp turn. Both lane sets
+     * with a U-turn direction (±180) on 2026-10-22 were followed 1.2–1.4 s later by GM's templates
+     * host dropping the cluster session (its RendererService disconnecting), and on the first the
+     * host crashed again 1.3 s after it rebound and never came back, so the cluster stayed blank;
+     * no other lane set did that. GM draws the lane picture ([LaneIconComposer.lanesImage]), which
+     * still shows the U-turn; these shapes only have to be safe for it.
+     */
     fun shapeFor(angle: Int): Int {
         val a = abs(angle)
         val right = angle > 0
@@ -66,8 +74,7 @@ object LaneGuidance {
             a <= STRAIGHT_MAX -> LaneDirection.SHAPE_STRAIGHT
             a <= SLIGHT_MAX -> if (right) LaneDirection.SHAPE_SLIGHT_RIGHT else LaneDirection.SHAPE_SLIGHT_LEFT
             a <= NORMAL_MAX -> if (right) LaneDirection.SHAPE_NORMAL_RIGHT else LaneDirection.SHAPE_NORMAL_LEFT
-            a < U_TURN_MIN -> if (right) LaneDirection.SHAPE_SHARP_RIGHT else LaneDirection.SHAPE_SHARP_LEFT
-            else -> if (right) LaneDirection.SHAPE_U_TURN_RIGHT else LaneDirection.SHAPE_U_TURN_LEFT
+            else -> if (right) LaneDirection.SHAPE_SHARP_RIGHT else LaneDirection.SHAPE_SHARP_LEFT
         }
     }
 }
