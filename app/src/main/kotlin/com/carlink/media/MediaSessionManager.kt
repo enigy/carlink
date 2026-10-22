@@ -624,18 +624,17 @@ class MediaSessionManager(
                 // upgrade. Line numbers are point-in-time — grep the symbol if they drift.
                 val isTrusted = controller.isTrusted
 
-                // Always log GM/AAOS observer connections at INFO so field logcats from real
-                // hardware reveal which brokers actually bind. Helpful for diagnosing
-                // "carlink doesn't appear in source X" reports — the observer either binds
-                // (visible here) or doesn't (and the explanation is firmware-side, e.g.
-                // GMAudioServer.MediaSessionUtils.SOURCES_PACKAGE allowlist).
+                // Always log GM/AAOS observer connections, to the drive log too (Carlink2 [187]),
+                // so field logs reveal which brokers actually bind. Helpful for diagnosing
+                // "carlink doesn't appear in source X" or steering-wheel skip reports — the
+                // observer either binds (visible here) or doesn't (and the explanation is
+                // firmware-side, e.g. GMAudioServer.MediaSessionUtils.SOURCES_PACKAGE allowlist).
                 val isGmAaosObserver =
                     packageName.startsWith("com.gm.") ||
                         packageName.startsWith("com.android.car.") ||
                         packageName == "com.android.systemui"
                 if (isGmAaosObserver) {
-                    Log.i(
-                        TAG,
+                    log(
                         "[MEDIA_SESSION] GM/AAOS observer bound: package=$packageName uid=$uid " +
                             "trusted=$isTrusted ifaceVer=${controller.interfaceVersion}",
                     )

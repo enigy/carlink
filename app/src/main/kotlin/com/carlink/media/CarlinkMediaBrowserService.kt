@@ -173,6 +173,16 @@ class CarlinkMediaBrowserService : MediaLibraryService() {
      * and grep the symbol names rather than the line numbers when re-verifying.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
+        // Ignore removal of the cluster's CarAppActivity task (Carlink2 [186], not carried over).
+        // restartClusterBinding() finishes that task on every phone connect, and Android delivers
+        // onTaskRemoved for ANY task in the app. Before music started that read as the user closing
+        // Carlink3: stopSelf() released the media session ~15 s into each connection and a new one
+        // replaced it (trails 2026-10-21). Carlink2 traced its broken steering-wheel skip to the same
+        // churn; here it is the likely cause of skip changing the audio source once after an install.
+        if (rootIntent?.component?.className == CAR_APP_ACTIVITY_CLASS) {
+            logInfo("[BROWSER_SERVICE] onTaskRemoved: cluster task (binding refresh), keeping the media session", tag = "MEDIA_SESSION")
+            return
+        }
         // Mirror the default's playing-predicate, replace only its pause-cascade.
         // Deliberate deviation: the default ALSO requires isPlaybackOngoing() (Media3's
         // own FGS active); we drop that conjunct because the manual FGS covers STREAMING
@@ -197,9 +207,7 @@ class CarlinkMediaBrowserService : MediaLibraryService() {
             }
             return
         }
-        if (BuildConfig.DEBUG) {
-            Log.d(TAG, "[BROWSER_SERVICE] onTaskRemoved, not playing — stopSelf without pause cascade")
-        }
+        logInfo("[BROWSER_SERVICE] onTaskRemoved, not playing — stopSelf without pause cascade", tag = "MEDIA_SESSION")
         stopSelf()
     }
 
@@ -353,6 +361,9 @@ class CarlinkMediaBrowserService : MediaLibraryService() {
             }
 
         private const val NOTIFICATION_CHANNEL_ID = "carlink_connection"
+
+        /** The hidden activity whose task restartClusterBinding() finishes (see [onTaskRemoved]). */
+        private const val CAR_APP_ACTIVITY_CLASS = "androidx.car.app.activity.CarAppActivity"
 
         /**
          * Foreground-service notification id. MUST equal Media3's
