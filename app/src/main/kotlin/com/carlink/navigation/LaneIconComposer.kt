@@ -32,7 +32,7 @@ import kotlin.math.sin
  *
  * - [LaneIconMode.ARROW]: the turn arrow shrunk into the top of the square, the lane row beneath.
  * - [LaneIconMode.LANES]: the whole square is lanes; the lanes to be in are lit on a teal band.
- * - [lanesImage]: a separate 3:1 lane strip for `Step.setLanesImage`, which GM may place itself.
+ * - [lanesImage]: a separate lane strip for `Step.setLanesImage`, one cell per lane, which GM places itself.
  * - [LaneTestConfig.card]: a calibration card in place of the turn icon, to see how GM crops,
  *   scales and tints it.
  *
@@ -41,7 +41,16 @@ import kotlin.math.sin
  */
 internal object LaneIconComposer {
     private const val SIZE = 512
-    private const val STRIP_HEIGHT = 170
+
+    // The lane strip for `Step.setLanesImage`: one cell per lane rather than a fixed 3:1 strip. GM
+    // fits the picture into its own lane slot, so a mostly empty 512 px strip with two lanes in it came
+    // out small on the cluster (truck, 2026-10-21). Only as wide as the lanes need, and the arrows fill
+    // the height with a heavier stroke.
+    private const val STRIP_CELL_W = 120
+    private const val STRIP_HEIGHT = 160
+    private const val STRIP_MARGIN = 6f
+    private const val STRIP_STROKE = 18f
+    private const val STRIP_HEAD = 32f
 
     private const val LANE_ON = Color.WHITE
     private val LANE_OFF = Color.rgb(0x70, 0x78, 0x7A)
@@ -52,7 +61,6 @@ internal object LaneIconComposer {
     private val ARROW_BOX = RectF(106f, 8f, 406f, 308f)
     private val ARROW_LANES = RectF(24f, 336f, 488f, 496f)
     private val ALL_LANES = RectF(16f, 40f, 496f, 472f)
-    private val STRIP_LANES = RectF(16f, 14f, 496f, 156f)
 
     private const val MAX_STROKE = 18f
     private const val MIN_STROKE = 6f
@@ -119,13 +127,15 @@ internal object LaneIconComposer {
         return built
     }
 
-    /** The lanes alone as a 3:1 strip, for `Step.setLanesImage`. */
+    /** The lanes alone, one [STRIP_CELL_W] cell each, for `Step.setLanesImage`. */
     fun lanesImage(lanes: List<LaneHint>): CarIcon {
         synchronized(lock) {
             if (lanes == lastStripLanes) lastStrip?.let { return it }
         }
-        val bmp = Bitmap.createBitmap(SIZE, STRIP_HEIGHT, Bitmap.Config.ARGB_8888)
-        drawLanes(Canvas(bmp), lanes, STRIP_LANES, band = false)
+        val width = max(1, lanes.size) * STRIP_CELL_W
+        val bmp = Bitmap.createBitmap(width, STRIP_HEIGHT, Bitmap.Config.ARGB_8888)
+        val area = RectF(STRIP_MARGIN, STRIP_MARGIN, width - STRIP_MARGIN, STRIP_HEIGHT - STRIP_MARGIN)
+        drawLanes(Canvas(bmp), lanes, area, band = false, bold = true)
         val icon = CarIcon.Builder(IconCompat.createWithBitmap(bmp)).build()
         synchronized(lock) {
             lastStripLanes = lanes
@@ -186,12 +196,15 @@ internal object LaneIconComposer {
         lanes: List<LaneHint>,
         area: RectF,
         band: Boolean,
+        bold: Boolean = false,
     ) {
         if (lanes.isEmpty()) return
         val n = lanes.size
         val cw = area.width() / n
-        val stroke = (cw * STROKE_PER_LANE).coerceIn(MIN_STROKE, MAX_STROKE)
-        val glyphH = min(area.height() - 2 * stroke, cw * GLYPH_HEIGHT_PER_LANE)
+        // [bold]: the lane strip, whose arrows fill the cell height (round caps sit in the margin).
+        val stroke = if (bold) STRIP_STROKE else (cw * STROKE_PER_LANE).coerceIn(MIN_STROKE, MAX_STROKE)
+        val glyphH = if (bold) area.height() - stroke else min(area.height() - 2 * stroke, cw * GLYPH_HEIGHT_PER_LANE)
+        val head = if (bold) STRIP_HEAD else max(MIN_HEAD, cw * HEAD_PER_LANE)
         val glyphTop = area.centerY() - glyphH / 2
         val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BAND }
         if (band) {
@@ -222,22 +235,27 @@ internal object LaneIconComposer {
         lanes.forEachIndexed { i, lane ->
             val cx = area.left + cw * (i + 0.5f)
             pen.color = LANE_OFF
-            lane.others.forEach { canvas.drawPath(glyph(cx, glyphTop, glyphTop + glyphH, cw, it), pen) }
+            val rows = glyphTop..glyphTop + glyphH
+            lane.others.forEach { canvas.drawPath(glyph(cx, rows, cw, it, head), pen) }
             pen.color = if (lane.recommended) LANE_ON else LANE_OFF
-            canvas.drawPath(glyph(cx, glyphTop, glyphTop + glyphH, cw, lane.angle), pen)
+            canvas.drawPath(glyph(cx, rows, cw, lane.angle, head), pen)
         }
     }
 
-    /** One lane arrow for an Apple lane angle: 0 straight, +90 right, -90 left, ±180 back. */
+    /**
+     * One lane arrow for an Apple lane angle: 0 straight, +90 right, -90 left, ±180 back, drawn over
+     * [rows] (top..bottom) in a lane [cw] wide, with an arrowhead [head] long.
+     */
     private fun glyph(
         cx: Float,
-        top: Float,
-        bot: Float,
+        rows: ClosedFloatingPointRange<Float>,
         cw: Float,
         angle: Int,
+        head: Float,
     ): Path {
+        val top = rows.start
+        val bot = rows.endInclusive
         val h = bot - top
-        val head = max(MIN_HEAD, cw * HEAD_PER_LANE)
         val reach = cw * TURN_REACH
         val s = if (angle < 0) -1f else 1f
         val a = abs(angle)

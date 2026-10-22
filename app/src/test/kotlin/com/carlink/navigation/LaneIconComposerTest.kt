@@ -83,8 +83,11 @@ class LaneIconComposerTest {
     }
 
     @Test
-    fun theLaneStripIsThreeToOne() {
-        val icon = LaneIconComposer.lanesImage(lanes).icon!!
-        assertEquals(512 to 170, icon.bitmap!!.width to icon.bitmap!!.height)
+    fun theLaneStripIsOneCellPerLane() {
+        // Only as wide as the lanes need, so GM scales two lanes as large as six.
+        val three = LaneIconComposer.lanesImage(lanes).icon!!
+        assertEquals(360 to 160, three.bitmap!!.width to three.bitmap!!.height)
+        val two = LaneIconComposer.lanesImage(listOf(LaneHint(0, true), LaneHint(90, false))).icon!!
+        assertEquals(240 to 160, two.bitmap!!.width to two.bitmap!!.height)
     }
 }
