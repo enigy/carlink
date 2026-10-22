@@ -2260,7 +2260,6 @@ class CarlinkManager(
                     voiceRouter?.releaseQuietSinks("media audible again", TransientFocusPolicy.MEDIA_RESUME_MIN_QUIET_MS)
                 },
                 onFocusEvent = { logInfo("[FOCUS] $it", tag = Logger.Tags.ADAPTR) },
-                isSessionPlaying = { mediaSessionManager?.reportsPlaying == true },
             ).also { it.start() }
         mediaPlayer = player
         val router =

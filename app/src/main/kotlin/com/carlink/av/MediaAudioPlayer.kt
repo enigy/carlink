@@ -10,6 +10,9 @@ import android.os.SystemClock
 import com.carlink.logging.ProbeLog
 import com.carlink.ocbm.seam.VoiceTag
 import java.io.InputStream
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -44,17 +47,22 @@ import java.util.concurrent.atomic.AtomicLong
  *    ring would only add latency.
  *  - Its zero-packet filter and nav "end marker" heuristics: those decoded riddleBox's PCM command
  *    stream. The seam carries a codec and an `audioType` per stream, so nothing is inferred from samples.
- *  - Its bug where a `LOSS` muted media and nothing ever re-requested focus: here a permanent loss
- *    also asks the phone to pause ([onFocusLost]), and focus is re-requested when audible media
- *    resumes, so the driver pressing play on the phone is enough to come back.
+ *  - Its `LOSS` handling only muted; here a permanent loss also asks the phone to pause
+ *    ([onFocusLost]), so the phone stops instead of streaming into a silent track.
  *
- * ## Media must HOLD audio focus, or the volume knob gets stuck
+ * ## Focus follows the music, as in Carlink2 (truck, 2026-10-22)
  *
- * AAOS points the hardware volume control at the current focus owner and returns focus to the
- * PREVIOUS owner when a transient holder abandons it. `VoiceRouter` takes transient focus for Siri and
- * calls; if media never held focus there is nothing to hand back to and the knob stays on Phone/Siri
- * while music plays. Holding `AUDIOFOCUS_GAIN` here — regardless of whether audio is flowing — gives
- * the system a resting owner to return to.
+ * Media focus is asked for when a CarPlay music stream starts (the first frame after [MEDIA_GAP_MS]
+ * without any) and given back [MEDIA_STOP_MS] after the frames stop: Carlink2's `AUDIO_MEDIA_START` /
+ * `AUDIO_MEDIA_STOP` lifecycle. GM's audio manager (the external focus policy) picks the source the
+ * steering-wheel and radio Next/Prev buttons go to, and a fresh request made as the music starts is
+ * what made it pick Carlink2. Up to v26 Carlink3 held one resting grant from connect, taken before
+ * anything played: after an install GM stayed on the radio, sent it every Next press, and the radio
+ * took over; repeating that request while holding it changed nothing. After a permanent loss focus is
+ * not snatched back by the music still in flight (v26 did, 30–50 ms after each loss, while GM had
+ * just switched to the radio); the next stream, which starts when the driver resumes CarPlay, asks
+ * again. Siri and calls: `VoiceRouter`'s transient focus returns to media while it holds focus, and
+ * music resuming after a call is a new stream that asks for it, so the volume knob follows media.
  *
  * ## Threading
  *
@@ -73,10 +81,8 @@ class MediaAudioPlayer(
      * its quiet sinks in response; throttled to once per 500 ms.
      */
     onAudibleWhileSuppressed: () -> Unit = {},
-    /** Media focus grants, losses and re-requests, for the drive log. */
+    /** Media focus requests, give-backs and losses, for the drive log. */
     onFocusEvent: (String) -> Unit = {},
-    /** Whether the media session reports the phone playing; [MediaFocus] announces only once it does. */
-    isSessionPlaying: () -> Boolean = { true },
 ) {
     private val log = ProbeLog.sub("media")
     private val running = AtomicBoolean(false)
@@ -105,10 +111,13 @@ class MediaAudioPlayer(
 
     private val focus =
         MediaFocus(am, attrs, log, onChange = { applyGain() }, onLost = onFocusLost, onSuppressedAudible = onAudibleWhileSuppressed)
-            .also {
-                it.onEvent = onFocusEvent
-                it.sessionPlaying = isSessionPlaying
-            }
+            .also { it.onEvent = onFocusEvent }
+
+    /** When the last media access unit arrived: a gap of [MEDIA_GAP_MS] starts a new stream. */
+    @Volatile private var lastFrameAt = 0L
+
+    /** Gives focus back once the music has stopped; runs between [start] and [stop]. */
+    @Volatile private var stopWatch: ScheduledExecutorService? = null
 
     @Volatile private var loggedGain = -1f
 
@@ -133,18 +142,41 @@ class MediaAudioPlayer(
         const val DUCK_GAIN = 0.2f
         const val LOG_EVERY_FRAMES = 1000L
         const val ACTIVE_WINDOW_MS = 2_000L
+
+        /** No media frames for this long, then one: a new music stream, which asks for focus. */
+        const val MEDIA_GAP_MS = 1_500L
+
+        /** No media frames for this long: the music stopped, and focus goes back (Carlink2's MEDIA_STOP). */
+        const val MEDIA_STOP_MS = 2_000L
+        const val STOP_CHECK_MS = 500L
     }
 
     /**
-     * Take resting focus and build the track before any audio arrives, so the first AU is written
-     * into a track that already exists. The prime is only a head start: [configure] adopts it when the
-     * stream matches and rebuilds otherwise. Measured saving on the AAC path: ~134 ms of the 172 ms
-     * seam-connect → first-audio (2026-08-12).
+     * Build the track before any audio arrives, so the first AU is written into a track that already
+     * exists. The prime is only a head start: [configure] adopts it when the stream matches and
+     * rebuilds otherwise. Measured saving on the AAC path: ~134 ms of the 172 ms seam-connect →
+     * first-audio (2026-08-12). Focus is not taken here: the first music frame asks for it.
      */
     fun start() {
         configureFailedAt = 0L
         running.set(true)
-        focus.request()
+        lastFrameAt = 0L
+        stopWatch?.shutdownNow()
+        stopWatch =
+            Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "media-focus").apply { isDaemon = true } }.also {
+                it.scheduleWithFixedDelay(
+                    {
+                        // Not while Siri holds the writes or a transient holder has us at 0: those are
+                        // pauses inside the music, and the frames resume on their own.
+                        val quiet = SystemClock.elapsedRealtime() - lastFrameAt >= MEDIA_STOP_MS
+                        val heldBack = pausedForAssistant || focus.gain < 1.0f
+                        if (focus.held && quiet && !heldBack) focus.abandon("the music stopped")
+                    },
+                    STOP_CHECK_MS,
+                    STOP_CHECK_MS,
+                    TimeUnit.MILLISECONDS,
+                )
+            }
         if (track != null) return
         runCatching { MediaTrack(PRIME_RATE, PRIME_CHANNELS, attrs, log) }
             .onSuccess {
@@ -205,7 +237,9 @@ class MediaAudioPlayer(
     fun stop() {
         val hadConsumer = consumeStarted
         running.set(false)
-        focus.abandon()
+        stopWatch?.shutdownNow()
+        stopWatch = null
+        focus.abandon("the session ended")
         runCatching { track?.pauseAndFlush() } // unblocks a blocking write; drops queued PCM
         // If consume() never ran, nothing else will EVER release the primed track — releaseAv() is
         // reachable only from the consume thread. AudioTrack instances come from a small global
@@ -250,6 +284,10 @@ class MediaAudioPlayer(
             }
             return
         }
+        val now = SystemClock.elapsedRealtime()
+        val newStream = lastFrameAt == 0L || now - lastFrameAt >= MEDIA_GAP_MS
+        lastFrameAt = now
+        focus.onMediaFrame(newStream)
         val needsConfigure = decoder == null || track?.matches(f.rate, f.channels) != true || codec != f.codec
         if (needsConfigure) configure(f.rate, f.channels, f.codec)
         val dec = decoder ?: return
@@ -355,9 +393,10 @@ class MediaAudioPlayer(
 }
 
 /**
- * Resting `AUDIOFOCUS_GAIN` for media plus the focus-driven gain (ported from
- * `DualStreamAudioManager.getOrCreateFocusListener`, MEDIA arm). A DISTINCT listener instance is
- * load-bearing: AAOS CarAudioFocus keys on listener identity.
+ * Media `AUDIOFOCUS_GAIN` while the music plays, plus the focus-driven gain (ported from
+ * `DualStreamAudioManager.getOrCreateFocusListener`, MEDIA arm). Asked for when a music stream starts
+ * ([onMediaFrame]) and given back when it stops ([abandon]), as Carlink2 did; see [MediaAudioPlayer].
+ * A DISTINCT listener instance is load-bearing: AAOS CarAudioFocus keys on listener identity.
  */
 private class MediaFocus(
     private val am: AudioManager?,
@@ -370,43 +409,32 @@ private class MediaFocus(
     @Volatile var gain = 1.0f
         private set
 
-    /** True after a permanent `AUDIOFOCUS_LOSS` until a later request is granted. */
+    /**
+     * True after a permanent `AUDIOFOCUS_LOSS` until the next music stream starts. The frames still in
+     * flight after a loss must not take focus back from the source that just took it.
+     */
     @Volatile var lost = false
         private set
 
     @Volatile private var request: AudioFocusRequest? = null
 
-    @Volatile private var lastRegainAt = 0L
-
     @Volatile private var lastSuppressedAt = 0L
 
-    /** Focus events for the drive log (ProbeLog is logcat-only): grants, losses and [announce]. */
+    /** When a request was last refused; the next is tried on a frame after [REFUSED_RETRY_MS]. */
+    @Volatile private var refusedAt = 0L
+
+    /** Focus events for the drive log (ProbeLog is logcat-only): requests, give-backs and losses. */
     @Volatile var onEvent: (String) -> Unit = {}
 
-    /** Whether the media session reports the phone playing, for [announce]. */
-    @Volatile var sessionPlaying: () -> Boolean = { true }
-
-    /**
-     * Whether the current grant has been re-requested since media turned audible ([announce]). The
-     * resting grant is taken at connect, before anything plays, and after an install GM's audio
-     * manager (the external focus policy, com.gm.gmaudio.tuner) did not take it as Carlink3 becoming
-     * the playing source: it stayed on the radio, sent the radio the first Next press, and the radio
-     * took over (truck, 2026-10-22). Until then a grant re-requested while music played (after a
-     * loss) was the only kind seen to fix it. v25 re-requested on the first audible audio, 0.3 s
-     * before the session reported playing, and the first Next still went to the radio; a request
-     * made while the session said playing (after that loss) fixed it, so [announce] now waits for
-     * both ([sessionPlaying]).
-     */
-    @Volatile private var announced = false
+    /** Whether media holds focus now. */
+    val held: Boolean get() = request != null
 
     private companion object {
         const val DUCKED = 0.2f
 
-        /** After a permanent focus loss, re-request no more often than this once audible media resumes. */
-        const val REGAIN_RETRY_MS = 2_000L
-
         /** Audible-while-suppressed notifications are throttled to this. */
         const val SUPPRESSED_NOTIFY_MS = 500L
+        const val REFUSED_RETRY_MS = 2_000L
     }
 
     private val listener =
@@ -423,14 +451,25 @@ private class MediaFocus(
                 // The system has revoked this request; a later request() must build a fresh one.
                 request = null
                 lost = true
-                onEvent("media focus lost to another source — asking the phone to pause")
+                onEvent("media focus lost to another source — asking the phone to pause; the next music stream asks again")
                 runCatching { onLost() }
             }
             onChange()
         }
 
-    /** Idempotent. NOT tied to whether audio flows: the point is to be the owner AAOS returns to. */
-    fun request() {
+    /**
+     * A media frame arrived; [newStream] when it is the first after a gap (the music started or
+     * resumed). A new stream clears a loss, and focus is asked for unless held — once per stream.
+     */
+    fun onMediaFrame(newStream: Boolean) {
+        if (newStream) lost = false
+        if (request != null || lost) return
+        if (!newStream && SystemClock.elapsedRealtime() - refusedAt < REFUSED_RETRY_MS) return
+        request(if (newStream) "a music stream started" else "music is playing")
+    }
+
+    @Synchronized
+    private fun request(why: String) {
         val mgr =
             am ?: run {
                 log.w("no AudioManager — media will not hold focus; the volume knob may stick on Phone/Siri")
@@ -451,64 +490,44 @@ private class MediaFocus(
             val granted = r == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
             if (granted) {
                 request = req
-                lost = false
-                announced = false
                 gain = 1.0f
                 onChange()
+            } else {
+                // Not granted (a call, or the car refused): ask again on a frame after REFUSED_RETRY_MS,
+                // not on every frame.
+                refusedAt = SystemClock.elapsedRealtime()
             }
-            log.i("media audio focus: ${if (granted) "GRANTED" else "result=$r"}")
-            onEvent("media audio focus ${if (granted) "granted" else "not granted (result=$r)"}")
+            log.i("media audio focus: ${if (granted) "GRANTED" else "result=$r"} ($why)")
+            onEvent("media audio focus ${if (granted) "granted" else "not granted (result=$r)"}: $why")
         }.onFailure { log.w("media focus request failed: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
     /**
-     * Audible media arrived. Holding full focus: [announce] it once per grant. After a PERMANENT
-     * loss: re-request (throttled). While a TRANSIENT loss or duck still holds the gain below 1.0:
-     * tell the owner, so a voice sink of our own that has outlived Siri gives its focus back — iOS
-     * never resumes audible media inside a Siri turn.
+     * Audible media while a TRANSIENT loss or duck holds the gain below 1.0: tell the owner, so a voice
+     * sink of our own that has outlived Siri gives its focus back — iOS never resumes audible media
+     * inside a Siri turn.
      */
     fun noticeAudible(
         pcm: ByteArray,
         off: Int,
         len: Int,
     ) {
-        if (gain >= 1.0f && !lost) {
-            if (!announced && sessionPlaying() && PcmLevel.audible(pcm, off, len)) announce()
-            return
-        }
+        if (gain >= 1.0f || lost || request == null) return
         if (!PcmLevel.audible(pcm, off, len)) return
         val now = SystemClock.elapsedRealtime()
-        if (lost) {
-            if (now - lastRegainAt < REGAIN_RETRY_MS) return
-            lastRegainAt = now
-            log.i("audible media after a focus loss — re-requesting media focus")
-            request()
-            return
-        }
         if (now - lastSuppressedAt < SUPPRESSED_NOTIFY_MS) return
         lastSuppressedAt = now
         runCatching { onSuppressedAudible() }
     }
 
-    /**
-     * Request the focus we already hold once more, now that our media is audible. Nothing changes
-     * for the driver (we keep `AUDIOFOCUS_GAIN`), but with an external focus policy every request
-     * reaches it, so GM's audio manager sees Carlink3 asking for media focus while its music plays.
-     */
-    private fun announce() {
-        announced = true
-        val mgr = am ?: return
+    /** Give focus back ([why] for the log); nothing when not held. */
+    @Synchronized
+    fun abandon(why: String) {
         val req = request ?: return
-        val r = runCatching { mgr.requestAudioFocus(req) }.getOrElse { -1 }
-        val result = if (r == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) "granted" else "result=$r"
-        log.i("media audible — focus re-requested: $result")
-        onEvent("media audible — focus re-requested so the car takes Carlink3 as the playing source: $result")
-    }
-
-    fun abandon() {
-        val mgr = am ?: return
-        request?.let { runCatching { mgr.abandonAudioFocusRequest(it) } }
         request = null
+        am?.let { mgr -> runCatching { mgr.abandonAudioFocusRequest(req) } }
+        log.i("media audio focus given back ($why)")
+        onEvent("media audio focus given back: $why")
     }
 }
 
