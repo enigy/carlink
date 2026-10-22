@@ -73,6 +73,8 @@ class MediaAudioPlayer(
      * its quiet sinks in response; throttled to once per 500 ms.
      */
     onAudibleWhileSuppressed: () -> Unit = {},
+    /** Media focus grants, losses and re-requests, for the drive log. */
+    onFocusEvent: (String) -> Unit = {},
 ) {
     private val log = ProbeLog.sub("media")
     private val running = AtomicBoolean(false)
@@ -99,7 +101,9 @@ class MediaAudioPlayer(
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
 
-    private val focus = MediaFocus(am, attrs, log, onChange = { applyGain() }, onLost = onFocusLost, onSuppressedAudible = onAudibleWhileSuppressed)
+    private val focus =
+        MediaFocus(am, attrs, log, onChange = { applyGain() }, onLost = onFocusLost, onSuppressedAudible = onAudibleWhileSuppressed)
+            .also { it.onEvent = onFocusEvent }
 
     @Volatile private var loggedGain = -1f
 
@@ -371,6 +375,19 @@ private class MediaFocus(
 
     @Volatile private var lastSuppressedAt = 0L
 
+    /** Focus events for the drive log (ProbeLog is logcat-only): grants, losses and [announce]. */
+    @Volatile var onEvent: (String) -> Unit = {}
+
+    /**
+     * Whether the current grant has been re-requested since media turned audible ([announce]). The
+     * resting grant is taken at connect, before anything plays, and after an install GM's audio
+     * manager (the external focus policy, com.gm.gmaudio.tuner) did not take it as Carlink3 becoming
+     * the playing source: it stayed on the radio, sent the radio the first Next press, and the radio
+     * took over (truck, 2026-10-22). Until then a grant re-requested while music played (after a
+     * loss) was the only kind seen to fix it.
+     */
+    @Volatile private var announced = false
+
     private companion object {
         const val DUCKED = 0.2f
 
@@ -395,6 +412,7 @@ private class MediaFocus(
                 // The system has revoked this request; a later request() must build a fresh one.
                 request = null
                 lost = true
+                onEvent("media focus lost to another source — asking the phone to pause")
                 runCatching { onLost() }
             }
             onChange()
@@ -423,24 +441,30 @@ private class MediaFocus(
             if (granted) {
                 request = req
                 lost = false
+                announced = false
                 gain = 1.0f
                 onChange()
             }
             log.i("media audio focus: ${if (granted) "GRANTED" else "result=$r"}")
+            onEvent("media audio focus ${if (granted) "granted" else "not granted (result=$r)"}")
         }.onFailure { log.w("media focus request failed: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
     /**
-     * Audible media arrived. After a PERMANENT loss: re-request (throttled). While a TRANSIENT loss
-     * or duck still holds the gain below 1.0: tell the owner, so a voice sink of our own that has
-     * outlived Siri gives its focus back — iOS never resumes audible media inside a Siri turn.
+     * Audible media arrived. Holding full focus: [announce] it once per grant. After a PERMANENT
+     * loss: re-request (throttled). While a TRANSIENT loss or duck still holds the gain below 1.0:
+     * tell the owner, so a voice sink of our own that has outlived Siri gives its focus back — iOS
+     * never resumes audible media inside a Siri turn.
      */
     fun noticeAudible(
         pcm: ByteArray,
         off: Int,
         len: Int,
     ) {
-        if (gain >= 1.0f && !lost) return
+        if (gain >= 1.0f && !lost) {
+            if (!announced && PcmLevel.audible(pcm, off, len)) announce()
+            return
+        }
         if (!PcmLevel.audible(pcm, off, len)) return
         val now = SystemClock.elapsedRealtime()
         if (lost) {
@@ -453,6 +477,21 @@ private class MediaFocus(
         if (now - lastSuppressedAt < SUPPRESSED_NOTIFY_MS) return
         lastSuppressedAt = now
         runCatching { onSuppressedAudible() }
+    }
+
+    /**
+     * Request the focus we already hold once more, now that our media is audible. Nothing changes
+     * for the driver (we keep `AUDIOFOCUS_GAIN`), but with an external focus policy every request
+     * reaches it, so GM's audio manager sees Carlink3 asking for media focus while its music plays.
+     */
+    private fun announce() {
+        announced = true
+        val mgr = am ?: return
+        val req = request ?: return
+        val r = runCatching { mgr.requestAudioFocus(req) }.getOrElse { -1 }
+        val result = if (r == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) "granted" else "result=$r"
+        log.i("media audible — focus re-requested: $result")
+        onEvent("media audible — focus re-requested so the car takes Carlink3 as the playing source: $result")
     }
 
     fun abandon() {
