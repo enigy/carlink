@@ -97,6 +97,12 @@ internal object LaneIconComposer {
     private const val SLIGHT_MAX = 45
     private const val U_TURN_MIN = 175
 
+    /** A U-turn's way back down, from the middle of its curve to the tip, in heads. */
+    private const val U_TURN_LEG = 1.1f
+
+    /** Where a U-turn's tip sits below the middle of its curve at least, as a share of the arrow's height. */
+    private const val U_TURN_DROP = 0.3f
+
     private data class Key(
         val base: Maneuver,
         val lanes: List<LaneHint>,
@@ -109,14 +115,21 @@ internal object LaneIconComposer {
      * Where one lane arrow is drawn: the stem at [x] up through [rows] (top..bottom), turns reaching [reach]
      * sideways and slight turns [slight] (bending [bend] of the way down), with an arrowhead [head] long.
      */
-    private class GlyphBox(
+    private data class GlyphBox(
         val x: Float,
         val rows: ClosedFloatingPointRange<Float>,
         val reach: Float,
         val slight: Float,
         val head: Float,
         val bend: Float = SLIGHT_BEND,
-    )
+    ) {
+        /**
+         * A U-turn's radius: one even half circle across [reach], no taller than leaves the way back
+         * down [U_TURN_LEG] heads long, so the head sits low and clear of the curve.
+         */
+        val uRadius: Float
+            get() = min(reach / 2, rows.endInclusive - rows.start - head * U_TURN_LEG).coerceAtLeast(1f)
+    }
 
     private val lock = Any()
     private var lastKey: Key? = null
@@ -293,6 +306,7 @@ internal object LaneIconComposer {
         val top = stroke / 2
         val bottom = STRIP_HEIGHT - stroke / 2
         val slight = min(reach, (bottom - top) * STRIP_SLIGHT_BEND * SLIGHT_LEAN)
+        val box = GlyphBox(cx, top..bottom, reach, slight, head, STRIP_SLIGHT_BEND)
         // How far sideways each direction's arrow reaches from the stem, signed.
         val ends =
             dirs.map { a ->
@@ -301,12 +315,12 @@ internal object LaneIconComposer {
                     abs(a) <= STRAIGHT_MAX -> 0f
                     abs(a) <= SLIGHT_MAX -> s * slight
                     abs(a) < U_TURN_MIN -> s * reach
-                    else -> s * (reach + span)
+                    else -> s * (2 * box.uRadius + span)
                 }
             }
         val lo = min(-barb, ends.min())
         val hi = max(barb, ends.max())
-        return GlyphBox(cx - (lo + hi) / 2, top..bottom, reach, slight, head, STRIP_SLIGHT_BEND)
+        return box.copy(x = cx - (lo + hi) / 2)
     }
 
     private fun drawDividers(
@@ -384,14 +398,16 @@ internal object LaneIconComposer {
                 arrowHead(p, PointF(tipX, endY), PointF(s, 0f), b.head)
             }
             else -> {
-                val turnY = top + h * 0.15f
-                // A long enough way back down that a big head does not swallow it.
-                val endY = top + min(h * 0.8f, max(h * 0.55f, h * 0.35f + b.head * 1.2f))
-                val tipX = b.x + s * b.reach
-                p.lineTo(b.x, top + h * 0.35f)
-                p.cubicTo(b.x, turnY, tipX, turnY, tipX, top + h * 0.35f)
-                p.lineTo(tipX, endY)
-                arrowHead(p, PointF(tipX, endY), PointF(0f, 1f), b.head)
+                // Up the stem, over one even half circle touching the top, and back down to a head
+                // low in the lane (at the bottom when the lane is short, as in the strip).
+                val r = b.uRadius
+                val cy = top + r
+                val tipX = b.x + s * 2 * r
+                val tipY = min(b.rows.endInclusive, cy + max(b.head * U_TURN_LEG, h * U_TURN_DROP))
+                p.lineTo(b.x, cy)
+                p.arcTo(RectF(b.x + s * r - r, top, b.x + s * r + r, top + 2 * r), if (s > 0) 180f else 0f, s * 180f, false)
+                p.lineTo(tipX, tipY)
+                arrowHead(p, PointF(tipX, tipY), PointF(0f, 1f), b.head)
             }
         }
         return p
