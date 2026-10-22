@@ -305,7 +305,11 @@ class MediaSessionManager(
     // Dedup state for playback-state pushes. Matches the legacy PlaybackStateCompat
     // dedup — SimpleBasePlayer has its own equality-based suppression, but this
     // outer filter cuts USB-rate updates (60–100 ms) to at most one per state/seek.
-    private var lastPushedPlaying: Boolean? = null
+    @Volatile private var lastPushedPlaying: Boolean? = null
+
+    /** Whether the session last told controllers the phone is playing (read by the media focus, see [com.carlink.av.MediaAudioPlayer]). */
+    val reportsPlaying: Boolean get() = lastPushedPlaying == true
+
     private var lastPushedPositionMs: Long = 0L
     private var lastPushedTimeNanos: Long = 0L
 

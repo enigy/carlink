@@ -259,10 +259,18 @@ private fun SessionEffects(
     // First-frame watch: while DEVICE_CONNECTED (video may already be decoding, STREAMING not yet
     // stamped) poll the frame counter so the overlay lifts on the first rendered frame, as the
     // carlink_native STREAMING edge did. Cancelled by the state change that keys it.
+    // A frame rendered since entering the state, not the count so far: when the phone walks away the
+    // manager drops STREAMING back to DEVICE_CONNECTED to show "Waiting for phone", and the old
+    // session's frames lifted the overlay at once over the last frozen picture (2026-10-22).
     LaunchedEffect(ui.connectionState) {
         ui.videoOnScreen = false
         if (ui.connectionState != CarlinkManager.State.DEVICE_CONNECTED) return@LaunchedEffect
-        while (carlinkManager.videoFramesRendered() == 0L) delay(FIRST_FRAME_POLL_MS)
+        val (startEpoch, startFrames) = carlinkManager.videoFrameMark()
+        while (true) {
+            val (epoch, frames) = carlinkManager.videoFrameMark()
+            if (frames > 0 && (epoch != startEpoch || frames > startFrames)) break
+            delay(FIRST_FRAME_POLL_MS)
+        }
         logInfo("[UI_STATE] First video frame on screen in DEVICE_CONNECTED — lifting loading overlay", tag = "UI")
         ui.videoOnScreen = true
     }

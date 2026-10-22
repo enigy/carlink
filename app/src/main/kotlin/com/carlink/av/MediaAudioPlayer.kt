@@ -75,6 +75,8 @@ class MediaAudioPlayer(
     onAudibleWhileSuppressed: () -> Unit = {},
     /** Media focus grants, losses and re-requests, for the drive log. */
     onFocusEvent: (String) -> Unit = {},
+    /** Whether the media session reports the phone playing; [MediaFocus] announces only once it does. */
+    isSessionPlaying: () -> Boolean = { true },
 ) {
     private val log = ProbeLog.sub("media")
     private val running = AtomicBoolean(false)
@@ -103,7 +105,10 @@ class MediaAudioPlayer(
 
     private val focus =
         MediaFocus(am, attrs, log, onChange = { applyGain() }, onLost = onFocusLost, onSuppressedAudible = onAudibleWhileSuppressed)
-            .also { it.onEvent = onFocusEvent }
+            .also {
+                it.onEvent = onFocusEvent
+                it.sessionPlaying = isSessionPlaying
+            }
 
     @Volatile private var loggedGain = -1f
 
@@ -378,13 +383,19 @@ private class MediaFocus(
     /** Focus events for the drive log (ProbeLog is logcat-only): grants, losses and [announce]. */
     @Volatile var onEvent: (String) -> Unit = {}
 
+    /** Whether the media session reports the phone playing, for [announce]. */
+    @Volatile var sessionPlaying: () -> Boolean = { true }
+
     /**
      * Whether the current grant has been re-requested since media turned audible ([announce]). The
      * resting grant is taken at connect, before anything plays, and after an install GM's audio
      * manager (the external focus policy, com.gm.gmaudio.tuner) did not take it as Carlink3 becoming
      * the playing source: it stayed on the radio, sent the radio the first Next press, and the radio
      * took over (truck, 2026-10-22). Until then a grant re-requested while music played (after a
-     * loss) was the only kind seen to fix it.
+     * loss) was the only kind seen to fix it. v25 re-requested on the first audible audio, 0.3 s
+     * before the session reported playing, and the first Next still went to the radio; a request
+     * made while the session said playing (after that loss) fixed it, so [announce] now waits for
+     * both ([sessionPlaying]).
      */
     @Volatile private var announced = false
 
@@ -462,7 +473,7 @@ private class MediaFocus(
         len: Int,
     ) {
         if (gain >= 1.0f && !lost) {
-            if (!announced && PcmLevel.audible(pcm, off, len)) announce()
+            if (!announced && sessionPlaying() && PcmLevel.audible(pcm, off, len)) announce()
             return
         }
         if (!PcmLevel.audible(pcm, off, len)) return

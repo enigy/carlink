@@ -2067,6 +2067,16 @@ class CarlinkManager(
     fun videoFramesRendered(): Long = videoEpoch?.renderer?.framesRendered?.get() ?: 0L
 
     /**
+     * Where rendering has got to: the video epoch's number and the frames it has drawn, so a caller
+     * can wait for a frame drawn after a given moment even across a decoder rebuild (a new epoch
+     * counts from zero).
+     */
+    fun videoFrameMark(): Pair<Int, Long> {
+        val e = videoEpoch
+        return (e?.seq ?: 0) to (e?.renderer?.framesRendered?.get() ?: 0L)
+    }
+
+    /**
      * Recover video after the settings overlay closes.
      *
      * A keyframe request FIRST, not an epoch bump. The problem this solves is a stale frame while
@@ -2248,6 +2258,7 @@ class CarlinkManager(
                     voiceRouter?.releaseQuietSinks("media audible again", TransientFocusPolicy.MEDIA_RESUME_MIN_QUIET_MS)
                 },
                 onFocusEvent = { logInfo("[FOCUS] $it", tag = Logger.Tags.ADAPTR) },
+                isSessionPlaying = { mediaSessionManager?.reportsPlaying == true },
             ).also { it.start() }
         mediaPlayer = player
         val router =
