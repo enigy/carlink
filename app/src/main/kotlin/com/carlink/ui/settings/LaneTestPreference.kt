@@ -48,10 +48,11 @@ data class LaneTestConfig(
     val strip: Boolean = false,
     val source: LaneSource = LaneSource.IPHONE,
     val card: Boolean = false,
+    val slotCard: Boolean = false,
     val refusedAtMs: Long = 0L,
 ) {
     /** True when anything is switched on, for the Cluster category's summary. */
-    val anyOn: Boolean get() = ask || icon != LaneIconMode.OFF || strip || card
+    val anyOn: Boolean get() = ask || icon != LaneIconMode.OFF || strip || card || slotCard
 }
 
 /** Durable [LaneTestConfig]; read by the cluster step builder and the adapter config. */
@@ -67,6 +68,7 @@ class LaneTestStore private constructor(
                 strip = prefs.getBoolean(KEY_STRIP, false),
                 source = LaneSource.fromCode(prefs.getString(KEY_SOURCE, null)),
                 card = prefs.getBoolean(KEY_CARD, false),
+                slotCard = prefs.getBoolean(KEY_SLOT_CARD, false),
                 refusedAtMs = prefs.getLong(KEY_REFUSED_AT, 0L),
             ),
         )
@@ -85,6 +87,8 @@ class LaneTestStore private constructor(
 
     fun setCard(on: Boolean) = update(current.copy(card = on))
 
+    fun setSlotCard(on: Boolean) = update(current.copy(slotCard = on))
+
     /** The iPhone refused an identification that asked for lanes: stop asking. */
     fun markRefused(atMs: Long) = update(current.copy(ask = false, refusedAtMs = atMs))
 
@@ -96,6 +100,7 @@ class LaneTestStore private constructor(
             .putBoolean(KEY_STRIP, c.strip)
             .putString(KEY_SOURCE, c.source.code)
             .putBoolean(KEY_CARD, c.card)
+            .putBoolean(KEY_SLOT_CARD, c.slotCard)
             .putLong(KEY_REFUSED_AT, c.refusedAtMs)
             .apply()
         state.value = c
@@ -109,6 +114,7 @@ class LaneTestStore private constructor(
         private const val KEY_STRIP = "strip"
         private const val KEY_SOURCE = "source"
         private const val KEY_CARD = "card"
+        private const val KEY_SLOT_CARD = "slot_card"
         private const val KEY_REFUSED_AT = "refused_at"
 
         @Volatile private var instance: LaneTestStore? = null

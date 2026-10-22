@@ -52,10 +52,11 @@ object TurnAlert {
     private const val JUMP_M = 30
 
     /**
-     * CPManeuverType values that never flash: noTurn (0), endOfNavigation (10), proceedToRoute (11),
+     * CPManeuverType values that never flash: the straight arrows, noTurn (0), straightAhead (3) and
+     * followRoad (5), which ask nothing of the driver; and endOfNavigation (10), proceedToRoute (11),
      * arrived (12), arrivedLeft (24), arrivedRight (25), endOfDirections (27).
      */
-    private val QUIET_TYPES = setOf(0, 10, 11, 12, 24, 25, 27)
+    private val QUIET_TYPES = setOf(0, 3, 5, 10, 11, 12, 24, 25, 27)
 
     private class Sample(
         val atMs: Long,

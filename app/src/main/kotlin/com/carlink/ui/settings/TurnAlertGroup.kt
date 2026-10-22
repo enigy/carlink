@@ -17,8 +17,8 @@ import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.TurnRight
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -121,7 +121,7 @@ private fun TurnAlertRows(
             subtitle = "Inlay keeps the white outline; Outline adds a colored edge",
             options = AlertStyle.entries,
             selected = cfg.style,
-            icon = Icons.Default.Style,
+            icon = Icons.Default.TurnRight,
             onSelect = {
                 logWarn("[UI_ACTION] Turn alert: style -> ${it.code}", tag = "UI")
                 store.setStyle(it)

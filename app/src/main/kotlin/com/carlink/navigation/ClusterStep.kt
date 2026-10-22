@@ -1,6 +1,7 @@
 package com.carlink.navigation
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.car.app.navigation.model.Lane
 import androidx.car.app.navigation.model.LaneDirection
 import androidx.car.app.navigation.model.Maneuver
@@ -16,8 +17,8 @@ import com.carlink.ui.settings.LaneTestStore
  *
  * The lane guidance tests (Settings › Cluster) act here, all off by default: lanes drawn into the
  * turn icon ([LaneIconComposer]), Step lanes plus a lane image for GM to place itself, the test
- * pattern in place of the iPhone's lanes, and the calibration card. With every test off this is
- * exactly the step Carlink3 always sent.
+ * pattern in place of the iPhone's lanes, and the turn icon and lane strip calibration cards
+ * ([LaneSlotCard]). With every test off this is exactly the step Carlink3 always sent.
  */
 object ClusterStep {
     /** Mixes the maneuver type with the road name, so each step keeps one test-pattern lane count. */
@@ -39,18 +40,31 @@ object ClusterStep {
             runCatching {
                 val builder = Step.Builder().setManeuver(LaneIconComposer.maneuver(base, lanes, tests, context))
                 state.stepCue?.let { builder.setCue(it) }
-                if (tests.strip && lanes.isNotEmpty()) {
-                    lanes.forEach { lane ->
-                        val directions = Lane.Builder().addDirection(LaneDirection.create(LaneGuidance.shapeFor(lane.angle), lane.recommended))
-                        lane.others.forEach { directions.addDirection(LaneDirection.create(LaneGuidance.shapeFor(it), false)) }
-                        builder.addLane(directions.build())
+                when {
+                    tests.slotCard -> {
+                        addLanes(builder, LaneSlotCard.LANES)
+                        builder.setLanesImage(LaneSlotCard.image(LaneSlotCard.frameAt(SystemClock.elapsedRealtime())))
                     }
-                    builder.setLanesImage(LaneIconComposer.lanesImage(lanes))
+                    tests.strip && lanes.isNotEmpty() -> {
+                        addLanes(builder, lanes)
+                        builder.setLanesImage(LaneIconComposer.lanesImage(lanes))
+                    }
                 }
                 builder.build()
             }
         step.exceptionOrNull()?.let { logWarn("[LANES] lane step refused (${it.message}); sending the plain step", tag = Logger.Tags.NAVI) }
         return step.getOrNull() ?: plain(base, state)
+    }
+
+    private fun addLanes(
+        builder: Step.Builder,
+        lanes: List<LaneHint>,
+    ) {
+        lanes.forEach { lane ->
+            val directions = Lane.Builder().addDirection(LaneDirection.create(LaneGuidance.shapeFor(lane.angle), lane.recommended))
+            lane.others.forEach { directions.addDirection(LaneDirection.create(LaneGuidance.shapeFor(it), false)) }
+            builder.addLane(directions.build())
+        }
     }
 
     private fun plain(

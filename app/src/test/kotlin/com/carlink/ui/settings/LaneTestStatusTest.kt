@@ -43,5 +43,9 @@ class LaneTestStatusTest {
     fun theCardAndTestPatternOutrankEverythingElse() {
         assertEquals("The calibration card is on the cluster in place of the turn icon.", status(LaneTestConfig(ask = true, card = true)))
         assertEquals("Test pattern: lanes on every turn. [LANES] lines go to the drive log.", status(LaneTestConfig(source = LaneSource.TEST)))
+        assertEquals(
+            "Lane strip card: the widest box whose label stays full size is the shape of GM's lane slot.",
+            status(LaneTestConfig(slotCard = true, source = LaneSource.TEST)),
+        )
     }
 }

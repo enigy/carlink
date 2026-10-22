@@ -118,4 +118,16 @@ class TurnAlertTest {
         t = drive(60.0, fromM = 700.0, fromS = 0, toS = 3)
         assertEquals(Phase.NORMAL, TurnAlert.phase(TurnAlertConfig(enabled = false), t))
     }
+
+    @Test
+    fun `straight arrows never flash`() {
+        for (type in listOf(3, 5)) {
+            TurnAlert.reset()
+            val t = drive(60.0, fromM = 700.0, fromS = 0, toS = 3, type = type)
+            assertEquals("cpType $type", Phase.NORMAL, TurnAlert.phase(on, t))
+        }
+        TurnAlert.reset()
+        val t = drive(60.0, fromM = 700.0, fromS = 0, toS = 3, type = 49) // slight left still flashes
+        assertEquals(Phase.FLASH, TurnAlert.phase(on, t))
+    }
 }

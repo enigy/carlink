@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.PhoneIphone
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -20,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.carlink.logging.logWarn
 import com.carlink.navigation.LaneActivity
+import com.carlink.navigation.LaneSlotCard
 import java.text.DateFormat
 import java.util.Date
 import android.text.format.DateFormat as AndroidDateFormat
@@ -102,17 +104,36 @@ private fun LaneTestRows(
             },
         )
         GroupDivider()
-        SwitchRow(
-            title = "Calibration card",
-            subtitle = "Shows a test card instead of the turn icon while on.",
-            checked = tests.card,
-            icon = Icons.Default.GridOn,
-            onCheckedChange = {
-                logWarn("[UI_ACTION] Lane tests: calibration card -> $it", tag = "UI")
-                store.setCard(it)
-            },
-        )
+        CalibrationRows(tests, store)
     }
+}
+
+@Composable
+private fun CalibrationRows(
+    tests: LaneTestConfig,
+    store: LaneTestStore,
+) {
+    SwitchRow(
+        title = "Turn icon calibration card",
+        subtitle = "Shows a test card instead of the turn icon while on.",
+        checked = tests.card,
+        icon = Icons.Default.GridOn,
+        onCheckedChange = {
+            logWarn("[UI_ACTION] Lane tests: calibration card -> $it", tag = "UI")
+            store.setCard(it)
+        },
+    )
+    GroupDivider()
+    SwitchRow(
+        title = "Lane strip calibration card",
+        subtitle = "Shows boxes from 1:1 to 8:1 in GM's lane slot during a route, ${LaneSlotCard.FRAME_MS / 1000} s each.",
+        checked = tests.slotCard,
+        icon = Icons.Default.Straighten,
+        onCheckedChange = {
+            logWarn("[UI_ACTION] Lane tests: lane strip card -> $it", tag = "UI")
+            store.setSlotCard(it)
+        },
+    )
 }
 
 /**
@@ -127,6 +148,7 @@ internal fun laneTestStatus(
 ): String =
     when {
         tests.card -> "The calibration card is on the cluster in place of the turn icon."
+        tests.slotCard -> "Lane strip card: the widest box whose label stays full size is the shape of GM's lane slot."
         tests.source == LaneSource.TEST -> "Test pattern: lanes on every turn. [LANES] lines go to the drive log."
         !tests.ask && tests.refusedAtMs > 0 -> "The iPhone refused lanes at ${time(tests.refusedAtMs)}, so asking turned off. Turn it on to try again."
         tests.ask && seen != null -> "Last lanes from the iPhone: ${seen.lanes} lanes, ${seen.recommended} to be in, at ${time(seen.atMs)}."

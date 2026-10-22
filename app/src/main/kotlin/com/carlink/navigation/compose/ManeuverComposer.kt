@@ -22,9 +22,9 @@ import kotlin.math.sin
  * see `Apple_Maps_Maneuver_Icons_RE.md` §9 for the cpType→shape mapping.
  *
  * [203]: turns and straight-through maneuvers are drawn from the maneuver's own junction
- * geometry by [JunctionTurnComposer] — real exit angle (0x000b) plus grey stubs for the other
- * arms (0x000a) — instead of one fixed 90° arrow for every left or right. Without geometry,
- * sharp/slight/end-of-road turns still get their own angle rather than the 90° arrow.
+ * geometry by [JunctionTurnComposer] — the real exit angle (0x000b), the turn alone — instead of
+ * one fixed 90° arrow for every left or right. Without geometry, sharp/slight/end-of-road turns
+ * still get their own angle rather than the 90° arrow.
  */
 internal object ManeuverComposer {
     const val VIEWPORT = 56.0f
@@ -105,15 +105,13 @@ internal object ManeuverComposer {
 
         if (wireExit != null) {
             if (abs(wireExit) > JunctionTurnComposer.MAX_TURN_DEG) return uTurn(wireExit)
-            return JunctionTurnComposer.compose(wireExit, data.entryAngles)
+            return JunctionTurnComposer.compose(wireExit)
         }
         return when {
             nominal == null -> singleSvg(AppleManeuverPaths.STRAIGHT)
             cp == 1 -> singleSvg(AppleManeuverPaths.LEFT_TURN)
             cp == 2 -> singleSvg(AppleManeuverPaths.RIGHT_TURN)
-            // End of road: a T — the road also continues the other way.
-            cp == 20 || cp == 21 -> JunctionTurnComposer.compose(nominal, listOf((-nominal).toInt()))
-            else -> JunctionTurnComposer.compose(nominal, emptyList())
+            else -> JunctionTurnComposer.compose(nominal)
         }
     }
 

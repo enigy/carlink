@@ -21,10 +21,12 @@ import com.carlink.logging.logError
 import com.carlink.logging.logInfo
 import com.carlink.logging.logNavi
 import com.carlink.logging.logWarn
+import com.carlink.navigation.LaneSlotCard
 import com.carlink.navigation.NavigationState
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.TripBuilder
 import com.carlink.navigation.TurnAlert
+import com.carlink.ui.settings.LaneTestStore
 import com.carlink.ui.settings.TurnAlertStore
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
@@ -100,6 +102,9 @@ class ClusterMainSession : Session() {
 
     /** Step type of the last logged trip, so [logTrip] speaks on a new step and not on every tick. */
     private var lastLoggedType: Int? = null
+
+    /** The lane strip calibration picture last seen by the ticker, -1 while the card is off. */
+    private var lastSlotFrame = -1
 
     companion object {
         /** Terminal CPManeuverType values that indicate navigation is complete. */
@@ -341,7 +346,8 @@ class ClusterMainSession : Session() {
     /**
      * Turn alert (Settings › Cluster): flips the flash beat at the chosen speed and is the only
      * sender of trips while the icon flashes; outside that it checks the phase every
-     * [ALERT_POLL_MS] and sends one trip when it changes (start of the solid frame, end of the alert).
+     * [ALERT_POLL_MS] and sends one trip when it changes (start of the solid frame, end of the alert)
+     * or when the lane strip calibration card moves to its next picture.
      */
     private suspend fun turnAlertTicker() {
         while (true) {
@@ -349,6 +355,7 @@ class ClusterMainSession : Session() {
             val now = SystemClock.elapsedRealtime()
             val phase = TurnAlert.phase(cfg, now)
             val changed = setAlertPhase(phase, now)
+            val slotChanged = slotFrameChanged(now)
             val state = NavigationStateManager.state.value
             val canSend = state.isActive && isNavigating
             if (phase == TurnAlert.Phase.FLASH) {
@@ -356,10 +363,19 @@ class ClusterMainSession : Session() {
                 if (canSend) processStateUpdate(state)
                 delay(cfg.speed.cycleMs / 2)
             } else {
-                if (changed && canSend) processStateUpdate(state)
+                if ((changed || slotChanged) && canSend) processStateUpdate(state, if (slotChanged) "lane card" else "state")
                 delay(ALERT_POLL_MS)
             }
         }
+    }
+
+    /** True when the lane strip calibration card's picture changed, or the card went on or off. */
+    private fun slotFrameChanged(now: Long): Boolean {
+        val frame = if (LaneTestStore.get(carContext).current.slotCard) LaneSlotCard.frameAt(now) else -1
+        if (frame == lastSlotFrame) return false
+        lastSlotFrame = frame
+        logInfo("[LANES] lane strip card: " + if (frame < 0) "off" else LaneSlotCard.label(frame), tag = Logger.Tags.NAVI)
+        return true
     }
 
     /** Record [phase]; true when it changed. Logged: the drive log is how an alert is checked after a drive. */

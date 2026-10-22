@@ -14,8 +14,9 @@ import kotlin.math.tan
  *
  * The route comes up from the bottom to the junction point J, turns through the REAL exit
  * angle (iAP2 0x000b) around a rounded corner, and leaves along the exit arm to Apple's
- * arrowhead. The junction's other arms (0x000a) are drawn as grey road stubs from J, the way
- * [ManeuverComposer] draws roundabout spokes, so the icon shows which road you take.
+ * arrowhead. Only the turn is drawn: the grey stubs for the junction's other arms (0x000a) were
+ * dropped after the truck drives (2026-10-22), as clutter on the HUD and more for the turn alert
+ * to repaint, and the arrow fills the icon without them.
  *
  * At 90° with no side roads this reproduces Apple's 90° turn exactly
  * ([AppleManeuverPaths.RIGHT_TURN]): corner centre (49, 38) in Apple's frame, road edges at
@@ -43,9 +44,6 @@ internal object JunctionTurnComposer {
     /** J → arrowhead base (Apple: 55.36 − 34.5). */
     private const val EXIT_LEG = 20.86
 
-    /** Grey side-road stub length from J. */
-    private const val ARM_LEN = 16.0
-
     /** Widest |v| of [GeometryPrimitives.ARROWHEAD_TEMPLATE] — the barb tips. */
     private const val ARROW_HALF_SPAN = 15.1
 
@@ -58,20 +56,11 @@ internal object JunctionTurnComposer {
     /** Beyond this callers should draw a U-turn instead; the arrowhead can't clear the stem. */
     const val MAX_TURN_DEG = 160.0
 
-    /** Side arms this close to the entry or exit are the route itself, not another road. */
-    private const val SAME_ARM_DEG = 12.0
-
     /** Overlap between adjacent pieces so the union has no hairline seams. */
     private const val EPS = 0.05
 
-    /**
-     * @param exitDeg driver-relative exit angle, |exitDeg| ≤ [MAX_TURN_DEG]
-     * @param otherArmsDeg the junction's other arms (0x000a), same convention; may be empty
-     */
-    fun compose(
-        exitDeg: Double,
-        otherArmsDeg: List<Int>,
-    ): ComposedIcon {
+    /** @param exitDeg driver-relative exit angle, |exitDeg| ≤ [MAX_TURN_DEG] */
+    fun compose(exitDeg: Double): ComposedIcon {
         val clampedExit = exitDeg.coerceIn(-MAX_TURN_DEG, MAX_TURN_DEG)
         val turnDeg = abs(clampedExit)
         val side = if (clampedExit >= 0) 1.0 else -1.0
@@ -127,25 +116,7 @@ internal object JunctionTurnComposer {
         GeometryPrimitives.appendArrowhead(arrow, ex, ey, ux, uy)
         unionInto(foreground, arrow)
 
-        // Grey roads: only when the junction has other arms. The entry and exit pads join the
-        // stubs to the route; white covers them except at the corner, which reads as the
-        // intersection the route rounds.
-        val sideArms = otherArmsDeg.map { it.toDouble() }.filter { arm -> isOtherArm(arm, clampedExit) }
-        val background =
-            if (sideArms.isEmpty()) {
-                null
-            } else {
-                val padLen = t + HALF_W
-                Path().apply {
-                    fillType = Path.FillType.WINDING
-                    unionInto(this, circle(0.0, 0.0, HALF_W))
-                    unionInto(this, arm(180.0, padLen))
-                    unionInto(this, arm(clampedExit, padLen))
-                    for (deg in sideArms) unionInto(this, arm(deg, ARM_LEN))
-                }
-            }
-
-        return ComposedIcon(background = background, foreground = foreground)
+        return ComposedIcon(background = null, foreground = foreground)
     }
 
     /**
@@ -158,31 +129,6 @@ internal object JunctionTurnComposer {
         val phi = Math.toRadians(180.0 - turnDeg)
         val needed = (HALF_W + ARROW_CLEARANCE + ARROW_HALF_SPAN * cos(phi)) / sin(phi)
         return max(EXIT_LEG, needed)
-    }
-
-    private fun isOtherArm(
-        armDeg: Double,
-        exitDeg: Double,
-    ): Boolean = angleBetween(armDeg, exitDeg) > SAME_ARM_DEG && angleBetween(armDeg, 180.0) > SAME_ARM_DEG
-
-    /** Unsigned difference between two angles, 0..180. */
-    private fun angleBetween(
-        a: Double,
-        b: Double,
-    ): Double {
-        val d = abs(((a - b) % 360.0 + 360.0) % 360.0)
-        return if (d > 180.0) 360.0 - d else d
-    }
-
-    /** A road-width strip from J outward along [deg] for [length]. */
-    private fun arm(
-        deg: Double,
-        length: Double,
-    ): Path {
-        val rad = Math.toRadians(deg)
-        val dx = sin(rad)
-        val dy = -cos(rad)
-        return strip(-dx * EPS, -dy * EPS, dx * length, dy * length)
     }
 
     /** Road-width quad from (x0, y0) to (x1, y1). */

@@ -320,7 +320,7 @@ internal object LaneIconComposer {
     }
 }
 
-/** Settings › Cluster › Calibration card, drawn once (see [LaneIconComposer]). Positions are for 512 px. */
+/** Settings › Cluster › Turn icon calibration card, drawn once (see [LaneIconComposer]). Positions are for 512 px. */
 private object CalibrationCard {
     /** White, greys, then the app's teal, amber, red and a green. */
     private val BARS =
