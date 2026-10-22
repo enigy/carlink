@@ -4,6 +4,7 @@ import androidx.car.app.CarAppService
 import androidx.car.app.Session
 import androidx.car.app.SessionInfo
 import androidx.car.app.validation.HostValidator
+import com.carlink.BuildConfig
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
@@ -43,11 +44,12 @@ class CarlinkClusterService : CarAppService() {
     }
 
     /**
-     * Still every host (security review M2, step 1 of 2). [logHost] records which host binds and
-     * whether the library's allowlist would accept it; v17 enforces the allowlist once a truck log
-     * shows GM's Templates Host passing, so enforcing can't switch the cluster directions off.
+     * Only the hosts in the library's allowlist may bind (security review M2), so another app can't
+     * pose as a car host and read the route. Every truck log since v16 showed GM's Templates Host
+     * passing it: the sample list carries its certificate (c241ffbc…). Debug builds still take any
+     * host, for emulators whose host is signed differently.
      */
-    override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+    override fun createHostValidator(): HostValidator = if (BuildConfig.DEBUG) HostValidator.ALLOW_ALL_HOSTS_VALIDATOR else allowlist
 
     private val allowlist: HostValidator by lazy {
         HostValidator.Builder(applicationContext).addAllowedHosts(androidx.car.app.R.array.hosts_allowlist_sample).build()
@@ -62,7 +64,7 @@ class CarlinkClusterService : CarAppService() {
         val allowed = runCatching { allowlist.isValidHost(host) }.getOrDefault(false)
         logWarn(
             "[CLUSTER_SVC] host ${host.packageName} uid=${host.uid} cert=${SigningCerts.sha256(packageManager, host.packageName)} " +
-                "allowlist=${if (allowed) "pass" else "FAIL"} (not enforced yet)",
+                "allowlist=${if (allowed) "pass" else "FAIL"} (${if (BuildConfig.DEBUG) "debug build: not enforced" else "enforced"})",
             tag = Logger.Tags.CLUSTER,
         )
     }
