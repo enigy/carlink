@@ -32,28 +32,42 @@ import kotlin.math.sin
  *
  * - [LaneIconMode.ARROW]: the turn arrow shrunk into the top of the square, the lane row beneath.
  * - [LaneIconMode.LANES]: the whole square is lanes; the lanes to be in are lit on a teal band.
- * - [lanesImage]: a separate lane strip for `Step.setLanesImage`, one cell per lane, which GM places itself.
+ * - [lanesImage]: a separate 6:1 lane strip for `Step.setLanesImage`, which GM places itself.
  * - [LaneTestConfig.card]: a calibration card in place of the turn icon, to see how GM crops,
  *   scales and tints it.
  *
- * Everything is 512 px, like [com.carlink.navigation.compose.ComposedIconStore]'s icons, white and
- * grey on transparent. The last result is kept, so a step's distance ticks reuse one bitmap.
+ * Turn icons are 512 px, like [com.carlink.navigation.compose.ComposedIconStore]'s icons, on
+ * transparent: the lanes to be in in [LaneTestConfig.laneColor] (white by default), the rest grey.
+ * The last result is kept, so a step's distance ticks reuse one bitmap.
  */
 internal object LaneIconComposer {
     private const val SIZE = 512
 
-    // The lane strip for `Step.setLanesImage`: one cell per lane rather than a fixed 3:1 strip. GM
-    // fits the picture into its own lane slot, so a mostly empty 512 px strip with two lanes in it came
-    // out small on the cluster (truck, 2026-10-21). Only as wide as the lanes need, and the arrows fill
-    // the height with a heavier stroke. The slot is 74 dp tall at most (the library's 500 x 74 dp
-    // box, and the 6:1 the lane strip card found, truck 2026-10-22), so the picture's height cannot
-    // grow on the HUD: no margin, the caps reach the edges, and a stroke and head as heavy as fit.
-    private const val STRIP_CELL_W = 120
+    // The lane strip for `Step.setLanesImage`. GM fits it into its own lane slot, at most 74 dp tall
+    // (the library's 500 x 74 dp box; the lane strip card found 6:1 the widest shape that keeps the full
+    // height, truck 2026-10-22). Strips sized to their lanes (v19-v21) left most of that slot empty and
+    // the arrows squeezed together, so the strip is always 6:1, split evenly between the lanes, with each
+    // arrow centered in its lane and widened to fill most of it: turns reach far sideways and the stroke
+    // and head grow with the lane, so the arrows come out wider than they are tall. The caps reach the
+    // top and bottom edges.
+    private const val STRIP_WIDTH = 960
     private const val STRIP_HEIGHT = 160
-    private const val STRIP_STROKE = 26f
-    private const val STRIP_HEAD = 40f
+    private const val STRIP_FILL = 0.86f
+    private const val STRIP_STROKE_PER_LANE = 0.12f
+    private const val STRIP_MIN_STROKE = 20f
+    private const val STRIP_MAX_STROKE = 34f
+    private const val STRIP_HEAD_PER_LANE = 0.2f
+    private const val STRIP_MIN_HEAD = 36f
+    private const val STRIP_MAX_HEAD = 56f
+    private const val STRIP_MAX_REACH = 256f
 
-    private const val LANE_ON = Color.WHITE
+    /** A slight turn's tip sits at most this far sideways per pixel it rises: about 35° off vertical. */
+    private const val SLIGHT_LEAN = 0.7f
+
+    /** Where a slight turn bends, as a share of the arrow's height from the top; lower in the strip, for its big heads. */
+    private const val SLIGHT_BEND = 0.45f
+    private const val STRIP_SLIGHT_BEND = 0.62f
+
     private val LANE_OFF = Color.rgb(0x70, 0x78, 0x7A)
     private val DIVIDER = Color.rgb(0x4A, 0x52, 0x54)
     private val BAND = Color.rgb(0x14, 0x34, 0x3B)
@@ -71,6 +85,9 @@ internal object LaneIconComposer {
     private const val MIN_HEAD = 8f
     private const val TURN_REACH = 0.3f
     private const val HEAD_SPREAD_DEG = 40.0
+
+    /** How far a head's barbs spread sideways (and a sideways head's up and down), per pixel of head. */
+    private val BARB_SPAN = sin(Math.toRadians(HEAD_SPREAD_DEG)).toFloat()
     private const val DIVIDER_WIDTH = 4f
     private val DIVIDER_DASH = floatArrayOf(14f, 12f)
     private const val BAND_INSET = 4f
@@ -85,12 +102,26 @@ internal object LaneIconComposer {
         val lanes: List<LaneHint>,
         val mode: LaneIconMode,
         val card: Boolean,
+        val color: Int,
+    )
+
+    /**
+     * Where one lane arrow is drawn: the stem at [x] up through [rows] (top..bottom), turns reaching [reach]
+     * sideways and slight turns [slight] (bending [bend] of the way down), with an arrowhead [head] long.
+     */
+    private class GlyphBox(
+        val x: Float,
+        val rows: ClosedFloatingPointRange<Float>,
+        val reach: Float,
+        val slight: Float,
+        val head: Float,
+        val bend: Float = SLIGHT_BEND,
     )
 
     private val lock = Any()
     private var lastKey: Key? = null
     private var lastManeuver: Maneuver? = null
-    private var lastStripLanes: List<LaneHint>? = null
+    private var lastStripKey: Pair<List<LaneHint>, Int>? = null
     private var lastStrip: CarIcon? = null
     private val card: Bitmap by lazy { CalibrationCard.draw(SIZE) }
 
@@ -106,13 +137,13 @@ internal object LaneIconComposer {
         context: Context,
     ): Maneuver {
         if (!tests.card && (tests.icon == LaneIconMode.OFF || lanes.isEmpty())) return base
-        val key = Key(base, lanes, tests.icon, tests.card)
+        val key = Key(base, lanes, tests.icon, tests.card, tests.laneArgb)
         synchronized(lock) {
             if (key == lastKey && lastKey?.base === base) lastManeuver?.let { return it }
         }
         val built =
             runCatching {
-                val bitmap = if (tests.card) card else drawTurnIcon(base, lanes, tests.icon, context)
+                val bitmap = if (tests.card) card else drawTurnIcon(base, lanes, tests, context)
                 base.withIcon(bitmap)
             }.onFailure {
                 logWarn("[LANES] could not draw the lane icon, keeping the plain one: ${it.message}", tag = Logger.Tags.NAVI)
@@ -128,18 +159,20 @@ internal object LaneIconComposer {
         return built
     }
 
-    /** The lanes alone, one [STRIP_CELL_W] cell each, for `Step.setLanesImage`. */
-    fun lanesImage(lanes: List<LaneHint>): CarIcon {
+    /** The lanes alone, 6:1 and split evenly between them, for `Step.setLanesImage`; lanes to be in drawn in [color]. */
+    fun lanesImage(
+        lanes: List<LaneHint>,
+        color: Int,
+    ): CarIcon {
+        val key = lanes to color
         synchronized(lock) {
-            if (lanes == lastStripLanes) lastStrip?.let { return it }
+            if (key == lastStripKey) lastStrip?.let { return it }
         }
-        val width = max(1, lanes.size) * STRIP_CELL_W
-        val bmp = Bitmap.createBitmap(width, STRIP_HEIGHT, Bitmap.Config.ARGB_8888)
-        val area = RectF(0f, 0f, width.toFloat(), STRIP_HEIGHT.toFloat())
-        drawLanes(Canvas(bmp), lanes, area, band = false, bold = true)
+        val bmp = Bitmap.createBitmap(STRIP_WIDTH, STRIP_HEIGHT, Bitmap.Config.ARGB_8888)
+        drawStrip(Canvas(bmp), lanes, color)
         val icon = CarIcon.Builder(IconCompat.createWithBitmap(bmp)).build()
         synchronized(lock) {
-            lastStripLanes = lanes
+            lastStripKey = key
             lastStrip = icon
         }
         return icon
@@ -155,16 +188,16 @@ internal object LaneIconComposer {
     private fun drawTurnIcon(
         base: Maneuver,
         lanes: List<LaneHint>,
-        mode: LaneIconMode,
+        tests: LaneTestConfig,
         context: Context,
     ): Bitmap {
         val bmp = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
-        if (mode == LaneIconMode.ARROW) {
+        if (tests.icon == LaneIconMode.ARROW) {
             drawBaseIcon(canvas, base, context)
-            drawLanes(canvas, lanes, ARROW_LANES, band = false)
+            drawLanes(canvas, lanes, ARROW_LANES, band = false, color = tests.laneArgb)
         } else {
-            drawLanes(canvas, lanes, ALL_LANES, band = true)
+            drawLanes(canvas, lanes, ALL_LANES, band = true, color = tests.laneArgb)
         }
         return bmp
     }
@@ -188,33 +221,99 @@ internal object LaneIconComposer {
     }
 
     /**
-     * A row of lane arrows inside [area]: dashed dividers, lit lanes to be in, the rest grey. A
-     * lane's other directions are drawn grey under its main one, so a straight-or-right lane taken
-     * right shows both arrows with the right one lit.
+     * A row of lane arrows inside [area] for the turn icon: dashed dividers, the lanes to be in lit in
+     * [color], the rest grey.
      */
     private fun drawLanes(
         canvas: Canvas,
         lanes: List<LaneHint>,
         area: RectF,
         band: Boolean,
-        bold: Boolean = false,
+        color: Int,
     ) {
         if (lanes.isEmpty()) return
-        val n = lanes.size
-        val cw = area.width() / n
-        // [bold]: the lane strip, whose arrows fill the cell height (round caps reach its edges).
-        val stroke = if (bold) STRIP_STROKE else (cw * STROKE_PER_LANE).coerceIn(MIN_STROKE, MAX_STROKE)
-        val glyphH = if (bold) area.height() - stroke else min(area.height() - 2 * stroke, cw * GLYPH_HEIGHT_PER_LANE)
-        val head = if (bold) STRIP_HEAD else max(MIN_HEAD, cw * HEAD_PER_LANE)
+        val cw = area.width() / lanes.size
+        val stroke = (cw * STROKE_PER_LANE).coerceIn(MIN_STROKE, MAX_STROKE)
+        val glyphH = min(area.height() - 2 * stroke, cw * GLYPH_HEIGHT_PER_LANE)
+        val head = max(MIN_HEAD, cw * HEAD_PER_LANE)
         val glyphTop = area.centerY() - glyphH / 2
-        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BAND }
         if (band) {
+            val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = BAND }
             lanes.forEachIndexed { i, lane ->
                 if (!lane.recommended) return@forEachIndexed
                 val x = area.left + cw * i
                 canvas.drawRoundRect(RectF(x + BAND_INSET, area.top, x + cw - BAND_INSET, area.bottom), BAND_RADIUS, BAND_RADIUS, fill)
             }
         }
+        drawDividers(canvas, area, lanes.size)
+        val reach = cw * TURN_REACH
+        lanes.forEachIndexed { i, lane ->
+            val box = GlyphBox(area.left + cw * (i + 0.5f), glyphTop..glyphTop + glyphH, reach, reach, head)
+            drawLane(canvas, lane, box, stroke, color)
+        }
+    }
+
+    /** The 6:1 lane strip: the full width split evenly between [lanes], each arrow filling its lane. */
+    private fun drawStrip(
+        canvas: Canvas,
+        lanes: List<LaneHint>,
+        color: Int,
+    ) {
+        if (lanes.isEmpty()) return
+        val area = RectF(0f, 0f, STRIP_WIDTH.toFloat(), STRIP_HEIGHT.toFloat())
+        val cw = area.width() / lanes.size
+        val stroke = (cw * STRIP_STROKE_PER_LANE).coerceIn(STRIP_MIN_STROKE, STRIP_MAX_STROKE)
+        val head = (cw * STRIP_HEAD_PER_LANE).coerceIn(STRIP_MIN_HEAD, STRIP_MAX_HEAD)
+        drawDividers(canvas, area, lanes.size)
+        lanes.forEachIndexed { i, lane ->
+            drawLane(canvas, lane, stripBox(lane, area.left + cw * (i + 0.5f), cw, stroke, head), stroke, color)
+        }
+    }
+
+    /**
+     * Where [lane]'s arrow goes in a strip lane [cw] wide centered on [cx]: turns reach as far as
+     * [STRIP_FILL] of the lane allows (half each way if the lane turns both ways, less a straight
+     * arrow's head if it also goes straight, and a U-turn's head, which spreads past its tip), and
+     * the stem moves so the whole arrow is centered.
+     */
+    private fun stripBox(
+        lane: LaneHint,
+        cx: Float,
+        cw: Float,
+        stroke: Float,
+        head: Float,
+    ): GlyphBox {
+        val dirs = listOf(lane.angle) + lane.others
+        val span = head * BARB_SPAN
+        val barb = if (dirs.any { abs(it) <= STRAIGHT_MAX }) span else 0f
+        val tipBarb = if (dirs.any { abs(it) >= U_TURN_MIN }) span else 0f
+        val bothWays = dirs.any { it < -STRAIGHT_MAX } && dirs.any { it > STRAIGHT_MAX }
+        val room = cw * STRIP_FILL - stroke
+        val reach = (if (bothWays) room / 2 - tipBarb else room - barb - tipBarb).coerceIn(stroke, STRIP_MAX_REACH)
+        val top = stroke / 2
+        val bottom = STRIP_HEIGHT - stroke / 2
+        val slight = min(reach, (bottom - top) * STRIP_SLIGHT_BEND * SLIGHT_LEAN)
+        // How far sideways each direction's arrow reaches from the stem, signed.
+        val ends =
+            dirs.map { a ->
+                val s = if (a < 0) -1f else 1f
+                when {
+                    abs(a) <= STRAIGHT_MAX -> 0f
+                    abs(a) <= SLIGHT_MAX -> s * slight
+                    abs(a) < U_TURN_MIN -> s * reach
+                    else -> s * (reach + span)
+                }
+            }
+        val lo = min(-barb, ends.min())
+        val hi = max(barb, ends.max())
+        return GlyphBox(cx - (lo + hi) / 2, top..bottom, reach, slight, head, STRIP_SLIGHT_BEND)
+    }
+
+    private fun drawDividers(
+        canvas: Canvas,
+        area: RectF,
+        n: Int,
+    ) {
         val divider =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = DIVIDER
@@ -222,70 +321,77 @@ internal object LaneIconComposer {
                 strokeWidth = DIVIDER_WIDTH
                 pathEffect = DashPathEffect(DIVIDER_DASH, 0f)
             }
+        val cw = area.width() / n
         for (i in 1 until n) {
             val x = area.left + cw * i
             canvas.drawLine(x, area.top, x, area.bottom, divider)
         }
+    }
+
+    /**
+     * One lane's arrows: its other directions grey under its main one, so a straight-or-right lane
+     * taken right shows both arrows with the right one lit in [color].
+     */
+    private fun drawLane(
+        canvas: Canvas,
+        lane: LaneHint,
+        box: GlyphBox,
+        stroke: Float,
+        color: Int,
+    ) {
         val pen =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.STROKE
                 strokeWidth = stroke
                 strokeCap = Paint.Cap.ROUND
                 strokeJoin = Paint.Join.ROUND
+                this.color = LANE_OFF
             }
-        lanes.forEachIndexed { i, lane ->
-            val cx = area.left + cw * (i + 0.5f)
-            pen.color = LANE_OFF
-            val rows = glyphTop..glyphTop + glyphH
-            lane.others.forEach { canvas.drawPath(glyph(cx, rows, cw, it, head), pen) }
-            pen.color = if (lane.recommended) LANE_ON else LANE_OFF
-            canvas.drawPath(glyph(cx, rows, cw, lane.angle, head), pen)
-        }
+        lane.others.forEach { canvas.drawPath(glyph(box, it), pen) }
+        pen.color = if (lane.recommended) color else LANE_OFF
+        canvas.drawPath(glyph(box, lane.angle), pen)
     }
 
-    /**
-     * One lane arrow for an Apple lane angle: 0 straight, +90 right, -90 left, ±180 back, drawn over
-     * [rows] (top..bottom) in a lane [cw] wide, with an arrowhead [head] long.
-     */
+    /** One lane arrow for an Apple lane angle in [b]: 0 straight, +90 right, -90 left, ±180 back. */
     private fun glyph(
-        cx: Float,
-        rows: ClosedFloatingPointRange<Float>,
-        cw: Float,
+        b: GlyphBox,
         angle: Int,
-        head: Float,
     ): Path {
-        val top = rows.start
-        val bot = rows.endInclusive
-        val h = bot - top
-        val reach = cw * TURN_REACH
+        val top = b.rows.start
+        val h = b.rows.endInclusive - top
         val s = if (angle < 0) -1f else 1f
         val a = abs(angle)
         val p = Path()
-        p.moveTo(cx, bot)
+        p.moveTo(b.x, b.rows.endInclusive)
         when {
             a <= STRAIGHT_MAX -> {
-                p.lineTo(cx, top)
-                arrowHead(p, PointF(cx, top), PointF(0f, -1f), head)
+                p.lineTo(b.x, top)
+                arrowHead(p, PointF(b.x, top), PointF(0f, -1f), b.head)
             }
             a <= SLIGHT_MAX -> {
-                val midY = top + h * 0.45f
-                p.lineTo(cx, midY)
-                p.lineTo(cx + s * reach, top)
-                arrowHead(p, PointF(cx + s * reach, top), PointF(s * reach, top - midY), head)
+                val midY = top + h * b.bend
+                val tipX = b.x + s * b.slight
+                p.lineTo(b.x, midY)
+                p.lineTo(tipX, top)
+                arrowHead(p, PointF(tipX, top), PointF(tipX - b.x, top - midY), b.head)
             }
             a < U_TURN_MIN -> {
-                val endY = top + h * 0.2f
-                p.lineTo(cx, top + h * 0.5f)
-                p.quadTo(cx, endY, cx + s * reach, endY)
-                arrowHead(p, PointF(cx + s * reach, endY), PointF(s, 0f), head)
+                // Low enough that a big head's barbs stay inside the top edge.
+                val endY = top + max(h * 0.2f, b.head * BARB_SPAN)
+                val tipX = b.x + s * b.reach
+                p.lineTo(b.x, top + h * 0.5f)
+                p.quadTo(b.x, endY, tipX, endY)
+                arrowHead(p, PointF(tipX, endY), PointF(s, 0f), b.head)
             }
             else -> {
                 val turnY = top + h * 0.15f
-                val endY = top + h * 0.55f
-                p.lineTo(cx, top + h * 0.35f)
-                p.cubicTo(cx, turnY, cx + s * reach, turnY, cx + s * reach, top + h * 0.35f)
-                p.lineTo(cx + s * reach, endY)
-                arrowHead(p, PointF(cx + s * reach, endY), PointF(0f, 1f), head)
+                // A long enough way back down that a big head does not swallow it.
+                val endY = top + min(h * 0.8f, max(h * 0.55f, h * 0.35f + b.head * 1.2f))
+                val tipX = b.x + s * b.reach
+                p.lineTo(b.x, top + h * 0.35f)
+                p.cubicTo(b.x, turnY, tipX, turnY, tipX, top + h * 0.35f)
+                p.lineTo(tipX, endY)
+                arrowHead(p, PointF(tipX, endY), PointF(0f, 1f), b.head)
             }
         }
         return p

@@ -39,7 +39,8 @@ enum class LaneSource(
  *
  * [ask] is the only one that reaches the adapter: it widens the metadata Carlink3 pushes on the next
  * `CT_SUBSCRIBE` so the iPhone is asked for iAP2 lane guidance. The rest change only what Carlink3
- * draws for GM's cluster and HUD. [refusedAtMs] is when [ask] last turned itself off because the
+ * draws for GM's cluster and HUD. [laneColor] is the color of the lanes to be in, from the turn
+ * alert's palette (null = white). [refusedAtMs] is when [ask] last turned itself off because the
  * iPhone rejected the identification that carried it (0 = never).
  */
 data class LaneTestConfig(
@@ -49,10 +50,18 @@ data class LaneTestConfig(
     val source: LaneSource = LaneSource.IPHONE,
     val card: Boolean = false,
     val slotCard: Boolean = false,
+    val laneColor: InlayColor? = null,
     val refusedAtMs: Long = 0L,
 ) {
     /** True when anything is switched on, for the Cluster category's summary. */
     val anyOn: Boolean get() = ask || icon != LaneIconMode.OFF || strip || card || slotCard
+
+    /** ARGB the lanes to be in are drawn in. */
+    val laneArgb: Int get() = laneColor?.argb ?: WHITE_ARGB
+
+    private companion object {
+        const val WHITE_ARGB = 0xFFFFFFFF.toInt()
+    }
 }
 
 /** Durable [LaneTestConfig]; read by the cluster step builder and the adapter config. */
@@ -69,6 +78,7 @@ class LaneTestStore private constructor(
                 source = LaneSource.fromCode(prefs.getString(KEY_SOURCE, null)),
                 card = prefs.getBoolean(KEY_CARD, false),
                 slotCard = prefs.getBoolean(KEY_SLOT_CARD, false),
+                laneColor = prefs.getString(KEY_LANE_COLOR, null).let { code -> InlayColor.entries.firstOrNull { it.code == code } },
                 refusedAtMs = prefs.getLong(KEY_REFUSED_AT, 0L),
             ),
         )
@@ -89,6 +99,8 @@ class LaneTestStore private constructor(
 
     fun setSlotCard(on: Boolean) = update(current.copy(slotCard = on))
 
+    fun setLaneColor(color: InlayColor?) = update(current.copy(laneColor = color))
+
     /** The iPhone refused an identification that asked for lanes: stop asking. */
     fun markRefused(atMs: Long) = update(current.copy(ask = false, refusedAtMs = atMs))
 
@@ -101,6 +113,7 @@ class LaneTestStore private constructor(
             .putString(KEY_SOURCE, c.source.code)
             .putBoolean(KEY_CARD, c.card)
             .putBoolean(KEY_SLOT_CARD, c.slotCard)
+            .putString(KEY_LANE_COLOR, c.laneColor?.code ?: WHITE)
             .putLong(KEY_REFUSED_AT, c.refusedAtMs)
             .apply()
         state.value = c
@@ -115,6 +128,8 @@ class LaneTestStore private constructor(
         private const val KEY_SOURCE = "source"
         private const val KEY_CARD = "card"
         private const val KEY_SLOT_CARD = "slot_card"
+        private const val KEY_LANE_COLOR = "lane_color"
+        private const val WHITE = "white"
         private const val KEY_REFUSED_AT = "refused_at"
 
         @Volatile private var instance: LaneTestStore? = null

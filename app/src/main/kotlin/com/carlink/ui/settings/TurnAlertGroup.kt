@@ -149,30 +149,45 @@ private fun ColorRow(
     SettingRow(title = "Inlay color", subtitle = cfg.color.label, icon = Icons.Default.Palette) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             InlayColor.entries.forEach { c ->
-                Swatch(c, selected = c == cfg.color) {
-                    logWarn("[UI_ACTION] Turn alert: color -> ${c.code}", tag = "UI")
-                    store.setColor(c)
-                }
+                Swatch(
+                    argb = c.argb,
+                    label = c.label,
+                    selected = c == cfg.color,
+                    onClick = {
+                        logWarn("[UI_ACTION] Turn alert: color -> ${c.code}", tag = "UI")
+                        store.setColor(c)
+                    },
+                )
             }
         }
     }
 }
 
+/**
+ * A round color choice, also used by Settings › Cluster › Lane guidance tests. The ring sits outside
+ * the color with a gap, so it shows around white too; a hairline edge keeps white visible on a
+ * light surface.
+ */
 @Composable
-private fun Swatch(
-    color: InlayColor,
+internal fun Swatch(
+    argb: Int,
+    label: String,
     selected: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val colors = MaterialTheme.colorScheme
     Box(
         modifier =
-            Modifier
+            modifier
                 .size(48.dp)
-                .clip(CircleShape)
-                .background(Color(color.argb))
-                .border(width = 3.dp, color = if (selected) Color.White else Color.Transparent, shape = CircleShape)
                 .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
-                .semantics { contentDescription = color.label },
+                .semantics { contentDescription = label }
+                .border(width = 3.dp, color = if (selected) colors.onSurface else Color.Transparent, shape = CircleShape)
+                .padding(6.dp)
+                .clip(CircleShape)
+                .background(Color(argb))
+                .border(width = 1.dp, color = colors.outlineVariant, shape = CircleShape),
     )
 }
 

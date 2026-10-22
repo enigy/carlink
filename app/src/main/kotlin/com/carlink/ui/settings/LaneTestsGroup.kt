@@ -2,10 +2,12 @@ package com.carlink.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.GridOn
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneIphone
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Straighten
@@ -104,9 +106,37 @@ private fun LaneTestRows(
             },
         )
         GroupDivider()
+        LaneColorRow(tests, store)
+        GroupDivider()
         CalibrationRows(tests, store)
     }
 }
+
+/** The color of the lanes to be in, in the turn icon and the lane strip: white or the turn alert's palette. */
+@Composable
+private fun LaneColorRow(
+    tests: LaneTestConfig,
+    store: LaneTestStore,
+) {
+    val choices = listOf<InlayColor?>(null) + InlayColor.entries
+    SettingRow(title = "Lanes to be in", subtitle = tests.laneColor?.label ?: "White", icon = Icons.Default.Palette) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            choices.forEach { c ->
+                Swatch(
+                    argb = c?.argb ?: WHITE_ARGB,
+                    label = c?.label ?: "White",
+                    selected = c == tests.laneColor,
+                    onClick = {
+                        logWarn("[UI_ACTION] Lane tests: lane color -> ${c?.code ?: "white"}", tag = "UI")
+                        store.setLaneColor(c)
+                    },
+                )
+            }
+        }
+    }
+}
+
+private const val WHITE_ARGB = 0xFFFFFFFF.toInt()
 
 @Composable
 private fun CalibrationRows(

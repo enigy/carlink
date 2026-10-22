@@ -47,7 +47,7 @@ object ClusterStep {
                     }
                     tests.strip && lanes.isNotEmpty() -> {
                         addLanes(builder, lanes)
-                        builder.setLanesImage(LaneIconComposer.lanesImage(lanes))
+                        builder.setLanesImage(LaneIconComposer.lanesImage(lanes, tests.laneArgb))
                     }
                 }
                 builder.build()

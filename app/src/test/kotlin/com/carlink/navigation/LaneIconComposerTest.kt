@@ -1,14 +1,17 @@
 package com.carlink.navigation
 
 import android.content.Context
+import android.graphics.Color
 import androidx.car.app.model.CarIcon
 import androidx.car.app.navigation.model.Maneuver
 import androidx.core.graphics.drawable.IconCompat
 import androidx.test.core.app.ApplicationProvider
 import com.carlink.R
+import com.carlink.ui.settings.InlayColor
 import com.carlink.ui.settings.LaneIconMode
 import com.carlink.ui.settings.LaneTestConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -83,11 +86,19 @@ class LaneIconComposerTest {
     }
 
     @Test
-    fun theLaneStripIsOneCellPerLane() {
-        // Only as wide as the lanes need, so GM scales two lanes as large as six.
-        val three = LaneIconComposer.lanesImage(lanes).icon!!
-        assertEquals(360 to 160, three.bitmap!!.width to three.bitmap!!.height)
-        val two = LaneIconComposer.lanesImage(listOf(LaneHint(0, true), LaneHint(90, false))).icon!!
-        assertEquals(240 to 160, two.bitmap!!.width to two.bitmap!!.height)
+    fun theLaneStripIsAlwaysSixToOne() {
+        // GM's lane slot is about 6:1 whatever the lane count, so the lanes split the full width.
+        val three = LaneIconComposer.lanesImage(lanes, Color.WHITE).icon!!
+        assertEquals(960 to 160, three.bitmap!!.width to three.bitmap!!.height)
+        val two = LaneIconComposer.lanesImage(listOf(LaneHint(0, true), LaneHint(90, false)), Color.WHITE).icon!!
+        assertEquals(960 to 160, two.bitmap!!.width to two.bitmap!!.height)
+    }
+
+    @Test
+    fun aNewLaneColorDrawsANewStrip() {
+        val white = LaneIconComposer.lanesImage(lanes, Color.WHITE)
+        val amber = LaneIconComposer.lanesImage(lanes, InlayColor.AMBER.argb)
+        assertNotSame(white, amber)
+        assertSame(amber, LaneIconComposer.lanesImage(lanes, InlayColor.AMBER.argb))
     }
 }
