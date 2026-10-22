@@ -104,6 +104,8 @@ internal fun rememberSettingsLiveState(
                 )
             live.driveLog = DriveLog.recording
             live.driveLogFile = DriveLog.currentFile
+            // Directions are per driver: an iPhone connecting while Settings is open can change them.
+            live.clusterOn = ClusterNavigation.isEnabled(context)
             delay(POLL_MS)
         }
     }

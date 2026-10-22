@@ -90,8 +90,14 @@ internal fun ClusterPane(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val driver by remember { DriverProfiles.flow(context) }.collectAsState()
     Column(modifier = modifier.widthIn(max = PANE_MAX_WIDTH), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         PaneHeader(title = "Cluster")
+        Text(
+            DriverProfiles.describe(driver, live.phone.btMac),
+            style = SettingsStyle.RowSubtitle,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         SettingsGroup {
             SwitchRow(
                 title = "Directions on cluster",

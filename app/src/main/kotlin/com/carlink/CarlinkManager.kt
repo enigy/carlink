@@ -66,7 +66,9 @@ import com.carlink.ui.settings.AutoCallPath
 import com.carlink.ui.settings.CallAudioStore
 import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
+import com.carlink.ui.settings.DriverProfiles
 import com.carlink.ui.settings.LaneGuidanceStore
+import com.carlink.ui.settings.TurnAlertStore
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
@@ -2610,6 +2612,23 @@ class CarlinkManager(
     // ==================== Metadata ====================
 
     /**
+     * Per-driver settings ([DriverProfiles]): the iPhone that just identified itself becomes the
+     * active driver, and Turn alert, Lane guidance and Directions on cluster switch to its settings.
+     * Nothing changes when it is the same iPhone as last time. "Ask iPhone for lanes" was already
+     * sent with this connection's subscribe; a change of driver applies it from the next one.
+     */
+    private fun applyDriverProfile(
+        mac: String,
+        name: String,
+    ) {
+        if (!DriverProfiles.onPhone(context, mac, name)) return
+        TurnAlertStore.get(context).reload(context)
+        LaneGuidanceStore.get(context).reload(context)
+        ClusterNavigation.applyComponentState(context)
+        logInfo("[PROFILE] driver settings switched to $mac: directions=${ClusterNavigation.isEnabled(context)}", tag = Logger.Tags.PHONE)
+    }
+
+    /**
      * `CT_PHONE_IDENT` — the connected phone's own description of itself.
      *
      * Both fields earn their place: `name` is what the user set in Settings > General > About > Name,
@@ -2633,6 +2652,7 @@ class CarlinkManager(
         connectedPhoneMac = mac
         _connectedBtMac = mac
         if (name.isNotEmpty()) phoneNames[mac] = name
+        applyDriverProfile(mac, name)
 
         // Remember it. This is the ONLY source of a device name anywhere in the system — the box's
         // link-key record has no room for one — so without this the list reverts to bare hex after

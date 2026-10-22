@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
+import com.carlink.ui.settings.DriverProfiles
 
 /**
  * The Cluster Navigation switch (Carlink3). Carlink2 kept this in its AdapterConfigPreference; OCBM's
@@ -19,7 +20,7 @@ import com.carlink.logging.logWarn
  * binding chain when on.
  */
 object ClusterNavigation {
-    private const val PREFS = "carlink_cluster_nav"
+    internal const val PREFS = "carlink_cluster_nav"
     private const val KEY_ENABLED = "enabled"
     private const val DEFAULT_ENABLED = true
 
@@ -32,14 +33,13 @@ object ClusterNavigation {
      */
     const val MIN_CAR_API_LEVEL_KEY = "androidx.car.app.minCarApiLevel"
 
-    fun isEnabled(context: Context): Boolean = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, DEFAULT_ENABLED)
+    fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, DEFAULT_ENABLED)
 
     fun setEnabled(
         context: Context,
         enabled: Boolean,
     ) {
-        context.applicationContext
-            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs(context)
             .edit()
             .putBoolean(KEY_ENABLED, enabled)
             .apply()
@@ -56,6 +56,9 @@ object ClusterNavigation {
         val meta = app.packageManager.getApplicationInfo(app.packageName, PackageManager.GET_META_DATA).metaData
         return if (meta != null && meta.containsKey(MIN_CAR_API_LEVEL_KEY)) meta.getInt(MIN_CAR_API_LEVEL_KEY) else null
     }
+
+    /** The active driver's file ([DriverProfiles]): directions are a per-driver choice, on by default. */
+    private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(DriverProfiles.fileName(context, PREFS), Context.MODE_PRIVATE)
 
     /** Mirror the preference onto the CarAppService component so the host only sees it when on. */
     fun applyComponentState(context: Context) {

@@ -1,6 +1,7 @@
 package com.carlink.ui.settings
 
 import android.content.Context
+import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -84,24 +85,23 @@ data class TurnAlertConfig(
     val solidLast: Boolean = true,
 )
 
-/** Durable [TurnAlertConfig]; read by the cluster session ([com.carlink.navigation.TurnAlert]). */
+/**
+ * Durable [TurnAlertConfig]; read by the cluster session ([com.carlink.navigation.TurnAlert]). Kept
+ * per driver ([DriverProfiles]): [reload] switches to the active driver's file.
+ */
 class TurnAlertStore private constructor(
     context: Context,
 ) {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    private val state =
-        MutableStateFlow(
-            TurnAlertConfig(
-                enabled = prefs.getBoolean(KEY_ENABLED, false),
-                timing = AlertTiming.fromCode(prefs.getString(KEY_TIMING, null)),
-                speed = FlashSpeed.fromCode(prefs.getString(KEY_SPEED, null)),
-                color = InlayColor.fromCode(prefs.getString(KEY_COLOR, null)),
-                style = AlertStyle.fromCode(prefs.getString(KEY_STYLE, null)),
-                solidLast = prefs.getBoolean(KEY_SOLID_LAST, true),
-            ),
-        )
+    @Volatile private var prefs = open(context)
+    private val state = MutableStateFlow(read(prefs))
 
     val flow: StateFlow<TurnAlertConfig> = state.asStateFlow()
+
+    /** The active driver changed: read their settings. */
+    fun reload(context: Context) {
+        prefs = open(context)
+        state.value = read(prefs)
+    }
 
     val current: TurnAlertConfig get() = state.value
 
@@ -130,9 +130,22 @@ class TurnAlertStore private constructor(
         state.value = c
     }
 
+    private fun open(context: Context): SharedPreferences = context.applicationContext.getSharedPreferences(DriverProfiles.fileName(context, PREFS_NAME), Context.MODE_PRIVATE)
+
+    private fun read(p: SharedPreferences): TurnAlertConfig =
+        TurnAlertConfig(
+            enabled = p.getBoolean(KEY_ENABLED, false),
+            timing = AlertTiming.fromCode(p.getString(KEY_TIMING, null)),
+            speed = FlashSpeed.fromCode(p.getString(KEY_SPEED, null)),
+            color = InlayColor.fromCode(p.getString(KEY_COLOR, null)),
+            style = AlertStyle.fromCode(p.getString(KEY_STYLE, null)),
+            solidLast = p.getBoolean(KEY_SOLID_LAST, true),
+        )
+
     companion object {
-        // PERSISTENCE CONTRACT: renaming any of these orphans the stored choice.
-        private const val PREFS_NAME = "carlink_turn_alert"
+        // PERSISTENCE CONTRACT: renaming any of these orphans the stored choice. Profiles add
+        // "@<mac>" to the file name ([DriverProfiles]).
+        internal const val PREFS_NAME = "carlink_turn_alert"
         private const val KEY_ENABLED = "enabled"
         private const val KEY_TIMING = "timing"
         private const val KEY_SPEED = "speed"

@@ -13,8 +13,8 @@ class LaneGuidanceStatusTest {
     ) = laneGuidanceStatus(cfg, asked, seen) { "8:14" }
 
     @Test
-    fun offByDefault() {
-        assertEquals("Lanes are not asked for, so the iPhone sends none.", status(LaneGuidanceConfig()))
+    fun offWhenNotAsked() {
+        assertEquals("Lanes are not asked for, so the iPhone sends none.", status(LaneGuidanceConfig(ask = false)))
     }
 
     @Test
@@ -42,7 +42,8 @@ class LaneGuidanceStatusTest {
     @Test
     fun theLaneColorIsNotASwitch() {
         // Picking a color alone does not turn lane guidance on for the Cluster summary.
-        assertEquals(false, LaneGuidanceConfig(laneColor = InlayColor.AMBER).anyOn)
+        assertEquals(false, LaneGuidanceConfig(ask = false, strip = false, laneColor = InlayColor.AMBER).anyOn)
+        assertEquals(true, LaneGuidanceConfig().anyOn)
         assertEquals(InlayColor.AMBER.argb, LaneGuidanceConfig(laneColor = InlayColor.AMBER).laneArgb)
         assertEquals(0xFFFFFFFF.toInt(), LaneGuidanceConfig().laneArgb)
     }

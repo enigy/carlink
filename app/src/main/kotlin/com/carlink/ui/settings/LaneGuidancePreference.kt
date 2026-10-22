@@ -1,6 +1,7 @@
 package com.carlink.ui.settings
 
 import android.content.Context
+import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,7 +23,8 @@ enum class LaneIconMode(
 
 /**
  * Settings › Cluster › Lane guidance (design "Lane guidance tests", 2026-10-21; a normal setting
- * since 2026-10-22). All off by default.
+ * since 2026-10-22). Kept per driver ([DriverProfiles]); factory defaults ask the iPhone for lanes
+ * and show the lane strip, white, with no lanes in the turn icon.
  *
  * [ask] is the only one that reaches the adapter: it widens the metadata Carlink3 pushes on the next
  * `CT_SUBSCRIBE` so the iPhone is asked for iAP2 lane guidance. The rest change only what Carlink3
@@ -31,9 +33,9 @@ enum class LaneIconMode(
  * iPhone rejected the identification that carried it (0 = never).
  */
 data class LaneGuidanceConfig(
-    val ask: Boolean = false,
+    val ask: Boolean = true,
     val icon: LaneIconMode = LaneIconMode.OFF,
-    val strip: Boolean = false,
+    val strip: Boolean = true,
     val laneColor: InlayColor? = null,
     val refusedAtMs: Long = 0L,
 ) {
@@ -52,19 +54,16 @@ data class LaneGuidanceConfig(
 class LaneGuidanceStore private constructor(
     context: Context,
 ) {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    private val state =
-        MutableStateFlow(
-            LaneGuidanceConfig(
-                ask = prefs.getBoolean(KEY_ASK, false),
-                icon = LaneIconMode.fromCode(prefs.getString(KEY_ICON, null)),
-                strip = prefs.getBoolean(KEY_STRIP, false),
-                laneColor = prefs.getString(KEY_LANE_COLOR, null).let { code -> InlayColor.entries.firstOrNull { it.code == code } },
-                refusedAtMs = prefs.getLong(KEY_REFUSED_AT, 0L),
-            ),
-        )
+    @Volatile private var prefs = open(context)
+    private val state = MutableStateFlow(read(prefs))
 
     val flow: StateFlow<LaneGuidanceConfig> = state.asStateFlow()
+
+    /** The active driver changed ([DriverProfiles]): read their settings. */
+    fun reload(context: Context) {
+        prefs = open(context)
+        state.value = read(prefs)
+    }
 
     val current: LaneGuidanceConfig get() = state.value
 
@@ -93,10 +92,21 @@ class LaneGuidanceStore private constructor(
         state.value = c
     }
 
+    private fun open(context: Context): SharedPreferences = context.applicationContext.getSharedPreferences(DriverProfiles.fileName(context, PREFS_NAME), Context.MODE_PRIVATE)
+
+    private fun read(p: SharedPreferences): LaneGuidanceConfig =
+        LaneGuidanceConfig(
+            ask = p.getBoolean(KEY_ASK, true),
+            icon = LaneIconMode.fromCode(p.getString(KEY_ICON, null)),
+            strip = p.getBoolean(KEY_STRIP, true),
+            laneColor = p.getString(KEY_LANE_COLOR, null).let { code -> InlayColor.entries.firstOrNull { it.code == code } },
+            refusedAtMs = p.getLong(KEY_REFUSED_AT, 0L),
+        )
+
     companion object {
         // PERSISTENCE CONTRACT: renaming any of these orphans the stored choice. The file keeps its
-        // name from when these were the lane guidance tests.
-        private const val PREFS_NAME = "carlink_lane_tests"
+        // name from when these were the lane guidance tests; profiles add "@<mac>" ([DriverProfiles]).
+        internal const val PREFS_NAME = "carlink_lane_tests"
         private const val KEY_ASK = "ask"
         private const val KEY_ICON = "icon"
         private const val KEY_STRIP = "strip"
