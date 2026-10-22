@@ -379,6 +379,9 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         application.unregisterActivityLifecycleCallbacks(carAppActivityWindow)
+        // Any way out (Back, the system finishing us), not only Close app: the hidden cluster task
+        // must not outlive this one in front of the launcher ([closeApp]).
+        if (isFinishing) finishClusterTask()
 
         // Unregister USB detachment receiver
         unregisterUsbDetachReceiver()
@@ -895,17 +898,33 @@ class MainActivity : ComponentActivity() {
             override fun onActivityDestroyed(activity: Activity) = Unit
         }
 
-    /** Tear the binding chain down (finish CarAppActivity's task) and relaunch it after 2 s. */
-    fun restartClusterBinding() {
-        logWarn("[CLUSTER] restartClusterBinding() — tearing down and re-establishing binding chain", tag = "MAIN")
+    /**
+     * Settings › Close app: finish the hidden CarAppActivity's task as well as this one. finishAffinity()
+     * alone ends only this task; the CarAppActivity task has its own affinity and a translucent theme,
+     * so it was left in front of the launcher: the home screen showed through it, frozen, and every tap
+     * landed on it until Home raised the launcher (reported 2026-10-22).
+     */
+    fun closeApp() {
+        finishClusterTask()
+        finishAffinity()
+    }
+
+    /** Finish CarAppActivity's task, if there is one. */
+    private fun finishClusterTask() {
         val am = getSystemService(ActivityManager::class.java)
         for (appTask in am.appTasks) {
             if (appTask.taskInfo?.baseActivity?.className == CAR_APP_ACTIVITY) {
                 logInfo("[CLUSTER] Finishing CarAppActivity task (taskId=${appTask.taskInfo?.taskId})", tag = "MAIN")
-                appTask.finishAndRemoveTask()
+                runCatching { appTask.finishAndRemoveTask() }
                 break
             }
         }
+    }
+
+    /** Tear the binding chain down (finish CarAppActivity's task) and relaunch it after 2 s. */
+    fun restartClusterBinding() {
+        logWarn("[CLUSTER] restartClusterBinding() — tearing down and re-establishing binding chain", tag = "MAIN")
+        finishClusterTask()
         // The task is gone, so any prior session is dead; clear the flag even if the host never
         // fired the session's destroy callback, or launchCarAppActivity() would keep deferring.
         ClusterBindingState.sessionAlive = false

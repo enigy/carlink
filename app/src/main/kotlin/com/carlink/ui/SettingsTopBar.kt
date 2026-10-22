@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.carlink.MainActivity
 import com.carlink.ui.components.CarlinkDialog
 import com.carlink.ui.components.DialogWeight
 import com.carlink.ui.components.OnSettingsHidden
@@ -121,7 +122,8 @@ private fun CloseAppButton(onCloseApp: suspend () -> Unit) {
                     try {
                         onCloseApp()
                     } finally {
-                        activity?.finishAffinity()
+                        // Also ends the hidden cluster task, which finishAffinity() alone left over the launcher.
+                        (activity as? MainActivity)?.closeApp() ?: activity?.finishAffinity()
                     }
                 }
             },
