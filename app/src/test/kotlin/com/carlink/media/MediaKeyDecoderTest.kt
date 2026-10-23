@@ -53,6 +53,15 @@ class MediaKeyDecoderTest {
     }
 
     @Test
+    fun gmSteeringWheelSkipKeys() {
+        // What GM's skip buttons send when GM has not selected this app (drive log 2026-10-23).
+        assertEquals(Decoded.Fire(MediaKeyAction.NEXT), down(KeyEvent.KEYCODE_F8))
+        assertEquals(Decoded.Ignore, up(KeyEvent.KEYCODE_F8))
+        assertEquals(Decoded.Fire(MediaKeyAction.PREVIOUS), down(KeyEvent.KEYCODE_F7))
+        assertEquals(Decoded.Ignore, down(KeyEvent.KEYCODE_F7, repeat = 1))
+    }
+
+    @Test
     fun voiceKeysAndUnknownKeys() {
         assertEquals(Decoded.Fire(MediaKeyAction.VOICE_ASSIST), down(KeyEvent.KEYCODE_VOICE_ASSIST))
         assertEquals(Decoded.Unhandled, down(KeyEvent.KEYCODE_VOLUME_UP))

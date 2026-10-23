@@ -28,6 +28,10 @@ enum class MediaKeyAction {
  *
  * Rules:
  * - Transport keys fire on the first ACTION_DOWN only; key repeats and releases are consumed silently.
+ * - GM's steering-wheel skip buttons send F7 (back) and F8 (next), not MEDIA_PREVIOUS/NEXT. GM's own
+ *   media service turns them into a skip command for the source it has selected; when that is not
+ *   this app they arrive here as raw keys, from "android" (drive log 2026-10-23: five presses, keys
+ *   137 and 138, and Media3's default did nothing with them).
  * - HEADSETHOOK is a hold: DOWN arms it, a long-press (FLAG_LONG_PRESS or a repeat) fires
  *   [MediaKeyAction.VOICE_ASSIST] exactly once, and a release that was NOT long fires
  *   [MediaKeyAction.HEADSET_HOOK]. Android's own `MediaSessionService` uses the same shape for
@@ -62,8 +66,8 @@ class MediaKeyDecoder {
                 KeyEvent.KEYCODE_MEDIA_PLAY -> MediaKeyAction.PLAY
                 KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP -> MediaKeyAction.PAUSE
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> MediaKeyAction.PLAY_PAUSE
-                KeyEvent.KEYCODE_MEDIA_NEXT -> MediaKeyAction.NEXT
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> MediaKeyAction.PREVIOUS
+                KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_F8 -> MediaKeyAction.NEXT
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_F7 -> MediaKeyAction.PREVIOUS
                 KeyEvent.KEYCODE_VOICE_ASSIST, KeyEvent.KEYCODE_ASSIST, KeyEvent.KEYCODE_SEARCH -> MediaKeyAction.VOICE_ASSIST
                 else -> return Decoded.Unhandled
             }
@@ -128,5 +132,39 @@ class MediaKeyDecoder {
                 }
             return "[MEDIA_SESSION] media key $keyCode $press from $from $outcome"
         }
+    }
+}
+
+/**
+ * One skip per press of GM's steering-wheel buttons. A press reaches Carlink3 one of two ways: as a
+ * skip command from GM's media service when GM has Carlink3 selected, or as a raw F7/F8 key when it
+ * has not (2026-10-23). Should one press ever arrive both ways, the second, within [windowMs] of the
+ * first, is dropped. Skips arriving the same way are never dropped, so a quick double press still
+ * skips twice. Main thread only, like the session callbacks that feed it.
+ */
+class SkipGate(
+    private val windowMs: Long,
+) {
+    enum class Path { KEY, COMMAND }
+
+    private var last: Path? = null
+    private var lastNext = false
+    private var lastAtMs = 0L
+
+    /** True when this skip should reach the phone; [next] is its direction, [nowMs] a monotonic clock. */
+    fun allow(
+        next: Boolean,
+        path: Path,
+        nowMs: Long,
+    ): Boolean {
+        val echo = last != null && path != last && next == lastNext && nowMs - lastAtMs < windowMs
+        if (echo) {
+            last = null
+            return false
+        }
+        last = path
+        lastNext = next
+        lastAtMs = nowMs
+        return true
     }
 }

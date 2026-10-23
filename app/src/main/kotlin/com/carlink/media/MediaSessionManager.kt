@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import androidx.core.content.IntentCompat
@@ -39,6 +40,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val TAG = "CARLINK_MEDIA"
+
+/** A skip arriving the other way within this long of the last one is the same press ([SkipGate]). */
+private const val SKIP_ECHO_MS = 500L
 
 /**
  * Cluster / system consumers that read album-art `content://` URIs from outside the
@@ -743,7 +747,8 @@ class MediaSessionManager(
              * button (keycodes 137/138) reaches `GMMediaKeyService` which may dispatch
              * `transportControls.playFromMediaId(...)` — but only when the active source
              * is classified as `DAB|AM|FM|XM` (verified in
-             * GMAudioServer.GMMediaKeyService.handleSWCKeys). Carlink registers as a
+             * GMAudioServer.GMMediaKeyService.handleSWCKeys). For this app the same keys
+             * arrive as raw F7/F8 media buttons ([MediaKeyDecoder]). Carlink registers as a
              * projection bridge, not a radio source, so the call is unlikely to land
              * here. If it ever does (misclassification), Media3 routes it to this
              * callback. We log and reject — returning an empty list short-circuits the
@@ -815,11 +820,23 @@ class MediaSessionManager(
             MediaKeyAction.PLAY -> cb.onPlay()
             MediaKeyAction.PAUSE -> cb.onPause()
             MediaKeyAction.PLAY_PAUSE -> cb.onPlayPause()
-            MediaKeyAction.NEXT -> cb.onSkipToNext()
-            MediaKeyAction.PREVIOUS -> cb.onSkipToPrevious()
+            MediaKeyAction.NEXT -> if (skipAllowed(next = true, SkipGate.Path.KEY)) cb.onSkipToNext()
+            MediaKeyAction.PREVIOUS -> if (skipAllowed(next = false, SkipGate.Path.KEY)) cb.onSkipToPrevious()
             MediaKeyAction.HEADSET_HOOK -> cb.onHeadsetHook()
             MediaKeyAction.VOICE_ASSIST -> cb.onVoiceAssist()
         }
+    }
+
+    private val skipGate = SkipGate(SKIP_ECHO_MS)
+
+    /** [SkipGate], with a drive-log line when it drops a press that already arrived the other way. */
+    private fun skipAllowed(
+        next: Boolean,
+        path: SkipGate.Path,
+    ): Boolean {
+        val ok = skipGate.allow(next, path, SystemClock.elapsedRealtime())
+        if (!ok) log("[MEDIA_SESSION] skip ${if (next) "next" else "back"} by ${path.name.lowercase()} dropped: same press as the skip just sent")
+        return ok
     }
 
     private val playerCallback =
@@ -841,12 +858,12 @@ class MediaSessionManager(
 
             override fun onSkipToNext() {
                 log("[MEDIA_SESSION] onSkipToNext received")
-                sharedControlCallback?.onSkipToNext()
+                if (skipAllowed(next = true, SkipGate.Path.COMMAND)) sharedControlCallback?.onSkipToNext()
             }
 
             override fun onSkipToPrevious() {
                 log("[MEDIA_SESSION] onSkipToPrevious received")
-                sharedControlCallback?.onSkipToPrevious()
+                if (skipAllowed(next = false, SkipGate.Path.COMMAND)) sharedControlCallback?.onSkipToPrevious()
             }
         }
 
