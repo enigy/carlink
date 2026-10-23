@@ -97,4 +97,36 @@ class MediaKeyDecoder {
             else -> return Decoded.Ignore
         }
     }
+
+    companion object {
+        /**
+         * The drive-log line for a media button the session received, or null for auto-repeats past
+         * the first, so a held key is one "held" line rather than one per repeat. The halves the
+         * decoder ignores are logged too: a steering-wheel skip that did nothing on 2026-10-23 left no
+         * trace, so "GM never sent it" could not be told from "it arrived and was dropped".
+         */
+        fun line(
+            keyCode: Int,
+            action: Int,
+            repeatCount: Int,
+            from: String,
+            decoded: Decoded,
+        ): String? {
+            if (repeatCount > 1) return null
+            val press =
+                when {
+                    action == KeyEvent.ACTION_UP -> "up"
+                    action != KeyEvent.ACTION_DOWN -> "action $action"
+                    repeatCount == 0 -> "down"
+                    else -> "held"
+                }
+            val outcome =
+                when (decoded) {
+                    is Decoded.Fire -> "-> ${decoded.action}"
+                    Decoded.Ignore -> "(nothing to do)"
+                    Decoded.Unhandled -> "(not ours: Media3's default)"
+                }
+            return "[MEDIA_SESSION] media key $keyCode $press from $from $outcome"
+        }
+    }
 }

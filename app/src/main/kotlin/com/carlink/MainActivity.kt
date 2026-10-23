@@ -363,6 +363,9 @@ class MainActivity : ComponentActivity() {
      * intercepted by `CarInputService` and `KEYCODE_ASSIST` by the window manager, so on a head unit
      * those arrive only through [com.carlink.voice.CarlinkVoiceInteractionService] once the user has
      * selected this app as the digital assistant. Cheap and harmless where it never fires.
+     *
+     * Media keys are only logged here and passed on; the platform hands an untaken one to the media
+     * session. Seeing one here means the key reached the screen rather than GM's key service.
      */
     override fun onKeyDown(
         keyCode: Int,
@@ -372,6 +375,9 @@ class MainActivity : ComponentActivity() {
             val sent = carlinkManager?.requestSiri() ?: false
             logInfo("[KEY] voice key $keyCode -> Siri ${if (sent) "sent" else "dropped"}", tag = "MAIN")
             return true
+        }
+        if (KeyEvent.isMediaSessionKey(keyCode) && event.repeatCount == 0) {
+            logInfo("[KEY] media key $keyCode reached the screen, passing it on", tag = "MAIN")
         }
         return super.onKeyDown(keyCode, event)
     }

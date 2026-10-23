@@ -72,6 +72,21 @@ private val URI_GRANT_CONSUMERS =
         "android",
     )
 
+/** GM's media stack and AAOS's own, whose connections are logged to the drive log (Carlink2 [187]). */
+private fun isGmAaosObserver(packageName: String): Boolean =
+    packageName.startsWith("com.gm.") || packageName.startsWith("com.android.car.") || packageName == "com.android.systemui"
+
+/** A player command as the drive log names it. */
+private fun playerCommandName(command: Int): String =
+    when (command) {
+        Player.COMMAND_PLAY_PAUSE -> "play/pause"
+        Player.COMMAND_PREPARE -> "prepare"
+        Player.COMMAND_STOP -> "stop"
+        Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> "skip next"
+        Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> "skip back"
+        else -> "command $command"
+    }
+
 /**
  * MediaSessionManager — Media3-backed MediaSession lifecycle + metadata/state mirror
  * for AAOS media source integration.
@@ -629,11 +644,7 @@ class MediaSessionManager(
                 // "carlink doesn't appear in source X" or steering-wheel skip reports — the
                 // observer either binds (visible here) or doesn't (and the explanation is
                 // firmware-side, e.g. GMAudioServer.MediaSessionUtils.SOURCES_PACKAGE allowlist).
-                val isGmAaosObserver =
-                    packageName.startsWith("com.gm.") ||
-                        packageName.startsWith("com.android.car.") ||
-                        packageName == "com.android.systemui"
-                if (isGmAaosObserver) {
+                if (isGmAaosObserver(packageName)) {
                     log(
                         "[MEDIA_SESSION] GM/AAOS observer bound: package=$packageName uid=$uid " +
                             "trusted=$isTrusted ifaceVer=${controller.interfaceVersion}",
@@ -665,6 +676,11 @@ class MediaSessionManager(
                 session: MediaSession,
                 controller: MediaSession.ControllerInfo,
             ) {
+                // The other half of "observer bound": a GM component that let go of this session can
+                // no longer send it a skip (2026-10-23).
+                if (isGmAaosObserver(controller.packageName)) {
+                    log("[MEDIA_SESSION] GM/AAOS observer gone: package=${controller.packageName} uid=${controller.uid}")
+                }
                 if (BuildConfig.DEBUG) {
                     Log.d(
                         TAG,
@@ -673,6 +689,20 @@ class MediaSessionManager(
                     )
                 }
                 super.onDisconnected(session, controller)
+            }
+
+            /**
+             * Who asked for what, before the player acts on it. GM's steering-wheel skip arrives here
+             * from com.gm.rhmi when it works (Carlink2, 2026-10-16), so a skip that does nothing shows
+             * up as no line at all, or as one from another sender.
+             */
+            override fun onPlayerCommandRequest(
+                session: MediaSession,
+                controller: MediaSession.ControllerInfo,
+                playerCommand: Int,
+            ): Int {
+                log("[MEDIA_SESSION] ${playerCommandName(playerCommand)} from ${controller.packageName}")
+                return super.onPlayerCommandRequest(session, controller, playerCommand)
             }
 
             /**
@@ -690,14 +720,17 @@ class MediaSessionManager(
                 controller: MediaSession.ControllerInfo,
                 intent: Intent,
             ): Boolean {
-                val ev =
-                    IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-                        ?: return super.onMediaButtonEvent(session, controller, intent)
-                return when (val d = keyDecoder.decode(ev.keyCode, ev.action, ev.repeatCount, ev.isLongPress)) {
+                val ev = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+                if (ev == null) {
+                    log("[MEDIA_SESSION] media button without a key from ${controller.packageName}")
+                    return super.onMediaButtonEvent(session, controller, intent)
+                }
+                val d = keyDecoder.decode(ev.keyCode, ev.action, ev.repeatCount, ev.isLongPress)
+                MediaKeyDecoder.line(ev.keyCode, ev.action, ev.repeatCount, controller.packageName, d)?.let { log(it) }
+                return when (d) {
                     MediaKeyDecoder.Decoded.Unhandled -> super.onMediaButtonEvent(session, controller, intent)
                     MediaKeyDecoder.Decoded.Ignore -> true
                     is MediaKeyDecoder.Decoded.Fire -> {
-                        log("[MEDIA_SESSION] media key ${ev.keyCode} from ${controller.packageName} -> ${d.action}")
                         dispatchKey(d.action)
                         true
                     }

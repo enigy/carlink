@@ -3,6 +3,7 @@ package com.carlink.media
 import android.view.KeyEvent
 import com.carlink.media.MediaKeyDecoder.Decoded
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class MediaKeyDecoderTest {
@@ -56,5 +57,28 @@ class MediaKeyDecoderTest {
         assertEquals(Decoded.Fire(MediaKeyAction.VOICE_ASSIST), down(KeyEvent.KEYCODE_VOICE_ASSIST))
         assertEquals(Decoded.Unhandled, down(KeyEvent.KEYCODE_VOLUME_UP))
         assertEquals(Decoded.Unhandled, up(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD))
+    }
+
+    @Test
+    fun everyPressIsLoggedWithItsSenderButARepeatOnlyOnce() {
+        val rhmi = "com.gm.rhmi"
+        val next = KeyEvent.KEYCODE_MEDIA_NEXT
+        assertEquals(
+            "[MEDIA_SESSION] media key 87 down from com.gm.rhmi -> NEXT",
+            MediaKeyDecoder.line(next, KeyEvent.ACTION_DOWN, 0, rhmi, Decoded.Fire(MediaKeyAction.NEXT)),
+        )
+        assertEquals(
+            "[MEDIA_SESSION] media key 87 up from com.gm.rhmi (nothing to do)",
+            MediaKeyDecoder.line(next, KeyEvent.ACTION_UP, 0, rhmi, Decoded.Ignore),
+        )
+        assertEquals(
+            "[MEDIA_SESSION] media key 87 held from com.gm.rhmi (nothing to do)",
+            MediaKeyDecoder.line(next, KeyEvent.ACTION_DOWN, 1, rhmi, Decoded.Ignore),
+        )
+        assertNull(MediaKeyDecoder.line(next, KeyEvent.ACTION_DOWN, 2, rhmi, Decoded.Ignore))
+        assertEquals(
+            "[MEDIA_SESSION] media key 90 down from android (not ours: Media3's default)",
+            MediaKeyDecoder.line(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.ACTION_DOWN, 0, "android", Decoded.Unhandled),
+        )
     }
 }
