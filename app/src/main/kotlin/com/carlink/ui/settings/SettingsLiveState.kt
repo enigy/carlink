@@ -62,6 +62,9 @@ internal class SettingsLiveState(
     var pairWindowOpen by mutableStateOf(false)
     var autoConnect by mutableStateOf(true)
 
+    /** AAOS says the truck is moving: another iPhone's profile, copy and reset wait until parked. */
+    var driving by mutableStateOf(false)
+
     val connectedPhone: ConnectedPhone? get() = SettingsModel.connectedPhone(phone, devices)
 }
 
@@ -94,6 +97,7 @@ internal fun rememberSettingsLiveState(
             live.pairWindowSupported = carlinkManager.pairWindowSupported
             live.pairWindowOpen = carlinkManager.pairWindowOpen
             live.autoConnect = carlinkManager.autoConnectPhones
+            live.driving = carlinkManager.isDriving
             live.box =
                 BoxSnapshot(
                     adapterConnected = connectionState != CarlinkManager.State.DISCONNECTED,

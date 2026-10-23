@@ -72,6 +72,7 @@ import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeDeferredNotice
 import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.settings.DisplayPane
+import com.carlink.ui.settings.DriverProfiles
 import com.carlink.ui.settings.LaneGuidanceStore
 import com.carlink.ui.settings.LocalPaneScroll
 import com.carlink.ui.settings.PaneScroll
@@ -190,13 +191,20 @@ private fun SettingsBody(
     OnSettingsHidden {
         showDeferredNotice = false
         paneOpen = false
+        DriverProfiles.edit(context, null)
     }
+    // Another iPhone's profile is for parked editing: driving puts Settings back on the one in use.
+    LaunchedEffect(panes.live.driving) { if (panes.live.driving) DriverProfiles.edit(context, null) }
     val summaries = categorySummaries(panes, savedMode)
 
     LaunchedEffect(selected) { logInfo("[UI_STATE] Settings category: $selected", tag = "UI") }
     val pick: (SettingsCategory) -> Unit = {
         selected = it
         paneOpen = true
+    }
+    val openProfile: (String) -> Unit = { mac ->
+        DriverProfiles.edit(context, mac)
+        pick(SettingsCategory.CLUSTER)
     }
     val applyMode: (DisplayMode) -> Unit = { mode ->
         val outcome = panes.actions.onDisplayModeSelected(mode)
@@ -208,7 +216,7 @@ private fun SettingsBody(
         if (twoPane) {
             Row(modifier = Modifier.fillMaxSize()) {
                 CategoryList(selected, summaries, onSelect = pick, modifier = Modifier.width((window.widthDp * 0.33f).dp.coerceIn(360.dp, 780.dp)))
-                DetailPane(selected, modifier = Modifier.weight(1f)) { CategoryPane(selected, panes, savedMode, applyMode) }
+                DetailPane(selected, modifier = Modifier.weight(1f)) { CategoryPane(selected, panes, savedMode, applyMode, openProfile) }
             }
         } else if (!paneOpen) {
             CategoryList(selected, summaries, onSelect = pick, modifier = Modifier.fillMaxWidth())
@@ -216,7 +224,7 @@ private fun SettingsBody(
             BackHandler(enabled = visible) { paneOpen = false }
             DetailPane(selected, modifier = Modifier.fillMaxSize()) {
                 BackToCategories(onClick = { paneOpen = false })
-                CategoryPane(selected, panes, savedMode, applyMode)
+                CategoryPane(selected, panes, savedMode, applyMode, openProfile)
             }
         }
         if (showDeferredNotice) DisplayModeDeferredNotice(onDismiss = { showDeferredNotice = false })
@@ -229,9 +237,11 @@ private fun CategoryPane(
     panes: PaneContext,
     savedMode: DisplayMode,
     onApplyMode: (DisplayMode) -> Unit,
+    // Show an iPhone's Cluster and Driving settings (the Phones list's Settings button).
+    onOpenProfile: (mac: String) -> Unit,
 ) {
     when (category) {
-        SettingsCategory.PHONES -> PhonesPane(panes.carlinkManager, panes.live)
+        SettingsCategory.PHONES -> PhonesPane(panes.carlinkManager, panes.live, onOpenProfile = onOpenProfile)
         SettingsCategory.DISPLAY -> DisplayPane(savedMode = savedMode, onApply = onApplyMode)
         SettingsCategory.CALLS -> CallsPane(panes.carlinkManager)
         SettingsCategory.CLUSTER -> ClusterPane(panes.live, onResetCluster = panes.actions.onResetCluster)

@@ -33,16 +33,23 @@ object ClusterNavigation {
      */
     const val MIN_CAR_API_LEVEL_KEY = "androidx.car.app.minCarApiLevel"
 
-    fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, DEFAULT_ENABLED)
+    /** The active driver's choice, or the iPhone [mac]'s (Settings showing another profile while parked). */
+    fun isEnabled(
+        context: Context,
+        mac: String? = null,
+    ): Boolean = prefs(context, mac).getBoolean(KEY_ENABLED, DEFAULT_ENABLED)
 
+    /** For another iPhone [mac], only stored: the cluster follows the active driver. */
     fun setEnabled(
         context: Context,
         enabled: Boolean,
+        mac: String? = null,
     ) {
-        prefs(context)
+        prefs(context, mac)
             .edit()
             .putBoolean(KEY_ENABLED, enabled)
             .apply()
+        if (mac != null) return
         logInfo("[CLUSTER] Cluster navigation ${if (enabled) "enabled" else "disabled"}", tag = Logger.Tags.CLUSTER)
         applyComponentState(context)
     }
@@ -57,8 +64,11 @@ object ClusterNavigation {
         return if (meta != null && meta.containsKey(MIN_CAR_API_LEVEL_KEY)) meta.getInt(MIN_CAR_API_LEVEL_KEY) else null
     }
 
-    /** The active driver's file ([DriverProfiles]): directions are a per-driver choice, on by default. */
-    private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(DriverProfiles.fileName(context, PREFS), Context.MODE_PRIVATE)
+    /** The driver's file ([DriverProfiles]), the active one's unless [mac]: directions are a per-driver choice, on by default. */
+    private fun prefs(
+        context: Context,
+        mac: String? = null,
+    ) = context.applicationContext.getSharedPreferences(DriverProfiles.fileName(context, PREFS, mac), Context.MODE_PRIVATE)
 
     /** Mirror the preference onto the CarAppService component so the host only sees it when on. */
     fun applyComponentState(context: Context) {

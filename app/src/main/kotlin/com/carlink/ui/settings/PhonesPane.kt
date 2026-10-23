@@ -19,12 +19,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -50,9 +52,13 @@ import com.carlink.ui.theme.LocalCarlinkColors
 internal fun PhonesPane(
     carlinkManager: CarlinkManager,
     live: SettingsLiveState,
+    onOpenProfile: (mac: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val view = LocalView.current
+    val context = LocalContext.current
+    val profiles by remember { DriverProfiles.view(context) }.collectAsState()
+    val settingsFor = profileOpener(profiles, live.driving, onOpenProfile)
     var deviceToRemove by remember { mutableStateOf<CarlinkManager.DeviceInfo?>(null) }
     OnSettingsHidden { deviceToRemove = null }
     val connected = live.connectedPhone
@@ -71,11 +77,12 @@ internal fun PhonesPane(
                     carlinkManager.disconnectPhone()
                 },
                 onForget = connected.device?.let { device -> { deviceToRemove = device } },
+                onSettings = connected.device?.btMac?.let(settingsFor),
             )
         } else {
             NoPhoneCard()
         }
-        PhoneList(carlinkManager, live, connected, onRemove = { deviceToRemove = it })
+        PhoneList(carlinkManager, live, connected, onRemove = { deviceToRemove = it }, settingsFor = { settingsFor(it.btMac) })
         if (live.pairWindowSupported) {
             PairPhoneCard(
                 adapterName = carlinkManager.adapterName,
@@ -90,6 +97,7 @@ internal fun PhonesPane(
         deviceToRemove?.let { device ->
             RemoveDeviceDialog(
                 device = device,
+                hasProfile = profiles.all.any { it.mac == device.btMac.lowercase() },
                 onConfirm = {
                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     logWarn("[UI_ACTION] Forget device ${device.btMac} (bonded=${device.bonded})", tag = "UI")
@@ -101,6 +109,25 @@ internal fun PhonesPane(
         }
     }
 }
+
+/**
+ * A phone with its own Cluster and Driving settings gets a Settings button that opens them; another
+ * iPhone's only while parked. Null: no button.
+ */
+private fun profileOpener(
+    profiles: DriverProfiles.View,
+    driving: Boolean,
+    onOpenProfile: (mac: String) -> Unit,
+): (btMac: String) -> (() -> Unit)? =
+    { btMac ->
+        val mac = btMac.lowercase()
+        val usable = profiles.all.any { it.mac == mac } && (!driving || mac == profiles.active?.mac)
+        if (usable) {
+            { onOpenProfile(mac) }
+        } else {
+            null
+        }
+    }
 
 @Composable
 private fun AdapterNameLine(adapterName: String) {
@@ -124,6 +151,7 @@ private fun ConnectedPhoneCard(
     disconnectSupported: Boolean,
     onDisconnect: () -> Unit,
     onForget: (() -> Unit)?,
+    onSettings: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
     Surface(
@@ -149,6 +177,7 @@ private fun ConnectedPhoneCard(
                     Text("Needs adapter firmware support", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
                 }
             }
+            if (onSettings != null) RowAction(label = "Settings", onClick = onSettings)
             if (onForget != null) RowAction(label = "Forget", onClick = onForget, weight = ActionWeight.DANGER_OUTLINE)
         }
     }
@@ -238,17 +267,20 @@ private fun AddPhoneHint(adapterName: String) {
 @Composable
 private fun RemoveDeviceDialog(
     device: CarlinkManager.DeviceInfo,
+    hasProfile: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     CarlinkDialog(
         title = if (device.bonded) "Forget ${device.name}?" else "Remove ${device.name}?",
         text =
-            if (device.bonded) {
-                "The adapter forgets this phone too. Next time it connects, it pairs as a new phone."
-            } else {
-                "The adapter is not paired with this phone, so only this app's history entry is removed."
-            },
+            (
+                if (device.bonded) {
+                    "The adapter forgets this phone too. Next time it connects, it pairs as a new phone."
+                } else {
+                    "The adapter is not paired with this phone, so only this app's history entry is removed."
+                }
+            ) + if (hasProfile) " Its own Cluster and Driving settings are deleted." else "",
         confirmLabel = if (device.bonded) "Forget" else "Remove",
         onConfirm = onConfirm,
         onDismiss = onDismiss,

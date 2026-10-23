@@ -58,7 +58,8 @@ import kotlinx.coroutines.delay
 @Composable
 internal fun TurnAlertGroup(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val store = remember { TurnAlertStore.get(context) }
+    val view by remember { DriverProfiles.view(context) }.collectAsState()
+    val store = remember(view.other, view.revision) { TurnAlertStore.of(context, view) }
     val cfg by store.flow.collectAsState()
     val pane = LocalPaneScroll.current
     val section = remember { StickySection() }

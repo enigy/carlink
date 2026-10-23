@@ -161,11 +161,11 @@ private fun DriveSideChoice() {
     val context = LocalContext.current
     val store = remember { DriveSideStore.get(context) }
     val side by store.flow.collectAsState()
-    val limitStore = remember { CarPlayLimitStore.get(context) }
+    val view by remember { DriverProfiles.view(context) }.collectAsState()
+    val limitStore = remember(view.other, view.revision) { CarPlayLimitStore.of(context, view) }
     val limit by limitStore.flow.collectAsState()
-    val driver by remember { DriverProfiles.flow(context) }.collectAsState()
-    // Per iPhone, like the Cluster settings: say whose it is.
-    val forWhom = driver?.let { "For ${it.name.ifEmpty { "the last iPhone" }}. " }.orEmpty()
+    // Per iPhone, like the Cluster settings (whose is picked there): say whose it is.
+    val forWhom = view.shown?.let { "For ${it.label}${if (view.other != null) ", not in use now" else ""}. " }.orEmpty()
     // One Column, spaced like DisplayPane's, so this emits a single node (ComposeMultipleContentEmitters).
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         SectionLabel("Driving", modifier = Modifier.padding(top = 8.dp))

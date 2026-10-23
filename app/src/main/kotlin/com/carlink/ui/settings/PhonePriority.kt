@@ -44,6 +44,8 @@ internal class PhoneListActions(
     val onMove: (mac: String, delta: Int) -> Unit,
     val onConnect: (CarlinkManager.DeviceInfo) -> Unit,
     val onRemove: (CarlinkManager.DeviceInfo) -> Unit,
+    /** The phone's own Cluster and Driving settings, or null when it has none to show now. */
+    val onSettings: (CarlinkManager.DeviceInfo) -> (() -> Unit)?,
 )
 
 /** The ranked phone list plus, when the box takes phone priority, the auto-connect switch. */
@@ -53,6 +55,7 @@ internal fun PhoneList(
     live: SettingsLiveState,
     connected: ConnectedPhone?,
     onRemove: (CarlinkManager.DeviceInfo) -> Unit,
+    settingsFor: (CarlinkManager.DeviceInfo) -> (() -> Unit)?,
 ) {
     KnownPhones(
         usbInUse = connected != null && !connected.wireless,
@@ -63,6 +66,7 @@ internal fun PhoneList(
                 onMove = { mac, delta -> carlinkManager.movePhone(mac, delta) },
                 onConnect = { carlinkManager.connectPhone(it.btMac) },
                 onRemove = onRemove,
+                onSettings = settingsFor,
             ),
     )
     if (live.policySupported) {
@@ -125,6 +129,7 @@ private fun PhoneRow(
             modifier = Modifier.weight(1f),
         ) {
             if (ranking.enabled) RankControls(device, index, count, live, ranking.phoneConnected, actions)
+            actions.onSettings(device)?.let { RowAction(label = "Settings", onClick = it) }
             RowAction(
                 label = if (device.bonded) "Forget" else "Remove",
                 onClick = { actions.onRemove(device) },

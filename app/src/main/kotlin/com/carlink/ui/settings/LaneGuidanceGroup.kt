@@ -33,7 +33,8 @@ import android.text.format.DateFormat as AndroidDateFormat
 @Composable
 internal fun LaneGuidanceGroup(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val store = remember { LaneGuidanceStore.get(context) }
+    val view by remember { DriverProfiles.view(context) }.collectAsState()
+    val store = remember(view.other, view.revision) { LaneGuidanceStore.of(context, view) }
     val cfg by store.flow.collectAsState()
     val asked by LaneActivity.askedThisConnection.collectAsState()
     val seen by LaneActivity.seen.collectAsState()

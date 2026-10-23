@@ -110,6 +110,8 @@ data class TurnAlertConfig(
  */
 class TurnAlertStore private constructor(
     context: Context,
+    /** The driver whose file this is ([DriverProfiles.View.other]), or null for the active driver's: the shared instance. */
+    private val mac: String? = null,
 ) {
     @Volatile private var prefs = open(context)
     private val state = MutableStateFlow(read(prefs))
@@ -149,7 +151,7 @@ class TurnAlertStore private constructor(
         state.value = c
     }
 
-    private fun open(context: Context): SharedPreferences = context.applicationContext.getSharedPreferences(DriverProfiles.fileName(context, PREFS_NAME), Context.MODE_PRIVATE)
+    private fun open(context: Context): SharedPreferences = context.applicationContext.getSharedPreferences(DriverProfiles.fileName(context, PREFS_NAME, mac), Context.MODE_PRIVATE)
 
     private fun read(p: SharedPreferences): TurnAlertConfig =
         TurnAlertConfig(
@@ -178,5 +180,11 @@ class TurnAlertStore private constructor(
             instance ?: synchronized(this) {
                 instance ?: TurnAlertStore(context).also { instance = it }
             }
+
+        /** What Settings edits: the shared store, or another iPhone's while parked ([DriverProfiles.edit]). */
+        fun of(
+            context: Context,
+            view: DriverProfiles.View,
+        ): TurnAlertStore = view.other?.let { TurnAlertStore(context, it.mac) } ?: get(context)
     }
 }

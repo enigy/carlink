@@ -69,7 +69,6 @@ import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
 import com.carlink.ui.settings.DriverProfiles
 import com.carlink.ui.settings.LaneGuidanceStore
-import com.carlink.ui.settings.TurnAlertStore
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
@@ -538,6 +537,9 @@ class CarlinkManager(
 
     /** AAOS drive-state source. Null off automotive; see [DriveStateMonitor]. */
     private var driveMonitor: DriveStateMonitor? = null
+
+    /** The truck is being driven, as AAOS says (UX restrictions). False off automotive. */
+    val isDriving: Boolean get() = driveMonitor?.driving == true
 
     /** NAVIGATION app-focus claim, edge-driven from route guidance. Null off automotive. */
     private var appFocusClaimer: AppFocusClaimer? = null
@@ -1581,6 +1583,8 @@ class CarlinkManager(
             )
         }
         bondedMacs = bondedMacs - mac
+        // Its Cluster and Driving settings go with it ([DriverProfiles]).
+        DriverProfiles.forget(context, mac)
         mutateDeviceList { list -> list.filter { it.btMac.lowercase() != mac } }
         callback?.onDeviceListChanged(_pairedDevices)
         notifyDeviceListeners()
@@ -2642,11 +2646,7 @@ class CarlinkManager(
         name: String,
     ) {
         if (!DriverProfiles.onPhone(context, mac, name)) return
-        TurnAlertStore.get(context).reload(context)
-        LaneGuidanceStore.get(context).reload(context)
-        // Its flow change re-sends limitedUI for the new driver (the collector beside the drive monitor).
-        CarPlayLimitStore.get(context).reload(context)
-        ClusterNavigation.applyComponentState(context)
+        DriverProfiles.reloadActive(context)
         logInfo("[PROFILE] driver settings switched to $mac: directions=${ClusterNavigation.isEnabled(context)}", tag = Logger.Tags.PHONE)
     }
 
