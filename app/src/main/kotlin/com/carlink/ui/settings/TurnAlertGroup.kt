@@ -96,7 +96,7 @@ private fun TurnAlertRows(
         GroupDivider()
         ChoiceSetting(
             title = "Start alerting",
-            subtitle = timingHint(cfg.timing),
+            subtitle = cfg.timing.hint,
             options = AlertTiming.entries,
             selected = cfg.timing,
             icon = Icons.Default.Timer,
@@ -254,11 +254,6 @@ private fun DrawScope.drawArrow(
             drawPath(ARROW, Color.White, style = rim)
         }
     }
-}
-
-private fun timingHint(timing: AlertTiming): String {
-    fun miles(mph: Double) = TurnAlert.startMeters(mph * TurnAlert.MPS_PER_MPH, timing) / TurnAlert.METERS_PER_MILE
-    return "Starts %.2f mi before a turn at 60 mph, %.2f mi at 25 mph".format(miles(60.0), miles(25.0))
 }
 
 private fun seconds(ms: Long): String = if (ms % 1000L == 0L) "${ms / 1000L} s" else "%.1f s".format(ms / 1000.0)

@@ -7,22 +7,41 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * How far before a turn the alert starts (Settings › Cluster › Start alerting), as the owner set it:
- * a distance at 25 mph and one at 60 mph. Between the two, [com.carlink.navigation.TurnAlert]
- * interpolates the warning TIME, so the distance grows smoothly with speed.
+ * How far before a turn the alert starts (Settings › Cluster › Start alerting): one distance per
+ * speed band, 0–35, 36–59, 60–69 and 70+ mph. Standard is the owner's (2026-10-23): 500, 1,000,
+ * 1,500 and 2,600 ft. Earlier is twice that and Later 0.6 of it, so the three keep their order at
+ * every speed. Until v29 each preset was a distance at 25 and at 60 mph with the warning time
+ * interpolated between (Standard 0.25 mi and 1 mi).
  */
 enum class AlertTiming(
     val code: String,
     override val label: String,
-    val milesAt25: Double,
-    val milesAt60: Double,
+    /** Feet before the turn, per band of [BAND_TOPS_MPH]. */
+    val feet: List<Int>,
 ) : Labelled {
-    EARLIER("earlier", "Earlier", 0.5, 2.0),
-    STANDARD("standard", "Standard", 0.25, 1.0),
-    LATER("later", "Later", 0.1, 0.5),
+    EARLIER("earlier", "Earlier", listOf(1000, 2000, 3000, 5200)),
+    STANDARD("standard", "Standard", listOf(500, 1000, 1500, 2600)),
+    LATER("later", "Later", listOf(300, 600, 900, 1560)),
     ;
 
+    /** "Starts 500 ft before a turn up to 35 mph, 1,000 ft to 59, 1,500 ft to 69, 2,600 ft at 70+", for the Start alerting row. */
+    val hint: String
+        get() {
+            val ft = feet.map { "%,d".format(it) }
+            val tops = BAND_TOPS_MPH
+            return "Starts ${ft[0]} ft before a turn up to ${tops[0]} mph, ${ft[1]} ft to ${tops[1]}, ${ft[2]} ft to ${tops[2]}, ${ft[3]} ft at ${tops[2] + 1}+"
+        }
+
+    /** Feet before the turn the alert starts at [mph]; a band runs to its top whole mph (35 is the first band). */
+    fun feetAt(mph: Double): Int {
+        val band = BAND_TOPS_MPH.indexOfFirst { mph < it + 0.5 }.let { if (it < 0) BAND_TOPS_MPH.size else it }
+        return feet[band]
+    }
+
     companion object {
+        /** The top speed of each band but the last: 0–35, 36–59, 60–69, then 70 and up. */
+        val BAND_TOPS_MPH = listOf(35, 59, 69)
+
         fun fromCode(code: String?): AlertTiming = entries.firstOrNull { it.code == code } ?: STANDARD
     }
 }

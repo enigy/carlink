@@ -14,9 +14,8 @@ import com.carlink.ui.settings.TurnAlertStore
  * and HUD turn icon flashes between its normal frame and a colored one, then holds the colored
  * frame for the last [SOLID_SECONDS] if the driver chose that.
  *
- * WHEN. Start alerting sets a distance at [LEAD_LOW_MPH] and one at [LEAD_HIGH_MPH] (Standard:
- * 0.25 mi and 1 mi). Those are warning times (Standard: 36 s and 60 s); the time is a straight line
- * between them and held at the end values outside, and the distance is speed times that time.
+ * WHEN. Start alerting sets a distance before the turn for each speed band ([AlertTiming.feetAt];
+ * Standard: 500 ft to 35 mph, 1,000 ft to 59, 1,500 ft to 69, 2,600 ft from 70).
  * Carlink3 cannot read the vehicle's speed, so it is the rate the iPhone's distance-to-turn counts
  * down over the last few updates. Below [MOVING_MPS] (stopped, or the speed is not known yet after
  * a new step) nothing flashes.
@@ -33,11 +32,8 @@ object TurnAlert {
     /** The final approach held on the colored frame when Solid for the last 3 seconds is on. */
     const val SOLID_SECONDS = 3.0
 
-    private const val LEAD_LOW_MPH = 25.0
-    private const val LEAD_HIGH_MPH = 60.0
-    private const val SECONDS_PER_HOUR = 3600.0
     const val MPS_PER_MPH = 0.44704
-    const val METERS_PER_MILE = 1609.344
+    const val METERS_PER_FOOT = 0.3048
 
     /** About 4.5 mph: slower than this counts as stopped. */
     private const val MOVING_MPS = 2.0
@@ -82,22 +78,11 @@ object TurnAlert {
     /** Which frame a flashing icon shows next. Flipped by the cluster session's ticker. */
     @Volatile var coloredBeat = false
 
-    /** Warning time at [mph] for [timing]: its two distances as times, a straight line between. */
-    fun leadSeconds(
-        mph: Double,
-        timing: AlertTiming,
-    ): Double {
-        val low = timing.milesAt25 * SECONDS_PER_HOUR / LEAD_LOW_MPH
-        val high = timing.milesAt60 * SECONDS_PER_HOUR / LEAD_HIGH_MPH
-        val f = ((mph - LEAD_LOW_MPH) / (LEAD_HIGH_MPH - LEAD_LOW_MPH)).coerceIn(0.0, 1.0)
-        return low + (high - low) * f
-    }
-
-    /** Distance before the turn where the alert starts, at [mps]. */
+    /** Distance before the turn where the alert starts, at [mps]: the speed band's distance. */
     fun startMeters(
         mps: Double,
         timing: AlertTiming,
-    ): Double = mps * leadSeconds(mps / MPS_PER_MPH, timing)
+    ): Double = timing.feetAt(mps / MPS_PER_MPH) * METERS_PER_FOOT
 
     /** Feed each NEW navigation state, never a re-send of the same one. */
     @Synchronized
