@@ -296,7 +296,8 @@ class VoiceRouter(
      *     USAGE_VOICE_COMMUNICATION and never abandons it, which on AAOS pins the hardware volume
      *     keys to the call group and suppresses the head unit's own sources for the rest of the
      *     session.
-     * Runs on the consume thread, so it is also the only thread allowed to release.
+     * Runs on the sweeper thread; each Sink's `io` lock keeps a release off a track the consume
+     * thread is writing.
      */
 
     /** Edge-detected so the media track is paused/resumed once per Siri turn, not once per tick. */
@@ -511,6 +512,18 @@ class VoiceRouter(
         @Volatile private var nextSilenceAt = 0L
 
         /**
+         * Held for every use of [track] and [decoder]: configure, feed, keep-alive, stats, release.
+         *
+         * An AudioTrack is not safe for two writers. The sweeper's keep-alive silence and the consume
+         * thread's audio overlapped on the Siri track (iOS streams digital silence, so "quiet" can be
+         * true while frames still arrive), and libaudioclient aborted the app in releaseBuffer
+         * ("mUnreleased out of range", 2026-10-23 11:08). The sweeper's idle release raced the same
+         * way ("Unable to retrieve AudioTrack pointer for write()", 11:05). Lock order is `sinks`
+         * then `io`; nothing under `io` takes `sinks`.
+         */
+        private val io = Any()
+
+        /**
          * Keep the track in PLAYSTATE_PLAYING through gaps in the stream, by writing paced silence.
          *
          * **This is what makes the head unit's volume knob work for Siri.** AAOS targets volume keys
@@ -531,24 +544,26 @@ class VoiceRouter(
          */
         fun keepAlive(now: Long) {
             if (!p.keepAlive || !isConfigured) return
-            val tk = track ?: return
             // Only between bursts: while audio is flowing the stream is its own keep-alive, and once
             // the idle window expires the sweeper releases us and hands the volume context back.
             val quiet = now - lastAudioAt
             if (quiet < KEEPALIVE_AFTER_MS || quiet > p.idleMs) return
             if (now < nextSilenceAt) return
-            nextSilenceAt =
-                if (nextSilenceAt == 0L || now - nextSilenceAt > KEEPALIVE_PERIOD_MS) {
-                    now + KEEPALIVE_PERIOD_MS
-                } else {
-                    nextSilenceAt + KEEPALIVE_PERIOD_MS
-                }
-            runCatching {
-                if (tk.playState != AudioTrack.PLAYSTATE_PLAYING) tk.play()
-                val frames = rate * KEEPALIVE_PERIOD_MS / 1000
-                val buf = ByteArray(frames.toInt() * 2 * maxOf(channels, 1))
-                tk.write(buf, 0, buf.size, AudioTrack.WRITE_NON_BLOCKING)
-            }.onFailure { nextSilenceAt = 0L }
+            synchronized(io) {
+                val tk = track ?: return
+                nextSilenceAt =
+                    if (nextSilenceAt == 0L || now - nextSilenceAt > KEEPALIVE_PERIOD_MS) {
+                        now + KEEPALIVE_PERIOD_MS
+                    } else {
+                        nextSilenceAt + KEEPALIVE_PERIOD_MS
+                    }
+                runCatching {
+                    if (tk.playState != AudioTrack.PLAYSTATE_PLAYING) tk.play()
+                    val frames = rate * KEEPALIVE_PERIOD_MS / 1000
+                    val buf = ByteArray(frames.toInt() * 2 * maxOf(channels, 1))
+                    tk.write(buf, 0, buf.size, AudioTrack.WRITE_NON_BLOCKING)
+                }.onFailure { nextSilenceAt = 0L }
+            }
         }
 
         /**
@@ -562,6 +577,12 @@ class VoiceRouter(
             }
 
         fun configure(
+            r: Int,
+            c: Int,
+            cod: Int,
+        ): Unit = synchronized(io) { configureLocked(r, c, cod) }
+
+        private fun configureLocked(
             r: Int,
             c: Int,
             cod: Int,
@@ -608,24 +629,26 @@ class VoiceRouter(
         }
 
         fun feed(au: ByteArray) {
-            val t = track ?: return
-            val d = decoder ?: return
-            try {
-                d.decode(au, 0, au.size) { pcm, off, len ->
-                    // render() may release the sink (dead track) mid-decode; later callbacks of the
-                    // same decode then see decoder == null and must not touch the released track.
-                    if (decoder != null) render(pcm, off, len, t)
+            synchronized(io) {
+                val t = track ?: return
+                val d = decoder ?: return
+                try {
+                    d.decode(au, 0, au.size) { pcm, off, len ->
+                        // render() may release the sink (dead track) mid-decode; later callbacks of the
+                        // same decode then see decoder == null and must not touch the released track.
+                        if (decoder != null) render(pcm, off, len, t)
+                    }
+                } catch (e: IllegalStateException) {
+                    // MediaCodec.CodecException IS an IllegalStateException. If render() already released
+                    // for a dead track, the decoder is null and its ZEROED backoff stands (rebuild on the
+                    // next AU); otherwise this is a real codec fault: release and ARM the backoff, or the
+                    // next AU reconfigures immediately and a persistent fault rebuilds a codec + track
+                    // per frame.
+                    if (decoder == null) return
+                    log.e("${p.label}: feed ${e.javaClass.simpleName}: ${e.message}")
+                    release()
+                    configureFailedAt = android.os.SystemClock.elapsedRealtime()
                 }
-            } catch (e: IllegalStateException) {
-                // MediaCodec.CodecException IS an IllegalStateException. If render() already released
-                // for a dead track, the decoder is null and its ZEROED backoff stands (rebuild on the
-                // next AU); otherwise this is a real codec fault: release and ARM the backoff, or the
-                // next AU reconfigures immediately and a persistent fault rebuilds a codec + track
-                // per frame.
-                if (decoder == null) return
-                log.e("${p.label}: feed ${e.javaClass.simpleName}: ${e.message}")
-                release()
-                configureFailedAt = android.os.SystemClock.elapsedRealtime()
             }
         }
 
@@ -719,32 +742,35 @@ class VoiceRouter(
         }
 
         fun stats(): String {
-            val t = track ?: return "${p.label}: no track"
-            val r = rate.coerceAtLeast(1)
-            return runCatching {
-                "callTrack=${t.bufferSizeInFrames * 1000L / r}ms underruns=${t.underrunCount} " +
-                    "out=${com.carlink.audio.AudioRouteInfo.device(t.routedDevice)}"
-            }.getOrDefault("${p.label}: track unreadable")
+            synchronized(io) {
+                val t = track ?: return "${p.label}: no track"
+                val r = rate.coerceAtLeast(1)
+                return runCatching {
+                    "callTrack=${t.bufferSizeInFrames * 1000L / r}ms underruns=${t.underrunCount} " +
+                        "out=${com.carlink.audio.AudioRouteInfo.device(t.routedDevice)}"
+                }.getOrDefault("${p.label}: track unreadable")
+            }
         }
 
         /** pause + flush BEFORE abandoning focus, so AAOS sees no active player of this usage. */
-        fun release() {
-            val t = track
-            track = null
-            runCatching { t?.pause() }
-            runCatching { t?.flush() }
-            runCatching { t?.stop() }
-            runCatching { t?.release() }
-            val c = decoder
-            decoder = null
-            runCatching { c?.close() }
-            runCatching { focus?.let { am.abandonAudioFocusRequest(it) } }
-            focus = null
-            rate = 0
-            channels = 0
-            codec = -1
-            isConfigured = false
-        }
+        fun release() =
+            synchronized(io) {
+                val t = track
+                track = null
+                runCatching { t?.pause() }
+                runCatching { t?.flush() }
+                runCatching { t?.stop() }
+                runCatching { t?.release() }
+                val c = decoder
+                decoder = null
+                runCatching { c?.close() }
+                runCatching { focus?.let { am.abandonAudioFocusRequest(it) } }
+                focus = null
+                rate = 0
+                channels = 0
+                codec = -1
+                isConfigured = false
+            }
     }
 
     // ---- helpers -----------------------------------------------------------------------------
