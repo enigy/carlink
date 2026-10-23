@@ -64,6 +64,7 @@ import com.carlink.protocol.MultiTouchAction
 import com.carlink.protocol.PhoneType
 import com.carlink.ui.settings.AutoCallPath
 import com.carlink.ui.settings.CallAudioStore
+import com.carlink.ui.settings.CarPlayLimitStore
 import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
 import com.carlink.ui.settings.DriverProfiles
@@ -83,6 +84,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -887,6 +889,7 @@ class CarlinkManager(
                 m.onDriveStateChanged = { driving -> setLimitedUI(driving) }
                 m.start()
             }
+        watchCarPlayLimit()
         appFocusClaimer = AppFocusClaimer(context).also { it.start() }
         callNotificationHost = CallNotificationHost(context) { idx -> sendTelephony(idx) }
         callNotificationHost?.setAppVisible(appVisible)
@@ -1438,6 +1441,18 @@ class CarlinkManager(
     }
 
     /**
+     * Limit CarPlay while driving flipped mid-drive, or a different iPhone's choice loaded: push the
+     * result now, not at the next gear change.
+     */
+    private fun watchCarPlayLimit() {
+        scope.launch {
+            CarPlayLimitStore.get(context).flow.drop(1).collect {
+                driveMonitor?.let { m -> if (m.connected) setLimitedUI(m.driving) }
+            }
+        }
+    }
+
+    /**
      * Restrict the CarPlay UI as if the vehicle were in Drive, or release it.
      *
      * The box turns this into `/command setLimitedUI {limitedUI: <bool>}`
@@ -1446,9 +1461,14 @@ class CarlinkManager(
      *
      * WHICH elements get limited is the pushed config's `limitedUIConfig`; this is only the
      * on/off. We push no `limitedUIConfig` today, so iOS applies its own defaults.
+     *
+     * Settings › Display › Limit CarPlay while driving off ([CarPlayLimitStore]): never limited, so
+     * CarPlay stays as it is when parked.
      */
-    fun setLimitedUI(limited: Boolean) {
-        logInfo("[DRIVE] limitedUI=$limited", tag = Logger.Tags.ADAPTR)
+    fun setLimitedUI(driving: Boolean) {
+        val limitOn = CarPlayLimitStore.get(context).limitWhileDriving
+        val limited = driving && limitOn
+        logInfo("[DRIVE] limitedUI=$limited (driving=$driving${if (limitOn) "" else ", limit while driving off"})", tag = Logger.Tags.ADAPTR)
         val c = client ?: return
         scope.launch(Dispatchers.IO) {
             c.sendCommand(if (limited) Ocbm.CMD_LIMITED_UI_ON else Ocbm.CMD_LIMITED_UI_OFF)
@@ -2612,7 +2632,8 @@ class CarlinkManager(
 
     /**
      * Per-driver settings ([DriverProfiles]): the iPhone that just identified itself becomes the
-     * active driver, and Turn alert, Lane guidance and Directions on cluster switch to its settings.
+     * active driver, and Turn alert, Lane guidance, Directions on cluster and Limit CarPlay while
+     * driving switch to its settings.
      * Nothing changes when it is the same iPhone as last time. "Ask iPhone for lanes" was already
      * sent with this connection's subscribe; a change of driver applies it from the next one.
      */
@@ -2623,6 +2644,8 @@ class CarlinkManager(
         if (!DriverProfiles.onPhone(context, mac, name)) return
         TurnAlertStore.get(context).reload(context)
         LaneGuidanceStore.get(context).reload(context)
+        // Its flow change re-sends limitedUI for the new driver (the collector beside the drive monitor).
+        CarPlayLimitStore.get(context).reload(context)
         ClusterNavigation.applyComponentState(context)
         logInfo("[PROFILE] driver settings switched to $mac: directions=${ClusterNavigation.isEnabled(context)}", tag = Logger.Tags.PHONE)
     }

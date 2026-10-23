@@ -8,9 +8,10 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Per-driver settings (scoped 2026-10-22, iPhones first): each iPhone keeps its own Turn alert, Lane
- * guidance and Directions on cluster, keyed by its `deviceID` (the BR/EDR MAC in `CT_PHONE_IDENT`,
- * the same for a wired and a wireless connection). The truck's own settings (display, driver's seat,
- * loading screen, calls, phones, logs) stay shared.
+ * guidance, Directions on cluster and (2026-10-23) Limit CarPlay while driving, keyed by its
+ * `deviceID` (the BR/EDR MAC in `CT_PHONE_IDENT`, the same for a wired and a wireless connection).
+ * The truck's own settings (display mode, driver's seat, loading screen, calls, phones, logs) stay
+ * shared.
  *
  * The active profile is the iPhone connected now, else the last one that connected, kept across
  * restarts: the next driver is usually the last one, and "Ask iPhone for lanes" has to be decided
@@ -19,8 +20,9 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * A profile is one more SharedPreferences file per setting group: the shared file's name, "@" and
  * the MAC without colons. A new iPhone starts from factory defaults (an empty file reads as the
- * defaults: directions on, lane guidance on, turn alert off), except the first iPhone to connect
- * after profiles arrived, which takes over the shared settings so their owner keeps what they set.
+ * defaults: directions on, lane guidance on, turn alert off, CarPlay limited while driving), except
+ * the first iPhone to connect after profiles arrived, which takes over the shared settings so their
+ * owner keeps what they set.
  */
 object DriverProfiles {
     /** One driver: the phone's MAC (lower case, with colons) and the name it gave, possibly empty. */
@@ -35,7 +37,7 @@ object DriverProfiles {
     private const val KEY_LEGACY_OWNER = "legacy_owner"
 
     /** The setting groups kept per driver, by their shared file's name. */
-    private val PER_DRIVER = listOf(TurnAlertStore.PREFS_NAME, LaneGuidanceStore.PREFS_NAME, ClusterNavigation.PREFS)
+    private val PER_DRIVER = listOf(TurnAlertStore.PREFS_NAME, LaneGuidanceStore.PREFS_NAME, ClusterNavigation.PREFS, CarPlayLimitStore.PREFS_NAME)
 
     private val state = MutableStateFlow<Profile?>(null)
 

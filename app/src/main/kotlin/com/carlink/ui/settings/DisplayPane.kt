@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.Button
@@ -151,14 +152,41 @@ private fun ModeCard(
     }
 }
 
-/** Driver's seat (Carlink2's Drive Side): CarPlay puts its dock on this side. Next connection. */
+/**
+ * Driver's seat (Carlink2's Drive Side): CarPlay puts its dock on this side. Next connection. Also
+ * whether CarPlay is told the truck is moving ([CarPlayLimitStore]); that one applies at once.
+ */
 @Composable
 private fun DriveSideChoice() {
     val context = LocalContext.current
     val store = remember { DriveSideStore.get(context) }
     val side by store.flow.collectAsState()
+    val limitStore = remember { CarPlayLimitStore.get(context) }
+    val limit by limitStore.flow.collectAsState()
+    val driver by remember { DriverProfiles.flow(context) }.collectAsState()
+    // Per iPhone, like the Cluster settings: say whose it is.
+    val forWhom = driver?.let { "For ${it.name.ifEmpty { "the last iPhone" }}. " }.orEmpty()
     // One Column, spaced like DisplayPane's, so this emits a single node (ComposeMultipleContentEmitters).
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        SectionLabel("Driving", modifier = Modifier.padding(top = 8.dp))
+        SettingsGroup(modifier = Modifier.widthIn(max = 760.dp)) {
+            SwitchRow(
+                title = "Limit CarPlay while driving",
+                subtitle =
+                    forWhom +
+                        if (limit) {
+                            "CarPlay hides its keyboard and shortens lists while the truck moves."
+                        } else {
+                            "Off: CarPlay keeps its keyboard and full lists on the move, for a passenger. The driver should not use them."
+                        },
+                checked = limit,
+                icon = Icons.Default.DirectionsCar,
+                onCheckedChange = {
+                    logWarn("[UI_ACTION] Limit CarPlay while driving -> $it", tag = "UI")
+                    limitStore.setLimitWhileDriving(it)
+                },
+            )
+        }
         SectionLabel("Driver's seat", modifier = Modifier.padding(top = 8.dp))
         ChoiceRow(
             options = DriveSide.entries,

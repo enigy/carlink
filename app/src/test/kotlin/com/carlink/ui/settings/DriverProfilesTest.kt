@@ -85,6 +85,21 @@ class DriverProfilesTest {
     }
 
     @Test
+    fun eachIphoneKeepsItsOwnCarPlayLimit() {
+        val limit = CarPlayLimitStore.get(ctx)
+        DriverProfiles.onPhone(ctx, scott, "Scott's iPhone")
+        limit.reload(ctx)
+        assertTrue("limited while driving by default", limit.limitWhileDriving)
+        limit.setLimitWhileDriving(false)
+        DriverProfiles.onPhone(ctx, guest, "Guest")
+        limit.reload(ctx)
+        assertTrue("a new iPhone starts limited", limit.limitWhileDriving)
+        DriverProfiles.onPhone(ctx, scott, "Scott's iPhone")
+        limit.reload(ctx)
+        assertFalse(limit.limitWhileDriving)
+    }
+
+    @Test
     fun theLastDriverIsRememberedAcrossRestarts() {
         DriverProfiles.onPhone(ctx, scott, "Scott's iPhone")
         DriverProfiles.resetForTest()
