@@ -46,14 +46,31 @@ object LaneGuidance {
      * Records of one guidance block, in lane order, to hints. "Preferred" lanes win; else "usable".
      * A lane to be in points the way the route goes from it (its highlighted direction), with its
      * other directions kept to draw beside it.
+     *
+     * A lone 0 beside a turn is a placeholder, not a straight-ahead direction: preferred lanes almost
+     * always arrive as `laneAngles=[0]` with the real direction only in `laneAngleHighlight` (153 of
+     * the preferred records in the 2026-10-21/22 drives, e.g. `[0]` + 90), and CarPlay draws such a
+     * lane as the turn alone where the cluster drew a straight arrow beside it. So a lone 0 with a
+     * turn highlight, or a 0 highlight with a lone turn, leaves just the turn. A lane that lists 0
+     * among other directions really does go straight as well, and keeps it.
      */
     fun fromRecords(records: Collection<LaneRecord>): List<LaneHint> {
         val ordered = records.sortedBy { it.lane }
         val anyPreferred = ordered.any { it.status == 2 }
         return ordered.map { r ->
             val recommended = if (anyPreferred) r.status == 2 else r.status == 1
-            val main = if (recommended) r.highlight ?: r.angle else r.angle
-            LaneHint(main, recommended, r.angles.filter { it != main }.distinct())
+            val angles = r.angles.distinct()
+            val lone = angles.singleOrNull()
+            val highlight = r.highlight
+            val main =
+                when {
+                    !recommended -> r.angle
+                    highlight == 0 && lone != null && lone != 0 -> lone
+                    else -> highlight ?: r.angle
+                }
+            val placeholderZero = recommended && lone == 0 && main != 0
+            val others = if (placeholderZero) emptyList() else angles.filter { it != main }
+            LaneHint(main, recommended, others)
         }
     }
 

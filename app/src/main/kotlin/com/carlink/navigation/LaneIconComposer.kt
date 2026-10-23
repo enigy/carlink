@@ -44,9 +44,10 @@ internal object LaneIconComposer {
     // (the library's 500 x 74 dp box; the lane strip card found 6:1 the widest shape that keeps the full
     // height, truck 2026-10-22). Strips sized to their lanes (v19-v21) left most of that slot empty and
     // the arrows squeezed together, so the strip is always 6:1, split evenly between the lanes, with each
-    // arrow centered in its lane and widened to fill most of it: turns reach far sideways and the stroke
-    // and head grow with the lane, so the arrows come out wider than they are tall. The caps reach the
-    // top and bottom edges.
+    // arrow centered in its lane and widened to fill it: turns reach sideways and the stroke
+    // and head grow with the lane. The caps reach the top and bottom edges. A turn reaches sideways at
+    // most [STRIP_MAX_REACH], three quarters of the height, so it reads as a turn arrow rather than a long
+    // arm across the lane (up to 256 px in v22-v29; "drawn very far to the left/right", 2026-10-23).
     private const val STRIP_WIDTH = 960
     private const val STRIP_HEIGHT = 160
     private const val STRIP_FILL = 0.86f
@@ -56,7 +57,7 @@ internal object LaneIconComposer {
     private const val STRIP_HEAD_PER_LANE = 0.2f
     private const val STRIP_MIN_HEAD = 36f
     private const val STRIP_MAX_HEAD = 56f
-    private const val STRIP_MAX_REACH = 256f
+    private const val STRIP_MAX_REACH = 120f
 
     /** A slight turn's tip sits at most this far sideways per pixel it rises: about 35° off vertical. */
     private const val SLIGHT_LEAN = 0.7f

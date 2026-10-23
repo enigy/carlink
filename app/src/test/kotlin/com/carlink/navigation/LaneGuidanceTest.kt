@@ -142,6 +142,22 @@ class LaneGuidanceTest {
     }
 
     @Test
+    fun aLoneZeroBesideATurnIsAPlaceholder() {
+        // As the iPhone sends preferred lanes: laneAngles=[0], the real direction in the highlight.
+        val turnOnly = LaneGuidance.fromRecords(listOf(LaneRecord(0, 0, 0), LaneRecord(1, 2, 0, angles = listOf(0), highlight = 90)))
+        assertEquals(listOf(LaneHint(0, false), LaneHint(90, true)), turnOnly)
+        // A 0 highlight with one turn listed: the turn.
+        val uTurn = LaneGuidance.fromRecords(listOf(LaneRecord(0, 2, -180, angles = listOf(-180), highlight = 0)))
+        assertEquals(listOf(LaneHint(-180, true)), uTurn)
+        // A real second direction stays: a left lane that also allows the U-turn being taken.
+        val leftOrU = LaneGuidance.fromRecords(listOf(LaneRecord(0, 2, -90, angles = listOf(-90), highlight = -180)))
+        assertEquals(listOf(LaneHint(-180, true, others = listOf(-90))), leftOrU)
+        // Straight ahead in a preferred lane is still straight ahead.
+        val straight = LaneGuidance.fromRecords(listOf(LaneRecord(0, 2, 0, angles = listOf(0), highlight = 0)))
+        assertEquals(listOf(LaneHint(0, true)), straight)
+    }
+
+    @Test
     fun linkedBlockReachesTheCurrentStep() {
         OcbmNavigationFeed.onManeuver(maneuver(4, linked = 7))
         OcbmNavigationFeed.onRouteGuidance(guidance(4))
