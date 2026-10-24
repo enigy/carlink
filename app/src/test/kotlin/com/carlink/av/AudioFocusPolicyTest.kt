@@ -64,4 +64,30 @@ class AudioFocusPolicyTest {
         // Media resumed 0.9 s after UPLINK OFF; the media-audible trigger covers that case regardless.
         assertTrue(TransientFocusPolicy.MEDIA_RESUME_MIN_QUIET_MS < 900L)
     }
+
+    @Test
+    fun `only audible music asks for focus, so a paused iPhone's silent streams leave the radio alone`() {
+        val ask = MediaFocusAsk(refusedRetryMs = 2_000L)
+        ask.onStream()
+        assertFalse("a silent stream", ask.shouldAsk(held = false, audible = false, now = 1_000L))
+        assertTrue(ask.shouldAsk(held = false, audible = true, now = 1_100L))
+        assertFalse("already held", ask.shouldAsk(held = true, audible = true, now = 1_200L))
+    }
+
+    @Test
+    fun `after a permanent loss nothing asks until a new stream starts`() {
+        val ask = MediaFocusAsk()
+        ask.onLost()
+        assertFalse("music still in flight", ask.shouldAsk(held = false, audible = true, now = 1_000L))
+        ask.onStream()
+        assertTrue(ask.shouldAsk(held = false, audible = true, now = 5_000L))
+    }
+
+    @Test
+    fun `a refused request is asked again only after the wait`() {
+        val ask = MediaFocusAsk(refusedRetryMs = 2_000L)
+        ask.onRefused(now = 10_000L)
+        assertFalse(ask.shouldAsk(held = false, audible = true, now = 11_999L))
+        assertTrue(ask.shouldAsk(held = false, audible = true, now = 12_000L))
+    }
 }

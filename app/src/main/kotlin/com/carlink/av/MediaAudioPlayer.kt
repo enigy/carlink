@@ -52,8 +52,9 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * ## Focus follows the music, as in Carlink2 (truck, 2026-10-22)
  *
- * Media focus is asked for when a CarPlay music stream starts (the first frame after [MEDIA_GAP_MS]
- * without any) and given back [MEDIA_STOP_MS] after the frames stop: Carlink2's `AUDIO_MEDIA_START` /
+ * Media focus is asked for when a CarPlay music stream starts (the first audible frame after a gap of
+ * [MEDIA_GAP_MS]; a paused iPhone's silent streams do not ask, see [MediaFocusAsk]) and given back
+ * [MEDIA_STOP_MS] after the frames stop: Carlink2's `AUDIO_MEDIA_START` /
  * `AUDIO_MEDIA_STOP` lifecycle. GM's audio manager (the external focus policy) picks the source the
  * steering-wheel and radio Next/Prev buttons go to, and a fresh request made as the music starts is
  * what made it pick Carlink2. Up to v26 Carlink3 held one resting grant from connect, taken before
@@ -155,7 +156,7 @@ class MediaAudioPlayer(
      * Build the track before any audio arrives, so the first AU is written into a track that already
      * exists. The prime is only a head start: [configure] adopts it when the stream matches and
      * rebuilds otherwise. Measured saving on the AAC path: ~134 ms of the 172 ms seam-connect →
-     * first-audio (2026-08-12). Focus is not taken here: the first music frame asks for it.
+     * first-audio (2026-08-12). Focus is not taken here: the first audible music frame asks for it.
      */
     fun start() {
         configureFailedAt = 0L
@@ -320,6 +321,8 @@ class MediaAudioPlayer(
         // writing to (and re-rebuilding from) the dead one.
         val trk = track ?: return
         val now = SystemClock.elapsedRealtime()
+        // Before the ramp, so a fade-in's first quiet frames do not hold back the request.
+        focus.onDecoded(PcmLevel.audible(pcm, off, len))
         if (trk.gapSinceLastWrite(now) && ramp.start(now)) log.i("resume ramp triggered by the first media frame after a ${now - trk.lastWriteAt} ms gap")
         ramp.apply(pcm, off, len, ResumeRamp.Format(trk.channels, trk.rate), now)
         if (PcmLevel.audible(pcm, off, len)) lastAudibleAt = now
@@ -395,7 +398,8 @@ class MediaAudioPlayer(
 /**
  * Media `AUDIOFOCUS_GAIN` while the music plays, plus the focus-driven gain (ported from
  * `DualStreamAudioManager.getOrCreateFocusListener`, MEDIA arm). Asked for when a music stream starts
- * ([onMediaFrame]) and given back when it stops ([abandon]), as Carlink2 did; see [MediaAudioPlayer].
+ * and its audio is audible ([onMediaFrame], [onDecoded]) and given back when it stops ([abandon]), as
+ * Carlink2 did; see [MediaAudioPlayer].
  * A DISTINCT listener instance is load-bearing: AAOS CarAudioFocus keys on listener identity.
  */
 private class MediaFocus(
@@ -409,19 +413,15 @@ private class MediaFocus(
     @Volatile var gain = 1.0f
         private set
 
-    /**
-     * True after a permanent `AUDIOFOCUS_LOSS` until the next music stream starts. The frames still in
-     * flight after a loss must not take focus back from the source that just took it.
-     */
-    @Volatile var lost = false
-        private set
+    /** When to ask: audible music only, and not after a permanent loss until a new stream ([MediaFocusAsk]). */
+    private val ask = MediaFocusAsk()
+
+    /** Whether the first request of the current stream is still to come, for the log line. */
+    @Volatile private var streamStarting = true
 
     @Volatile private var request: AudioFocusRequest? = null
 
     @Volatile private var lastSuppressedAt = 0L
-
-    /** When a request was last refused; the next is tried on a frame after [REFUSED_RETRY_MS]. */
-    @Volatile private var refusedAt = 0L
 
     /** Focus events for the drive log (ProbeLog is logcat-only): requests, give-backs and losses. */
     @Volatile var onEvent: (String) -> Unit = {}
@@ -434,7 +434,6 @@ private class MediaFocus(
 
         /** Audible-while-suppressed notifications are throttled to this. */
         const val SUPPRESSED_NOTIFY_MS = 500L
-        const val REFUSED_RETRY_MS = 2_000L
     }
 
     private val listener =
@@ -450,22 +449,25 @@ private class MediaFocus(
             if (change == AudioManager.AUDIOFOCUS_LOSS) {
                 // The system has revoked this request; a later request() must build a fresh one.
                 request = null
-                lost = true
+                ask.onLost()
                 onEvent("media focus lost to another source — asking the phone to pause; the next music stream asks again")
                 runCatching { onLost() }
             }
             onChange()
         }
 
-    /**
-     * A media frame arrived; [newStream] when it is the first after a gap (the music started or
-     * resumed). A new stream clears a loss, and focus is asked for unless held — once per stream.
-     */
+    /** A media frame arrived; [newStream] when it is the first after a gap. A new stream clears a loss. */
     fun onMediaFrame(newStream: Boolean) {
-        if (newStream) lost = false
-        if (request != null || lost) return
-        if (!newStream && SystemClock.elapsedRealtime() - refusedAt < REFUSED_RETRY_MS) return
-        request(if (newStream) "a music stream started" else "music is playing")
+        if (!newStream) return
+        ask.onStream()
+        streamStarting = true
+    }
+
+    /** Decoded media about to be written: when it is audible, focus is asked for unless held. */
+    fun onDecoded(audible: Boolean) {
+        if (!ask.shouldAsk(held = request != null, audible, SystemClock.elapsedRealtime())) return
+        request(if (streamStarting) "a music stream started" else "music is playing")
+        streamStarting = false
     }
 
     @Synchronized
@@ -493,9 +495,9 @@ private class MediaFocus(
                 gain = 1.0f
                 onChange()
             } else {
-                // Not granted (a call, or the car refused): ask again on a frame after REFUSED_RETRY_MS,
-                // not on every frame.
-                refusedAt = SystemClock.elapsedRealtime()
+                // Not granted (a call, or the car refused): ask again on a frame after
+                // MediaFocusAsk.REFUSED_RETRY_MS, not on every frame.
+                ask.onRefused(SystemClock.elapsedRealtime())
             }
             log.i("media audio focus: ${if (granted) "GRANTED" else "result=$r"} ($why)")
             onEvent("media audio focus ${if (granted) "granted" else "not granted (result=$r)"}: $why")
@@ -512,7 +514,7 @@ private class MediaFocus(
         off: Int,
         len: Int,
     ) {
-        if (gain >= 1.0f || lost || request == null) return
+        if (gain >= 1.0f || ask.lost || request == null) return
         if (!PcmLevel.audible(pcm, off, len)) return
         val now = SystemClock.elapsedRealtime()
         if (now - lastSuppressedAt < SUPPRESSED_NOTIFY_MS) return

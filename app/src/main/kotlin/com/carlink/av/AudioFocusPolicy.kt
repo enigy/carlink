@@ -67,3 +67,47 @@ class TransientFocusPolicy(
         const val MEDIA_RESUME_MIN_QUIET_MS: Long = 250L
     }
 }
+
+/**
+ * When media asks for `AUDIOFOCUS_GAIN` — pure so the rule is unit-tested; `MediaFocus` acts on it.
+ *
+ * Only audible music asks. A paused iPhone opens a silent media stream every 10 s for about 4 s, and
+ * asking on each stream's first frame (v28-v31) took the car's audio from whatever was playing every
+ * time: 18 times in 5 minutes on 2026-10-23 with nothing playing on the phone. After a permanent loss
+ * nothing asks until a new stream starts, so music still in flight cannot take the audio back from the
+ * source that just took it. A refused request is retried after [refusedRetryMs].
+ */
+class MediaFocusAsk(
+    private val refusedRetryMs: Long = REFUSED_RETRY_MS,
+) {
+    /** True after a permanent loss, until the next stream starts. */
+    @Volatile var lost = false
+        private set
+
+    /** When a request was last refused, or -1. */
+    @Volatile private var refusedAt = -1L
+
+    /** The first frame after a gap: the music started or resumed. Clears a loss. */
+    fun onStream() {
+        lost = false
+    }
+
+    fun onLost() {
+        lost = true
+    }
+
+    fun onRefused(now: Long) {
+        refusedAt = now
+    }
+
+    /** Whether decoded media that is [audible] should ask for focus now, when not already [held]. */
+    fun shouldAsk(
+        held: Boolean,
+        audible: Boolean,
+        now: Long,
+    ): Boolean = audible && !held && !lost && (refusedAt < 0 || now - refusedAt >= refusedRetryMs)
+
+    companion object {
+        const val REFUSED_RETRY_MS: Long = 2_000L
+    }
+}
