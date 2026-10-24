@@ -668,6 +668,9 @@ class CarlinkManager(
     private var lastPosition: Long = 0L
     private var lastIsPlaying: Boolean = true
 
+    /** The phone's last `playbackStatus`, for [logPlayStatusChange]; null until the first record that carries one. */
+    private var lastPlayStatus: Int? = null
+
     /**
      * Album art arrives out of band from the track that references it, so it is cached by id
      * until the two meet.
@@ -743,6 +746,7 @@ class CarlinkManager(
         lastDuration = 0L
         lastPosition = 0L
         lastIsPlaying = true
+        lastPlayStatus = null
         synchronized(artworkById) { artworkById.clear() }
         pendingArtworkId = null
         _connectedBtMac = null
@@ -2971,6 +2975,27 @@ class CarlinkManager(
         mediaSessionManager?.updateMetadata(nowPlayingInfo())
     }
 
+    /**
+     * Each change in the phone's own play status, to the drive log. v35 test (2026-10-24): the HUD
+     * showed the song title on a steering-wheel skip up to v32 and stopped with v34, which kept the
+     * session PLAYING through the seek statuses; these lines let each press be matched to what the
+     * phone, and so the session, said at that moment.
+     */
+    private fun logPlayStatusChange(status: Int?) {
+        if (status == null || status == lastPlayStatus) return
+        val name =
+            when (status) {
+                0 -> "stop"
+                1 -> "play"
+                2 -> "pause"
+                3 -> "seek forward"
+                4 -> "seek back"
+                else -> "unknown"
+            }
+        logInfo("[MEDIA] phone playbackStatus ${lastPlayStatus ?: "-"} -> $status ($name)", tag = Logger.Tags.MEDIA_SESSION)
+        lastPlayStatus = status
+    }
+
     /** The cached track as one value for the session. Main thread (all `lastMedia*` writers are). */
     private fun nowPlayingInfo(): NowPlayingInfo =
         NowPlayingInfo(
@@ -3028,6 +3053,7 @@ class CarlinkManager(
         // playbackStatus: 0 stop, 1 play, 2 pause (3/4 seek). 0 is the clear-snapshot signal.
         val playStatus = if (obj.has("playbackStatus")) obj.optInt("playbackStatus") else null
         val isPlaying = if (playStatus != null) playStatus == 1 else lastIsPlaying
+        logPlayStatusChange(playStatus)
 
         lastDuration = duration
         lastPosition = position
