@@ -28,10 +28,11 @@ enum class MediaKeyAction {
  *
  * Rules:
  * - Transport keys fire on the first ACTION_DOWN only; key repeats and releases are consumed silently.
- * - GM's steering-wheel skip buttons send F7 (back) and F8 (next), not MEDIA_PREVIOUS/NEXT. GM's own
+ * - GM's steering-wheel skip buttons send F7 (next) and F8 (back), not MEDIA_NEXT/PREVIOUS. GM's own
  *   media service turns them into a skip command for the source it has selected; when that is not
  *   this app they arrive here as raw keys, from "android" (drive log 2026-10-23: five presses, keys
- *   137 and 138, and Media3's default did nothing with them).
+ *   137 and 138, and Media3's default did nothing with them). v32 had the two the other way round;
+ *   the driver confirmed on the truck which button is which (2026-10-24).
  * - HEADSETHOOK is a hold: DOWN arms it, a long-press (FLAG_LONG_PRESS or a repeat) fires
  *   [MediaKeyAction.VOICE_ASSIST] exactly once, and a release that was NOT long fires
  *   [MediaKeyAction.HEADSET_HOOK]. Android's own `MediaSessionService` uses the same shape for
@@ -66,8 +67,8 @@ class MediaKeyDecoder {
                 KeyEvent.KEYCODE_MEDIA_PLAY -> MediaKeyAction.PLAY
                 KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP -> MediaKeyAction.PAUSE
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> MediaKeyAction.PLAY_PAUSE
-                KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_F8 -> MediaKeyAction.NEXT
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_F7 -> MediaKeyAction.PREVIOUS
+                KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_F7 -> MediaKeyAction.NEXT
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_F8 -> MediaKeyAction.PREVIOUS
                 KeyEvent.KEYCODE_VOICE_ASSIST, KeyEvent.KEYCODE_ASSIST, KeyEvent.KEYCODE_SEARCH -> MediaKeyAction.VOICE_ASSIST
                 else -> return Decoded.Unhandled
             }
