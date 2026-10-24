@@ -42,6 +42,7 @@ import com.carlink.logging.logWarn
 import com.carlink.media.CarlinkMediaBrowserService
 import com.carlink.media.MediaSessionManager
 import com.carlink.media.NowPlayingInfo
+import com.carlink.media.PlayStatus
 import com.carlink.navigation.LaneActivity
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.OcbmNavigationFeed
@@ -2284,6 +2285,8 @@ class CarlinkManager(
                     voiceRouter?.releaseQuietSinks("media audible again", TransientFocusPolicy.MEDIA_RESUME_MIN_QUIET_MS)
                 },
                 onFocusEvent = { logInfo("[FOCUS] $it", tag = Logger.Tags.ADAPTR) },
+                // Music became audible: report PLAYING now, before the phone's metadata catches up.
+                onAudible = { scope.launch { pushPlaybackState() } },
             ).also { it.start() }
         mediaPlayer = player
         val router =
@@ -2971,6 +2974,17 @@ class CarlinkManager(
         mediaSessionManager?.updateMetadata(nowPlayingInfo())
     }
 
+    /**
+     * The session's PLAYING bit, which AAOS uses to pick the session the steering-wheel keys go to.
+     * Audible music being rendered counts as playing even while the phone's metadata lags or says seek
+     * ([MediaAudioPlayer.isAudible]); only the phone's own stop/pause ([phoneSaysStopped]) overrides it,
+     * so a true pause is reported at once rather than after the audible tail.
+     */
+    private fun pushPlaybackState(phoneSaysStopped: Boolean = false) {
+        val playing = !phoneSaysStopped && (lastIsPlaying || mediaPlayer?.isAudible == true)
+        mediaSessionManager?.updatePlaybackState(playing = playing, position = lastPosition)
+    }
+
     /** The cached track as one value for the session. Main thread (all `lastMedia*` writers are). */
     private fun nowPlayingInfo(): NowPlayingInfo =
         NowPlayingInfo(
@@ -3025,9 +3039,12 @@ class CarlinkManager(
         val albumCover = mergeArtwork(obj)
         val duration = if (obj.has("durationMs")) obj.optLong("durationMs") else lastDuration
         val position = if (obj.has("elapsedMs")) obj.optLong("elapsedMs") else lastPosition
-        // playbackStatus: 0 stop, 1 play, 2 pause (3/4 seek). 0 is the clear-snapshot signal.
+        // playbackStatus: 0 stop, 1 play, 2 pause, 3/4 seek. 0 is the clear-snapshot signal. A seek is
+        // not a pause ([PlayStatus]): treating it as one had the session reporting PAUSED for 17-24 s of
+        // audible music after each track change (10-23), and AAOS routes the steering-wheel keys to
+        // whichever session is PLAYING, so presses in those windows went to the radio.
         val playStatus = if (obj.has("playbackStatus")) obj.optInt("playbackStatus") else null
-        val isPlaying = if (playStatus != null) playStatus == 1 else lastIsPlaying
+        val isPlaying = PlayStatus.playing(playStatus, lastIsPlaying)
 
         lastDuration = duration
         lastPosition = position
@@ -3046,7 +3063,7 @@ class CarlinkManager(
             CarlinkMediaBrowserService.updateNowPlaying(lastMediaSongName, lastMediaArtistName)
         }
 
-        mediaSessionManager?.updatePlaybackState(playing = isPlaying, position = position)
+        pushPlaybackState(phoneSaysStopped = PlayStatus.stopped(playStatus))
         markStreamingIfFirstMedia()
     }
 
