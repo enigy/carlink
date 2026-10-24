@@ -84,11 +84,6 @@ class MediaAudioPlayer(
     onAudibleWhileSuppressed: () -> Unit = {},
     /** Media focus requests, give-backs and losses, for the drive log. */
     onFocusEvent: (String) -> Unit = {},
-    /**
-     * Audible music began after a quiet spell ([ACTIVE_WINDOW_MS]). The session reports PLAYING on
-     * it, whatever the phone's metadata says: see [isAudible].
-     */
-    private val onAudible: () -> Unit = {},
 ) {
     private val log = ProbeLog.sub("media")
     private val running = AtomicBoolean(false)
@@ -134,9 +129,6 @@ class MediaAudioPlayer(
 
     /** Last time audible media was written; "media was active" for the ramp means within [ACTIVE_WINDOW_MS]. */
     @Volatile private var lastAudibleAt = 0L
-
-    /** Audible music was rendered within the last [ACTIVE_WINDOW_MS]: the phone is playing, whatever its metadata says. */
-    val isAudible: Boolean get() = SystemClock.elapsedRealtime() - lastAudibleAt < ACTIVE_WINDOW_MS
 
     /** Commanded by VoiceRouter while a voice stream is audible. 0.2, not 0.8: ~2 dB was "does not duck". */
     @Volatile private var duckGain = 1.0f
@@ -330,15 +322,10 @@ class MediaAudioPlayer(
         val trk = track ?: return
         val now = SystemClock.elapsedRealtime()
         // Before the ramp, so a fade-in's first quiet frames do not hold back the request.
-        val audible = PcmLevel.audible(pcm, off, len)
-        focus.onDecoded(audible)
+        focus.onDecoded(PcmLevel.audible(pcm, off, len))
         if (trk.gapSinceLastWrite(now) && ramp.start(now)) log.i("resume ramp triggered by the first media frame after a ${now - trk.lastWriteAt} ms gap")
         ramp.apply(pcm, off, len, ResumeRamp.Format(trk.channels, trk.rate), now)
-        if (audible) {
-            // The quiet -> audible edge, once per spell: the session flips to PLAYING on it.
-            if (now - lastAudibleAt >= ACTIVE_WINDOW_MS) runCatching { onAudible() }
-            lastAudibleAt = now
-        }
+        if (PcmLevel.audible(pcm, off, len)) lastAudibleAt = now
         if (!trk.write(pcm, off, len, running)) {
             log.e("AudioTrack ERROR_DEAD_OBJECT — rebuilding")
             track = null
