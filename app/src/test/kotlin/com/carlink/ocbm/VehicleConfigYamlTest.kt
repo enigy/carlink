@@ -57,7 +57,7 @@ videoStreamsConfig:
       knobSupportsHomeAndBackButton: false
       knobSupportsNudge: false
       mediaButtonsSupport: true
-      telephonyButtonsSupport: false
+      telephonyButtonsSupport: true
       touchpadSupport: false
       touchpadButtonsSupport: false
       touchScreenMode: High Fidelty
@@ -135,7 +135,6 @@ metadata:
             "knobSupport",
             "knobSupportsHomeAndBackButton",
             "knobSupportsNudge",
-            "telephonyButtonsSupport",
             "touchpadSupport",
             "touchpadButtonsSupport",
             "steeringWheelSupport",
@@ -145,8 +144,26 @@ metadata:
                 doc.contains("$k: false"),
             )
         }
-        // The one input device we DO serve.
+        // The two input devices we DO serve: media keys, and the telephony buttons behind Answer / Hang up.
         assertTrue(doc.contains("mediaButtonsSupport: true"))
+        assertTrue(doc.contains("telephonyButtonsSupport: true"))
+    }
+
+    /** Settings › Display › Layout: the Dock resize animates for 1.5 s instead of the box's 3 s. */
+    @Test
+    fun `the view-area animation time is a top-level key, inside the box's range, and absent by default`() {
+        val doc = VehicleConfigYaml.render(VehicleConfigSpec(viewArea2 = PixelRect(0, 0, 1680, 960), viewAreaAnimMs = 1500))
+        assertTrue(doc, doc.lines().contains("view_area_anim_ms: 1500"))
+        assertFalse(VehicleConfigYaml.render(VehicleConfigSpec()).contains("view_area_anim_ms"))
+        for (bad in listOf(999, 10_001, 0)) {
+            var threw = false
+            try {
+                VehicleConfigSpec(viewAreaAnimMs = bad)
+            } catch (_: IllegalArgumentException) {
+                threw = true
+            }
+            assertTrue("$bad ms must be refused", threw)
+        }
     }
 
     @Test

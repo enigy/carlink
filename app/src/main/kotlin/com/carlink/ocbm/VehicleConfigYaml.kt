@@ -53,6 +53,13 @@ data class VehicleConfigSpec(
      * itself (`info.rs::view_area_2`); none of those is a YAML key.
      */
     val viewArea2: PixelRect? = null,
+    /**
+     * How long iOS animates a switch between the view areas, ms: the box's own top-level
+     * `view_area_anim_ms` extension key, the `animationDurationMillis` of its `updateViewArea`.
+     * Null = not emitted, the box's 3000 ms default. The box clamps to 1000..10000 (a product limit,
+     * not iOS's), so anything else is refused here rather than silently changed there.
+     */
+    val viewAreaAnimMs: Int? = null,
     val wireless: Boolean = true,
     val pairing: String = "just_works",
     /** CarPlay `/info rightHandDrive`: puts CarPlay's dock and status bar on the driver's side. */
@@ -60,6 +67,13 @@ data class VehicleConfigSpec(
     val enablesHevc: Boolean = true,
     /** Steering-wheel media keys reach CarPlay through this HID, not a steering-wheel device. */
     val mediaButtonsSupport: Boolean = true,
+    /**
+     * The uid-5 Telephony HID: Answer, End, Mute and the DTMF keypad (`INPUT_TELEPHONY`, `Ocbm.TEL_*`).
+     * The call notification's Answer / Hang up and the split pane's call card send these; without
+     * the device advertised iOS has nothing to deliver them to, and they did nothing (10-25). The box
+     * serves the device whenever it is advertised, so this is not an unserved HID.
+     */
+    val telephonyButtonsSupport: Boolean = true,
     val dPadSupport: Boolean = false,
     /**
      * `touchScreenSupportsMultiTouch` — advertise Apple's TWO-finger touchscreen descriptor
@@ -129,6 +143,7 @@ data class VehicleConfigSpec(
         ViewAreaRule.teardownVerdict(PixelRect(safeOriginX, safeOriginY, safeWidth, safeHeight), width, height)?.let {
             throw IllegalArgumentException("safeArea: $it")
         }
+        viewAreaAnimMs?.let { require(it in VIEW_AREA_ANIM_MS_RANGE) { "view_area_anim_ms must be in $VIEW_AREA_ANIM_MS_RANGE; the box clamps anything else" } }
         // The split's CarPlay area: a teardown rule ends the session, the floor locks it out black.
         viewArea2?.let { a ->
             ViewAreaRule.teardownVerdict(a, width, height)?.let { throw IllegalArgumentException("viewArea 2: $it") }
@@ -152,6 +167,9 @@ data class VehicleConfigSpec(
          * an unrecoverable 0x1D03 (`features.rs` Trigger::RidesOn).
          */
         val LANES_ONLY_SKIP = listOf("communications", "call_history", "power", "app_discovery", "destination", "device_info")
+
+        /** The box's shipped range for `view_area_anim_ms` (`levers::VIEW_AREA_ANIM_MS_RANGE`, owner 2026-09-09). */
+        val VIEW_AREA_ANIM_MS_RANGE = 1_000..10_000
 
         private val SKIP_TOKEN = Regex("[a-z][a-z_]*")
     }
@@ -287,6 +305,8 @@ object VehicleConfigYaml {
         // Emitted for shape parity with the pinned fixture; the box does not read it. Night mode is a
         // runtime /command (CMD_NIGHT_MODE), not a config value.
         line("nightMode: false")
+        // The box's own top-level extension key, snake_case like `hot_handover`; absent = 3000 ms.
+        s.viewAreaAnimMs?.let { line("view_area_anim_ms: $it") }
     }
 
     private fun displayPanels(
@@ -348,7 +368,7 @@ object VehicleConfigYaml {
         line("      knobSupportsHomeAndBackButton: false")
         line("      knobSupportsNudge: false")
         line("      mediaButtonsSupport: ${s.mediaButtonsSupport}")
-        line("      telephonyButtonsSupport: false")
+        line("      telephonyButtonsSupport: ${s.telephonyButtonsSupport}")
         line("      touchpadSupport: false")
         line("      touchpadButtonsSupport: false")
         line("      touchScreenMode: High Fidelty")

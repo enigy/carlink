@@ -61,6 +61,7 @@ import com.carlink.ocbm.OcbmClient
 import com.carlink.ocbm.OemIcon
 import com.carlink.ocbm.PixelRect
 import com.carlink.ocbm.RawBulkTransport
+import com.carlink.ocbm.SplitViewArea
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
 import com.carlink.ocbm.seam.SeamPipe
@@ -1319,6 +1320,7 @@ class CarlinkManager(
                 oemIconLabel = context.getString(R.string.app_name),
                 rightHandDrive = DriveSideStore.get(context).current == DriveSide.RIGHT,
                 viewArea2 = split,
+                viewAreaAnimMs = if (split != null) SplitViewArea.TRANSITION_MS else null,
                 metadataTier = if (askLanes) "extended" else "proven",
                 metadataSkip = if (askLanes) VehicleConfigSpec.LANES_ONLY_SKIP else emptyList(),
             )
@@ -3124,7 +3126,12 @@ class CarlinkManager(
      * so a true pause is reported at once rather than after the audible tail.
      */
     private fun pushPlaybackState(phoneSaysStopped: Boolean = false) {
-        val playing = !phoneSaysStopped && (lastIsPlaying || mediaPlayer?.isAudible == true)
+        // Audible music counts as playing only until the phone itself says pause or stop: a track's
+        // last audible second after a pause is not playback. Without this the elapsed-only ticks
+        // right after a pause reported PLAYING again, and the phone sends no more ticks while paused,
+        // so the session (and the pane's play button) stayed on PLAYING (10-25).
+        val audible = mediaPlayer?.isAudible == true && !PlayStatus.stopped(lastPlayStatus)
+        val playing = !phoneSaysStopped && (lastIsPlaying || audible)
         mediaSessionManager?.updatePlaybackState(playing = playing, position = lastPosition)
         nowPlayingState.value = NowPlayingState(nowPlayingInfo(), playing, lastPosition, lastPositionAtMs)
     }

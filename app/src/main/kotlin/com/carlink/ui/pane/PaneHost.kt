@@ -1,5 +1,6 @@
 package com.carlink.ui.pane
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,25 +11,31 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.VerticalSplit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
 import com.carlink.logging.logInfo
-import com.carlink.ocbm.Ocbm
 
 /**
  * Carlink3's side of the split layout (Settings › Display › Layout), laid over the part of the video
@@ -37,7 +44,8 @@ import com.carlink.ocbm.Ocbm
  * Settings, the pane's own full-screen button, or CarPlay's Dock button. While CarPlay has the whole
  * frame but a split is declared, a small tab at the pane's edge brings the split back.
  *
- * The card: a call while the iPhone reports one, else the music playing, else the clock.
+ * The card: a call while the iPhone reports one, else the music playing, else the clock. Music puts
+ * its album art behind the whole pane and sets the words and buttons light or dark to suit it.
  *
  * Sits ABOVE the SurfaceView and takes its own touches, so CarPlay — which still normalises touch over
  * the whole frame — never sees a tap meant for the pane.
@@ -75,7 +83,7 @@ fun SplitPane(
     }
 }
 
-/** The pane itself: a header naming the card with the full-screen button, then the card. */
+/** The pane itself: the backdrop, a header naming the card with the full-screen button, then the card. */
 @Composable
 private fun PaneHost(
     carlinkManager: CarlinkManager,
@@ -84,43 +92,87 @@ private fun PaneHost(
     val colors = MaterialTheme.colorScheme
     val call by carlinkManager.callPresentationFlow.collectAsState()
     val media by carlinkManager.nowPlaying.collectAsState()
-    val title =
-        when {
-            call != CallRoster.Presentation.None -> "Phone"
-            media.hasTrack -> media.info.appName?.takeIf { it.isNotBlank() } ?: "Music"
-            else -> "Carlink3"
-        }
+    val showCall = call != CallRoster.Presentation.None
+    val showMedia = !showCall && media.hasTrack
+    val art = rememberAlbumArt(if (showMedia) media.info.albumArt else null)
+    val look = paneLook(art, rememberArtIsDark(art), colors.onSurface)
+    val title = paneTitle(showCall, showMedia, media.info.appName)
     Surface(
-        // Every touch that lands here is the pane's: nothing falls through to the SurfaceView.
-        modifier = modifier.pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
+        modifier =
+            modifier
+                // Rounded like CarPlay's own pane, so the art's corners match the picture beside it.
+                .clip(RoundedCornerShape(PANE_CORNER))
+                // Every touch that lands here is the pane's: nothing falls through to the SurfaceView.
+                .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
         color = colors.surface,
     ) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, modifier = Modifier.weight(1f))
-                IconButton(
-                    onClick = {
+        Box(modifier = Modifier.fillMaxSize()) {
+            MediaBackdrop(art, modifier = Modifier.fillMaxSize())
+            if (art != null) {
+                Box(
+                    modifier =
+                        Modifier.fillMaxSize().background(
+                            Brush.verticalGradient(listOf(look.scrim.copy(alpha = SCRIM_TOP), Color.Transparent, look.scrim.copy(alpha = SCRIM_BOTTOM))),
+                        ),
+                )
+            }
+            CompositionLocalProvider(LocalContentColor provides look.content) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
+                    PaneHeader(title = title, onExpand = {
                         logInfo("[UI_ACTION] Pane: CarPlay full screen", tag = "UI")
                         carlinkManager.requestViewArea(0)
-                    },
-                    modifier = Modifier.size(56.dp),
-                ) {
-                    Icon(Icons.Default.Fullscreen, contentDescription = "CarPlay full screen", modifier = Modifier.size(32.dp), tint = colors.onSurfaceVariant)
+                    })
+                    val card = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)
+                    when {
+                        showCall -> CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = card)
+                        showMedia -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = card)
+                        else -> ClockCard(modifier = card)
+                    }
                 }
             }
-            val card = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)
-            when {
-                call != CallRoster.Presentation.None ->
-                    CallCard(
-                        presentation = call,
-                        onAnswer = { carlinkManager.sendTelephony(Ocbm.TEL_ANSWER) },
-                        onEnd = { carlinkManager.sendTelephony(Ocbm.TEL_END) },
-                        modifier = card,
-                    )
-                media.hasTrack -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = card)
-                else -> ClockCard(modifier = card)
-            }
         }
+    }
+}
+
+/** The colour of the words and buttons, and of the scrim behind them, for what is behind the pane. */
+private class PaneLook(
+    val content: Color,
+    val scrim: Color,
+)
+
+/** Over art the words are white or near-black for the cover; without art the theme's own colour. */
+private fun paneLook(
+    art: ImageBitmap?,
+    dark: Boolean,
+    onSurface: Color,
+): PaneLook =
+    when {
+        art == null -> PaneLook(onSurface, Color.Black)
+        dark -> PaneLook(Color.White, Color.Black)
+        else -> PaneLook(INK, Color.White)
+    }
+
+/** The header's word for the card: the phone, the app playing (its own name), or this app. */
+private fun paneTitle(
+    showCall: Boolean,
+    showMedia: Boolean,
+    appName: String?,
+): String =
+    when {
+        showCall -> "Phone"
+        showMedia -> appName?.takeIf { it.isNotBlank() } ?: "Music"
+        else -> "Carlink3"
+    }
+
+@Composable
+private fun PaneHeader(
+    title: String,
+    onExpand: () -> Unit,
+) {
+    val content = LocalContentColor.current
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = MaterialTheme.typography.titleMedium, color = content.copy(alpha = HEADER_ALPHA), modifier = Modifier.weight(1f))
+        PaneButton(Icons.Default.Fullscreen, "CarPlay full screen", onClick = onExpand, size = 56.dp, iconSize = 32.dp, tint = content.copy(alpha = HEADER_ALPHA))
     }
 }
 
@@ -133,7 +185,7 @@ private fun SplitTab(
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = modifier.width(48.dp).height(112.dp),
-        color = colors.surface.copy(alpha = 0.7f),
+        color = colors.surface.copy(alpha = TAB_ALPHA),
         shape = MaterialTheme.shapes.medium,
     ) {
         IconButton(onClick = onClick, modifier = Modifier.fillMaxSize()) {
@@ -141,3 +193,10 @@ private fun SplitTab(
         }
     }
 }
+
+private val PANE_CORNER = 24.dp
+private val INK = Color(0xFF14181E)
+private const val SCRIM_TOP = 0.45f
+private const val SCRIM_BOTTOM = 0.75f
+private const val HEADER_ALPHA = 0.85f
+private const val TAB_ALPHA = 0.7f

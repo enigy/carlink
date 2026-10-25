@@ -2,6 +2,7 @@ package com.carlink.ui.pane
 
 import android.os.SystemClock
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,60 +15,69 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Dialpad
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carlink.callui.CallRoster
 import com.carlink.callui.CallState
+import com.carlink.callui.DialPad
 import com.carlink.media.NowPlayingState
+import com.carlink.ocbm.Ocbm
 import com.carlink.ui.theme.LocalCarlinkColors
 import kotlinx.coroutines.delay
 
 /**
  * The pane's call card, shown while the iPhone reports a call ([CallRoster.Presentation]): who it
- * is, how long it has run, and Answer / Decline or End — the same telephony HID taps the call
- * notification sends.
+ * is, how long it has run, and the buttons — Answer / Decline while ringing; Mute, the keypad and End
+ * during the call. Every button is one tap of the telephony HID ([onButton] takes the `Ocbm.TEL_*`
+ * index), the same path as the call notification's actions.
  */
 @Composable
 internal fun CallCard(
     presentation: CallRoster.Presentation,
-    onAnswer: () -> Unit,
-    onEnd: () -> Unit,
+    onButton: (Byte) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val call = presentation.call ?: return
+    var keypad by remember(call.key) { mutableStateOf(false) }
+    val incoming = presentation is CallRoster.Presentation.Incoming
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(modifier = Modifier.weight(1f))
-        Avatar(call)
-        Text(
-            call.displayLine,
-            style = MaterialTheme.typography.headlineMedium,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 20.dp),
-        )
-        SecondLine(call)
+        if (keypad) {
+            Keypad(onKey = { onButton(DialPad.index(it)) })
+        } else {
+            Avatar(call)
+            Text(
+                call.displayLine,
+                style = MaterialTheme.typography.headlineMedium,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 20.dp),
+            )
+            SecondLine(call)
+        }
         StatusLine(presentation)
         Spacer(modifier = Modifier.weight(1f))
-        CallButtons(incoming = presentation is CallRoster.Presentation.Incoming, onAnswer = onAnswer, onEnd = onEnd)
+        CallButtons(incoming = incoming, keypad = keypad, onKeypad = { keypad = !keypad }, onButton = onButton)
     }
 }
 
@@ -108,7 +118,7 @@ private fun SecondLine(call: CallState) {
         Text(
             line,
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA),
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 6.dp),
         )
@@ -139,29 +149,58 @@ private fun StatusLine(presentation: CallRoster.Presentation) {
     Text(text, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 16.dp))
 }
 
+/** The twelve keys in phone order; each tap is one DTMF digit to the phone. */
 @Composable
-private fun CallButtons(
-    incoming: Boolean,
-    onAnswer: () -> Unit,
-    onEnd: () -> Unit,
-) {
+private fun Keypad(onKey: (Char) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val extra = LocalCarlinkColors.current
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        RoundButton(Icons.Default.CallEnd, if (incoming) "Decline" else "End call", colors.error, colors.onError, onEnd)
-        if (incoming) RoundButton(Icons.Default.Call, "Answer", extra.connectedTile, extra.onConnectedTile, onAnswer)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        DialPad.KEYS.chunked(KEYPAD_COLUMNS).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                row.forEach { key ->
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(76.dp)
+                                .clip(CircleShape)
+                                .background(colors.surfaceContainerHighest)
+                                .clickable { onKey(key) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(key.toString(), style = MaterialTheme.typography.headlineMedium, color = colors.onSurface)
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun RoundButton(
-    icon: ImageVector,
-    label: String,
-    fill: Color,
-    tint: Color,
-    onClick: () -> Unit,
+private fun CallButtons(
+    incoming: Boolean,
+    keypad: Boolean,
+    onKeypad: () -> Unit,
+    onButton: (Byte) -> Unit,
 ) {
-    IconButton(onClick = onClick, modifier = Modifier.size(88.dp).clip(CircleShape).background(fill)) {
-        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(44.dp))
+    val colors = MaterialTheme.colorScheme
+    val extra = LocalCarlinkColors.current
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        if (!incoming) {
+            PaneButton(Icons.Default.MicOff, "Mute", onClick = { onButton(Ocbm.TEL_MUTE) }, size = 72.dp, fill = colors.surfaceContainerHighest, tint = colors.onSurface)
+            PaneButton(
+                Icons.Default.Dialpad,
+                if (keypad) "Hide keypad" else "Keypad",
+                onClick = onKeypad,
+                size = 72.dp,
+                fill = if (keypad) colors.primaryContainer else colors.surfaceContainerHighest,
+                tint = if (keypad) colors.onPrimaryContainer else colors.onSurface,
+            )
+        }
+        PaneButton(Icons.Default.CallEnd, if (incoming) "Decline" else "End call", onClick = { onButton(Ocbm.TEL_END) }, size = 88.dp, fill = colors.error, tint = colors.onError)
+        if (incoming) {
+            PaneButton(Icons.Default.Call, "Answer", onClick = { onButton(Ocbm.TEL_ANSWER) }, size = 88.dp, fill = extra.connectedTile, tint = extra.onConnectedTile)
+        }
     }
 }
+
+private const val KEYPAD_COLUMNS = 3
+private const val SECONDARY_ALPHA = 0.72f
