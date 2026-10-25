@@ -752,30 +752,6 @@ class OcbmClient(
         return ok
     }
 
-    /**
-     * Whether this box can end the phone's session on request (wired or wireless).
-     *
-     * ALWAYS FALSE today, on purpose: OCBM defines no phone-disconnect verb and no capability bit
-     * for one (`crates/ocbm-proto/src/lib.rs`, the `MGMT_*` and `CAP_*` sets). When the box grows
-     * a transport-aware `MGMT_DISCONNECT_PHONE` and advertises it in HELLO_ACK's caps, this
-     * becomes a one-line `caps and Ocbm.CAP_<name> != 0` and [disconnectPhone] sends the verb — no
-     * UI change needed. The wire ids are NOT invented here; see docs/ops/04_OPEN_ITEMS.md.
-     */
-    val supportsPhoneDisconnect: Boolean get() = false
-
-    /**
-     * End the phone's session — the single wire hook behind Disconnect Phone. Gated on
-     * [supportsPhoneDisconnect]; sends NOTHING (and returns false) when the box cannot do it.
-     */
-    fun disconnectPhone(): Boolean {
-        if (!supportsPhoneDisconnect) {
-            log.w("disconnectPhone(): box advertises no phone-disconnect capability — nothing sent")
-            return false
-        }
-        // Unreachable until the capability exists; the verb id will be assigned with it.
-        error("MGMT_DISCONNECT_PHONE is not assigned in this build")
-    }
-
     // ---- bring-up -------------------------------------------------------------------------------
 
     /**

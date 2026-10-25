@@ -1355,37 +1355,6 @@ class CarlinkManager(
         }
 
     /**
-     * Whether the connected adapter can end the phone's session on request — wired or wireless.
-     *
-     * False on every box today: OCBM has no phone-disconnect verb and advertises no such
-     * capability (the six MGMT verbs are `crates/ocbm-proto/src/lib.rs`, `MGMT_*`). The box-side
-     * work — a transport-aware `MGMT_DISCONNECT_PHONE` plus the capability bit that flips this —
-     * is tracked in docs/ops/04_OPEN_ITEMS.md. Until then the UI shows the button disabled with
-     * "Requires adapter firmware support".
-     */
-    val phoneDisconnectSupported: Boolean get() = client?.supportsPhoneDisconnect == true
-
-    /**
-     * End the phone's session without stopping the adapter — the ONE entry point for Disconnect
-     * Phone. Gated on [phoneDisconnectSupported]; sends nothing when the box cannot do it.
-     *
-     * This used to send `MGMT_RESTART_WIRELESS` in disguise, which bounced the whole wireless
-     * stack (and did nothing to a wired phone). That verb is now its own honest control,
-     * [restartWireless]. Returns false when nothing was sent.
-     */
-    fun disconnectPhone(): Boolean {
-        val c = client ?: return false
-        if (!c.supportsPhoneDisconnect) {
-            logInfo("[LIFECYCLE] disconnectPhone() — adapter has no phone-disconnect verb; nothing sent", tag = Logger.Tags.ADAPTR)
-            return false
-        }
-        logInfo("[LIFECYCLE] disconnectPhone()", tag = Logger.Tags.ADAPTR)
-        setStatusText("Disconnecting phone...")
-        scope.launch(Dispatchers.IO) { c.disconnectPhone() }
-        return true
-    }
-
-    /**
      * Settings → Adapter → Save Logs: pull the box's `/tmp/box.log` over the live link (it lives in
      * RAM on the box and is gone at power-off, so this is the only way to keep it after a drive) and
      * save it next to this process's own logcat under Downloads/Carlink3. Returns where they went.

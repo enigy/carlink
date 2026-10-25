@@ -383,25 +383,6 @@ class OcbmClientTest {
         assertArrayEquals(byteArrayOf(Ocbm.CT_PAIR_CONFIRM, 0), t.awaitFrameOn(Ocbm.CH_CTRL))
     }
 
-    /**
-     * Disconnect Phone is gated on a capability the box does not advertise: even with EVERY caps bit
-     * set in HELLO_ACK the gate stays closed and NOTHING goes on the wire — in particular no
-     * MGMT_RESTART_WIRELESS, which is what the old button sent in disguise.
-     */
-    @Test
-    fun `disconnectPhone sends nothing while the box advertises no phone-disconnect capability`() {
-        val t = FakeTransport()
-        val c = newClient(t)
-        t.deliver(Ocbm.CH_CTRL, helloAck(caps = -1))
-        assertTrue(c.helloAcked)
-        assertTrue(c.subscribe("name: test\n".toByteArray()))
-        drainWritten(t)
-
-        assertFalse(c.supportsPhoneDisconnect)
-        assertFalse(c.disconnectPhone())
-        assertNull("no frame of any kind may follow a refused disconnect", t.takeWritten(300))
-    }
-
     /** The error path skips CT_STOP (dead pipe); the clean path still sends it. */
     @Test
     fun `stop sends CT_STOP only when asked to`() {

@@ -44,9 +44,6 @@ import com.carlink.ui.theme.LocalCarlinkColors
  * Phones: the connected phone first, then the known list (the USB port and the adapter's bonded
  * phones merged with the app's history), then how to add one. Forget/Remove behave as before:
  * a bonded phone is cleared from the adapter too; a history-only record sends nothing.
- *
- * Disconnect stays visible but disabled until the box advertises a phone-disconnect verb
- * ([CarlinkManager.phoneDisconnectSupported]); a visible reason beats a missing button.
  */
 @Composable
 internal fun PhonesPane(
@@ -71,11 +68,6 @@ internal fun PhonesPane(
         if (connected != null) {
             ConnectedPhoneCard(
                 phone = connected,
-                disconnectSupported = carlinkManager.phoneDisconnectSupported,
-                onDisconnect = {
-                    logWarn("[UI_ACTION] Disconnect Phone clicked", tag = "UI")
-                    carlinkManager.disconnectPhone()
-                },
                 onForget = connected.device?.let { device -> { deviceToRemove = device } },
                 onSettings = connected.device?.btMac?.let(settingsFor),
             )
@@ -148,8 +140,6 @@ private fun AdapterNameLine(adapterName: String) {
 @Composable
 private fun ConnectedPhoneCard(
     phone: ConnectedPhone,
-    disconnectSupported: Boolean,
-    onDisconnect: () -> Unit,
     onForget: (() -> Unit)?,
     onSettings: (() -> Unit)?,
 ) {
@@ -170,12 +160,6 @@ private fun ConnectedPhoneCard(
                 Text("CONNECTED NOW", style = SettingsStyle.SectionLabel, color = LocalCarlinkColors.current.connectedLabel)
                 Text(phone.name, style = SettingsStyle.PaneTitle, modifier = Modifier.padding(top = 4.dp))
                 Text(phone.kind, style = SettingsStyle.RowSubtitle, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                RowAction(label = "Disconnect", onClick = onDisconnect, enabled = disconnectSupported)
-                if (!disconnectSupported) {
-                    Text("Needs adapter firmware support", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
-                }
             }
             if (onSettings != null) RowAction(label = "Settings", onClick = onSettings)
             if (onForget != null) RowAction(label = "Forget", onClick = onForget, weight = ActionWeight.DANGER_OUTLINE)

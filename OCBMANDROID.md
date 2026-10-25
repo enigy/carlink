@@ -147,7 +147,7 @@ waiting on box verbs") and the proposed verbs in
 | Control | What it sends now | Evidence |
 |---|---|---|
 | Reset Connection (Settings ▸ Control) and Reset Device (loading overlay) | ONE path, `CarlinkManager.cleanSlateReset()` → `CleanSlateReset`: confirm → CT_STOP → close OCBM → release the USB interface (IO thread) → wait **6 s** → reclaim → HELLO with a ROTATED instance nonce → SUBSCRIBE. Status line: "Resetting…" / "Waiting for adapter…" / "Reconnecting…". `restart()` and the `reinitialize()` route are gone for these buttons | timeline below; `CleanSlateResetTest` |
-| Disconnect Phone | **Nothing.** Disabled with "Requires adapter firmware support". Gate: `OcbmClient.supportsPhoneDisconnect` (false: OCBM has no verb and no capability bit). It used to send `MGMT_RESTART_WIRELESS` in disguise. Shown disabled rather than hidden so the driver sees WHY; enabling it later is the one-line cap check | screenshot `03_control_tab` |
+| Disconnect Phone | **Removed in 1.00.** It was disabled with "Requires adapter firmware support" (OCBM has no phone-disconnect verb or capability bit) and is no longer planned. It used to send `MGMT_RESTART_WIRELESS` in disguise | screenshot `03_control_tab` |
 | Restart Wireless (new) | `MGMT_RESTART_WIRELESS`, confirmed; the text says a wired phone is not affected | live: ACK status=0, no SESSION_EVENT / PROJ_MODE / BOX_HEALTH change, wired CarPlay stayed up |
 | Reboot Adapter | `MGMT_REBOOT`, confirmed; dialog now says ~50 s and warns about the USB permission prompt after re-enumeration | dialog screenshot |
 | Disconnect Adapter | `CarlinkManager.disconnect()` = `stopImpl` under the lifecycle mutex on IO, now confirmed; the stop path resets the status line to "Disconnected" | dialog screenshot |
