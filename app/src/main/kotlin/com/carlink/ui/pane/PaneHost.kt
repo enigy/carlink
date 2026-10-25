@@ -1,7 +1,5 @@
 package com.carlink.ui.pane
 
-import android.text.format.DateFormat
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,23 +19,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.carlink.CarlinkManager
+import com.carlink.callui.CallRoster
 import com.carlink.logging.logInfo
-import kotlinx.coroutines.delay
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
+import com.carlink.ocbm.Ocbm
 
 /**
  * Carlink3's side of the split layout (Settings › Display › Layout), laid over the part of the video
@@ -45,6 +36,8 @@ import java.time.format.DateTimeFormatter
  * ([CarlinkManager.viewArea]), so the pane follows every step of a Dock resize, whoever asked for it:
  * Settings, the pane's own full-screen button, or CarPlay's Dock button. While CarPlay has the whole
  * frame but a split is declared, a small tab at the pane's edge brings the split back.
+ *
+ * The card: a call while the iPhone reports one, else the music playing, else the clock.
  *
  * Sits ABOVE the SurfaceView and takes its own touches, so CarPlay — which still normalises touch over
  * the whole frame — never sees a tap meant for the pane.
@@ -62,10 +55,7 @@ fun SplitPane(
             val fraction = r.paneFraction
             if (fraction > 0f) {
                 PaneHost(
-                    onExpand = {
-                        logInfo("[UI_ACTION] Pane: CarPlay full screen", tag = "UI")
-                        carlinkManager.requestViewArea(0)
-                    },
+                    carlinkManager,
                     modifier =
                         Modifier
                             .fillMaxHeight()
@@ -85,13 +75,21 @@ fun SplitPane(
     }
 }
 
-/** The pane itself: a header with the full-screen button, then the card. Cards beyond the clock come later. */
+/** The pane itself: a header naming the card with the full-screen button, then the card. */
 @Composable
 private fun PaneHost(
-    onExpand: () -> Unit,
+    carlinkManager: CarlinkManager,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
+    val call by carlinkManager.callPresentationFlow.collectAsState()
+    val media by carlinkManager.nowPlaying.collectAsState()
+    val title =
+        when {
+            call != CallRoster.Presentation.None -> "Phone"
+            media.hasTrack -> media.info.appName?.takeIf { it.isNotBlank() } ?: "Music"
+            else -> "Carlink3"
+        }
     Surface(
         // Every touch that lands here is the pane's: nothing falls through to the SurfaceView.
         modifier = modifier.pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
@@ -99,12 +97,29 @@ private fun PaneHost(
     ) {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Carlink3", style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, modifier = Modifier.weight(1f))
-                IconButton(onClick = onExpand, modifier = Modifier.size(56.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant, modifier = Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        logInfo("[UI_ACTION] Pane: CarPlay full screen", tag = "UI")
+                        carlinkManager.requestViewArea(0)
+                    },
+                    modifier = Modifier.size(56.dp),
+                ) {
                     Icon(Icons.Default.Fullscreen, contentDescription = "CarPlay full screen", modifier = Modifier.size(32.dp), tint = colors.onSurfaceVariant)
                 }
             }
-            ClockCard(modifier = Modifier.weight(1f).fillMaxWidth())
+            val card = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)
+            when {
+                call != CallRoster.Presentation.None ->
+                    CallCard(
+                        presentation = call,
+                        onAnswer = { carlinkManager.sendTelephony(Ocbm.TEL_ANSWER) },
+                        onEnd = { carlinkManager.sendTelephony(Ocbm.TEL_END) },
+                        modifier = card,
+                    )
+                media.hasTrack -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = card)
+                else -> ClockCard(modifier = card)
+            }
         }
     }
 }
@@ -126,24 +141,3 @@ private fun SplitTab(
         }
     }
 }
-
-/** The idle card: the time, in the head unit's 12- or 24-hour style, and the date. Ticks on the second. */
-@Composable
-private fun ClockCard(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val timeFormat = remember(context) { DateTimeFormatter.ofPattern(if (DateFormat.is24HourFormat(context)) "H:mm" else "h:mm") }
-    var now by remember { mutableStateOf(LocalDateTime.now()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = LocalDateTime.now()
-            delay(MILLIS_PER_SECOND - System.currentTimeMillis() % MILLIS_PER_SECOND)
-        }
-    }
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text(now.format(timeFormat), style = MaterialTheme.typography.displayLarge.copy(fontSize = 112.sp, lineHeight = 120.sp))
-        Text(now.format(DATE_FORMAT), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-private val DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
-private const val MILLIS_PER_SECOND = 1_000L

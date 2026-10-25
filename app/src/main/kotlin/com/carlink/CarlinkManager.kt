@@ -40,8 +40,10 @@ import com.carlink.logging.logError
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.media.CarlinkMediaBrowserService
+import com.carlink.media.MediaControl
 import com.carlink.media.MediaSessionManager
 import com.carlink.media.NowPlayingInfo
+import com.carlink.media.NowPlayingState
 import com.carlink.media.PlayStatus
 import com.carlink.media.TrackChangeHold
 import com.carlink.navigation.LaneActivity
@@ -393,6 +395,14 @@ class CarlinkManager(
     @Volatile var declaredSplitArea: PixelRect? = null
         private set
 
+    /** The track and its playback for the split layout's media card: the media session's merge, as a flow. */
+    private val nowPlayingState = MutableStateFlow(NowPlayingState.NONE)
+    val nowPlaying: StateFlow<NowPlayingState> = nowPlayingState.asStateFlow()
+
+    /** [callPresentation] as a flow, for the split layout's call card. */
+    private val callPresentationState = MutableStateFlow<CallRoster.Presentation>(CallRoster.Presentation.None)
+    val callPresentationFlow: StateFlow<CallRoster.Presentation> = callPresentationState.asStateFlow()
+
     /** The reduced call view the notification currently shows. */
     val callPresentation: CallRoster.Presentation get() = callNotificationHost?.presentation ?: CallRoster.Presentation.None
 
@@ -687,6 +697,9 @@ class CarlinkManager(
     private var lastAlbumCover: ByteArray? = null
     private var lastDuration: Long = 0L
     private var lastPosition: Long = 0L
+
+    /** `elapsedRealtime()` when [lastPosition] last came from the phone, so the media card can run it forward; 0 = never. */
+    private var lastPositionAtMs: Long = 0L
     private var lastIsPlaying: Boolean = true
 
     /** The phone's last `playbackStatus`, for [logPlayStatusChange]; null until the first record that carries one. */
@@ -770,8 +783,10 @@ class CarlinkManager(
         lastAlbumCover = null
         lastDuration = 0L
         lastPosition = 0L
+        lastPositionAtMs = 0L
         lastIsPlaying = true
         lastPlayStatus = null
+        nowPlayingState.value = NowPlayingState.NONE
         heldLengthJob?.cancel()
         heldLength = null
         synchronized(artworkById) { artworkById.clear() }
@@ -1464,6 +1479,12 @@ class CarlinkManager(
         scope.launch(Dispatchers.IO) { c.sendCommand(Ocbm.CMD_VIEW_AREA, index.toByte()) }
     }
 
+    /** A transport button from the pane's media card: the same HID tap the steering wheel and the media session send. */
+    fun mediaControl(control: MediaControl) {
+        logInfo("[UI_ACTION] pane media ${control.name}", tag = Logger.Tags.MEDIA_SESSION)
+        sendMediaButton(control.button)
+    }
+
     /**
      * Limit CarPlay while driving flipped mid-drive, or a different iPhone's choice loaded: push the
      * result now, not at the next gear change.
@@ -1734,6 +1755,7 @@ class CarlinkManager(
     }
 
     private fun notifyCallListeners(p: CallRoster.Presentation) {
+        callPresentationState.value = p
         val snapshot = synchronized(callStateListeners) { callStateListeners.toList() }
         snapshot.forEach { it.onCallPresentation(p) }
     }
@@ -3003,7 +3025,7 @@ class CarlinkManager(
     private fun attachArtwork(id: Int) {
         val jpeg = synchronized(artworkById) { artworkById[id] } ?: return
         lastAlbumCover = jpeg
-        mediaSessionManager?.updateMetadata(nowPlayingInfo())
+        publishMetadata()
     }
 
     /**
@@ -3063,7 +3085,7 @@ class CarlinkManager(
         heldLength = null
         lastDuration = held
         logInfo("[MEDIA] no new title within ${TrackChangeHold.TITLE_WAIT_MS}ms; length ${held}ms sent under the current title", tag = Logger.Tags.MEDIA_SESSION)
-        mediaSessionManager?.updateMetadata(nowPlayingInfo())
+        publishMetadata()
     }
 
     /**
@@ -3075,6 +3097,14 @@ class CarlinkManager(
     private fun pushPlaybackState(phoneSaysStopped: Boolean = false) {
         val playing = !phoneSaysStopped && (lastIsPlaying || mediaPlayer?.isAudible == true)
         mediaSessionManager?.updatePlaybackState(playing = playing, position = lastPosition)
+        nowPlayingState.value = NowPlayingState(nowPlayingInfo(), playing, lastPosition, lastPositionAtMs)
+    }
+
+    /** The cached track to the media session and the pane's media card together. Main thread. */
+    private fun publishMetadata() {
+        val info = nowPlayingInfo()
+        mediaSessionManager?.updateMetadata(info)
+        nowPlayingState.value = nowPlayingState.value.copy(info = info)
     }
 
     /** The cached track as one value for the session. Main thread (all `lastMedia*` writers are). */
@@ -3149,6 +3179,7 @@ class CarlinkManager(
 
         lastDuration = duration
         lastPosition = position
+        if (elapsed != null) lastPositionAtMs = SystemClock.elapsedRealtime()
         lastIsPlaying = isPlaying
 
         // Broad predicate so incremental artist/album/appName/duration-only updates are not
@@ -3160,7 +3191,7 @@ class CarlinkManager(
                 (duration > 0 && duration != previousDuration)
 
         if (metadataChanged) {
-            mediaSessionManager?.updateMetadata(nowPlayingInfo())
+            publishMetadata()
             CarlinkMediaBrowserService.updateNowPlaying(lastMediaSongName, lastMediaArtistName)
         }
 
