@@ -57,6 +57,10 @@ fun SplitPane(
 ) {
     val rect by carlinkManager.viewArea.collectAsState()
     val declared = carlinkManager.declaredSplitArea
+    // The cover lives here, not in the pane: it stays decoded and ready while the pane is hidden
+    // behind full-screen CarPlay, and while a call card has the pane.
+    val media by carlinkManager.nowPlaying.collectAsState()
+    val art = rememberAlbumArt(media.info.albumArt)
     val r = rect
     if (r != null) {
         Box(modifier = modifier) {
@@ -64,6 +68,7 @@ fun SplitPane(
             if (fraction > 0f) {
                 PaneHost(
                     carlinkManager,
+                    art = art,
                     modifier =
                         Modifier
                             .fillMaxHeight()
@@ -87,6 +92,8 @@ fun SplitPane(
 @Composable
 private fun PaneHost(
     carlinkManager: CarlinkManager,
+    /** The current cover, kept by the caller; shown only behind the music card. */
+    art: ImageBitmap?,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -94,8 +101,8 @@ private fun PaneHost(
     val media by carlinkManager.nowPlaying.collectAsState()
     val showCall = call != CallRoster.Presentation.None
     val showMedia = !showCall && media.hasTrack
-    // A call takes the pane with the theme's plain background, not the music's cover.
-    val art = rememberAlbumArt(media.info.albumArt, active = showMedia)
+    // A call takes the pane with the theme's plain background; the cover waits for the music's return.
+    val art = if (showMedia) art else null
     val look = paneLook(art, rememberArtIsDark(art), colors.onSurface)
     val title = paneTitle(showCall, showMedia, media.info.appName)
     Surface(
@@ -195,8 +202,8 @@ private fun SplitTab(
     }
 }
 
-/** CarPlay's own corner radius on this panel is not known here; 24 dp read as not quite it (10-25). */
-private val PANE_CORNER = 32.dp
+/** CarPlay's corner radius on the truck's panel, measured off a photo of the two side by side (10-25): about 3.5x the 32 dp that was here. */
+private val PANE_CORNER = 112.dp
 private val INK = Color(0xFF14181E)
 private const val SCRIM_TOP = 0.45f
 private const val SCRIM_BOTTOM = 0.75f

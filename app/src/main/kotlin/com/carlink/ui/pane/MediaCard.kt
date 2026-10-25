@@ -27,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -45,29 +44,31 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.carlink.media.MediaControl
 import com.carlink.media.NowPlayingState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
- * The album art for the whole pane, decoded once per track. The last art stays up while the next
- * track's has not arrived (iOS sends the title first and the art a moment later), so there is no
- * placeholder between songs: [MediaBackdrop] crossfades straight from one cover to the next.
+ * The album art for the whole pane. The last cover stays up while the next track's has not arrived
+ * (iOS sends the title first and the art a moment later), so there is no placeholder between songs:
+ * [MediaBackdrop] crossfades straight from one cover to the next. A new cover is shown only once it
+ * has stood for [ART_SETTLE_MS]: on a track change Spotify first sends a stand-in image and the real
+ * cover a moment later (seen in the Spotify app itself, 10-25), and a cover replaced inside the
+ * window is never shown. Decoded off the main thread.
+ *
+ * Call this where it stays composed — the pane's host, not the pane — so the cover is kept, and the
+ * next one decoded, while the pane is hidden behind full-screen CarPlay or a call card.
  */
 @Composable
-internal fun rememberAlbumArt(
-    bytes: ByteArray?,
-    /** False while another card is up (a call): no art then, and the last cover is forgotten. */
-    active: Boolean,
-): ImageBitmap? {
-    var last by remember { mutableStateOf<ImageBitmap?>(null) }
-    val decoded = remember(bytes, active) { if (active) bytes?.let { b -> BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() } else null }
-    SideEffect {
-        if (!active) {
-            last = null
-        } else if (decoded != null) {
-            last = decoded
-        }
+internal fun rememberAlbumArt(bytes: ByteArray?): ImageBitmap? {
+    var shown by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(bytes) {
+        if (bytes == null) return@LaunchedEffect
+        delay(ART_SETTLE_MS)
+        val decoded = withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+        if (decoded != null) shown = decoded
     }
-    return if (active) decoded ?: last else null
+    return shown
 }
 
 /** Whether [image] is dark overall ([ArtTone]); true without art, for the pane's own dark surface. */
@@ -195,6 +196,7 @@ private fun TransportRow(
 
 private const val PROGRESS_TICK_MS = 250L
 private const val ART_FADE_MS = 600
+private const val ART_SETTLE_MS = 1_000L
 private const val TONE_SAMPLE = 16
 private const val SECONDARY_ALPHA = 0.72f
 private const val TRACK_ALPHA = 0.25f

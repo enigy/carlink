@@ -57,6 +57,9 @@ internal fun CallCard(
 ) {
     val call = presentation.call ?: return
     var keypad by remember(call.key) { mutableStateOf(false) }
+    // The phone does not report its mute state over iAP2, so the button remembers its own taps for
+    // the call; a mute made on the phone itself is not reflected here.
+    var muted by remember(call.key) { mutableStateOf(false) }
     val incoming = presentation is CallRoster.Presentation.Incoming
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(modifier = Modifier.weight(1f))
@@ -76,7 +79,17 @@ internal fun CallCard(
         }
         StatusLine(presentation)
         Spacer(modifier = Modifier.weight(1f))
-        CallButtons(incoming = incoming, keypad = keypad, onKeypad = { keypad = !keypad }, onButton = onButton)
+        CallButtons(
+            incoming = incoming,
+            keypad = keypad,
+            muted = muted,
+            onKeypad = { keypad = !keypad },
+            onMute = {
+                muted = !muted
+                onButton(Ocbm.TEL_MUTE)
+            },
+            onButton = onButton,
+        )
     }
 }
 
@@ -163,18 +176,28 @@ private fun Keypad(onKey: (Char) -> Unit) {
     }
 }
 
+@Suppress("LongParameterList") // the two states, their toggles and the HID path
 @Composable
 private fun CallButtons(
     incoming: Boolean,
     keypad: Boolean,
+    muted: Boolean,
     onKeypad: () -> Unit,
+    onMute: () -> Unit,
     onButton: (Byte) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val extra = LocalCarlinkColors.current
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         if (!incoming) {
-            PaneButton(Icons.Default.MicOff, "Mute", onClick = { onButton(Ocbm.TEL_MUTE) }, size = 72.dp, fill = colors.surfaceContainerHighest, tint = colors.onSurface)
+            PaneButton(
+                Icons.Default.MicOff,
+                if (muted) "Unmute" else "Mute",
+                onClick = onMute,
+                size = 72.dp,
+                fill = if (muted) colors.primaryContainer else colors.surfaceContainerHighest,
+                tint = if (muted) colors.onPrimaryContainer else colors.onSurface,
+            )
             PaneButton(
                 Icons.Default.Dialpad,
                 if (keypad) "Hide keypad" else "Keypad",
