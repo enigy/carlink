@@ -94,7 +94,8 @@ private fun PaneHost(
     val media by carlinkManager.nowPlaying.collectAsState()
     val showCall = call != CallRoster.Presentation.None
     val showMedia = !showCall && media.hasTrack
-    val art = rememberAlbumArt(if (showMedia) media.info.albumArt else null)
+    // A call takes the pane with the theme's plain background, not the music's cover.
+    val art = rememberAlbumArt(media.info.albumArt, active = showMedia)
     val look = paneLook(art, rememberArtIsDark(art), colors.onSurface)
     val title = paneTitle(showCall, showMedia, media.info.appName)
     Surface(
@@ -194,7 +195,8 @@ private fun SplitTab(
     }
 }
 
-private val PANE_CORNER = 24.dp
+/** CarPlay's own corner radius on this panel is not known here; 24 dp read as not quite it (10-25). */
+private val PANE_CORNER = 32.dp
 private val INK = Color(0xFF14181E)
 private const val SCRIM_TOP = 0.45f
 private const val SCRIM_BOTTOM = 0.75f

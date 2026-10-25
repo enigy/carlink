@@ -53,11 +53,21 @@ import kotlinx.coroutines.delay
  * placeholder between songs: [MediaBackdrop] crossfades straight from one cover to the next.
  */
 @Composable
-internal fun rememberAlbumArt(bytes: ByteArray?): ImageBitmap? {
+internal fun rememberAlbumArt(
+    bytes: ByteArray?,
+    /** False while another card is up (a call): no art then, and the last cover is forgotten. */
+    active: Boolean,
+): ImageBitmap? {
     var last by remember { mutableStateOf<ImageBitmap?>(null) }
-    val decoded = remember(bytes) { bytes?.let { b -> BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() } }
-    SideEffect { if (decoded != null) last = decoded }
-    return decoded ?: last
+    val decoded = remember(bytes, active) { if (active) bytes?.let { b -> BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() } else null }
+    SideEffect {
+        if (!active) {
+            last = null
+        } else if (decoded != null) {
+            last = decoded
+        }
+    }
+    return if (active) decoded ?: last else null
 }
 
 /** Whether [image] is dark overall ([ArtTone]); true without art, for the pane's own dark surface. */
@@ -165,8 +175,11 @@ private fun TransportRow(
 ) {
     val content = LocalContentColor.current
     val onDisc = if (content.luminance() > HALF) Color.Black else Color.White
+    // Previous and next on their own discs, three quarters the size of play's, ringed in the text colour.
+    val ring = content.copy(alpha = RING_ALPHA)
+    val discFill = content.copy(alpha = DISC_ALPHA)
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        PaneButton(Icons.Default.SkipPrevious, "Previous", onClick = { onControl(MediaControl.PREVIOUS) })
+        PaneButton(Icons.Default.SkipPrevious, "Previous", onClick = { onControl(MediaControl.PREVIOUS) }, size = 66.dp, iconSize = 36.dp, fill = discFill, border = ring)
         PaneButton(
             if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
             if (playing) "Pause" else "Play",
@@ -176,7 +189,7 @@ private fun TransportRow(
             fill = content,
             tint = onDisc,
         )
-        PaneButton(Icons.Default.SkipNext, "Next", onClick = { onControl(MediaControl.NEXT) })
+        PaneButton(Icons.Default.SkipNext, "Next", onClick = { onControl(MediaControl.NEXT) }, size = 66.dp, iconSize = 36.dp, fill = discFill, border = ring)
     }
 }
 
@@ -185,4 +198,6 @@ private const val ART_FADE_MS = 600
 private const val TONE_SAMPLE = 16
 private const val SECONDARY_ALPHA = 0.72f
 private const val TRACK_ALPHA = 0.25f
+private const val RING_ALPHA = 0.6f
+private const val DISC_ALPHA = 0.14f
 private const val HALF = 0.5f
