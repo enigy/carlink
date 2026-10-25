@@ -42,6 +42,8 @@ import com.carlink.logging.logWarn
 import com.carlink.media.CarlinkMediaBrowserService
 import com.carlink.media.MediaSessionManager
 import com.carlink.media.NowPlayingInfo
+import com.carlink.media.PlayStatus
+import com.carlink.media.TrackChangeHold
 import com.carlink.navigation.LaneActivity
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.OcbmNavigationFeed
@@ -671,6 +673,10 @@ class CarlinkManager(
     /** The phone's last `playbackStatus`, for [logPlayStatusChange]; null until the first record that carries one. */
     private var lastPlayStatus: Int? = null
 
+    /** A new song's length waiting for its title ([songLength]), and the timeout that publishes it anyway. */
+    private var heldLength: Long? = null
+    private var heldLengthJob: Job? = null
+
     /**
      * Album art arrives out of band from the track that references it, so it is cached by id
      * until the two meet.
@@ -747,6 +753,8 @@ class CarlinkManager(
         lastPosition = 0L
         lastIsPlaying = true
         lastPlayStatus = null
+        heldLengthJob?.cancel()
+        heldLength = null
         synchronized(artworkById) { artworkById.clear() }
         pendingArtworkId = null
         _connectedBtMac = null
@@ -2288,6 +2296,8 @@ class CarlinkManager(
                     voiceRouter?.releaseQuietSinks("media audible again", TransientFocusPolicy.MEDIA_RESUME_MIN_QUIET_MS)
                 },
                 onFocusEvent = { logInfo("[FOCUS] $it", tag = Logger.Tags.ADAPTR) },
+                // Music became audible: report PLAYING now, before the phone's metadata catches up.
+                onAudible = { scope.launch { pushPlaybackState() } },
             ).also { it.start() }
         mediaPlayer = player
         val router =
@@ -2976,10 +2986,8 @@ class CarlinkManager(
     }
 
     /**
-     * Each change in the phone's own play status, to the drive log. v35 test (2026-10-24): the HUD
-     * showed the song title on a steering-wheel skip up to v32 and stopped with v34, which kept the
-     * session PLAYING through the seek statuses; these lines let each press be matched to what the
-     * phone, and so the session, said at that moment.
+     * Each change in the phone's own play status, to the drive log (added in v35), so each
+     * steering-wheel press can be matched to what the phone, and so the session, said at that moment.
      */
     private fun logPlayStatusChange(status: Int?) {
         if (status == null || status == lastPlayStatus) return
@@ -2994,6 +3002,58 @@ class CarlinkManager(
             }
         logInfo("[MEDIA] phone playbackStatus ${lastPlayStatus ?: "-"} -> $status ($name)", tag = Logger.Tags.MEDIA_SESSION)
         lastPlayStatus = status
+    }
+
+    /**
+     * The song length to publish for this record ([TrackChangeHold]). A new song's length that arrives
+     * ahead of its title is held and the current length kept, so the car never gets the old title with
+     * the new length; the title then takes the held length instead of a cleared one. If no title comes
+     * within [TrackChangeHold.TITLE_WAIT_MS], the length is published under the current title.
+     */
+    private fun songLength(
+        titleChanged: Boolean,
+        reported: Long?,
+        elapsed: Long?,
+        current: Long,
+    ): Long {
+        if (titleChanged) {
+            heldLengthJob?.cancel()
+            val held = heldLength
+            heldLength = null
+            if (held != null && reported == null) logInfo("[MEDIA] title arrived after its length; both sent together", tag = Logger.Tags.MEDIA_SESSION)
+            return reported ?: held ?: lastDuration
+        }
+        if (!TrackChangeHold.startsHold(reported, current, elapsed)) return reported ?: lastDuration
+        if (heldLength == null) {
+            logInfo("[MEDIA] new song length ${reported}ms arrived before its title; holding it", tag = Logger.Tags.MEDIA_SESSION)
+            heldLengthJob =
+                scope.launch {
+                    delay(TrackChangeHold.TITLE_WAIT_MS)
+                    releaseHeldLength()
+                }
+        }
+        heldLength = reported
+        return current
+    }
+
+    /** No title came for a held length: publish it under the current title. Main thread. */
+    private fun releaseHeldLength() {
+        val held = heldLength ?: return
+        heldLength = null
+        lastDuration = held
+        logInfo("[MEDIA] no new title within ${TrackChangeHold.TITLE_WAIT_MS}ms; length ${held}ms sent under the current title", tag = Logger.Tags.MEDIA_SESSION)
+        mediaSessionManager?.updateMetadata(nowPlayingInfo())
+    }
+
+    /**
+     * The session's PLAYING bit, which AAOS uses to pick the session the steering-wheel keys go to.
+     * Audible music being rendered counts as playing even while the phone's metadata lags or says seek
+     * ([MediaAudioPlayer.isAudible]); only the phone's own stop/pause ([phoneSaysStopped]) overrides it,
+     * so a true pause is reported at once rather than after the audible tail.
+     */
+    private fun pushPlaybackState(phoneSaysStopped: Boolean = false) {
+        val playing = !phoneSaysStopped && (lastIsPlaying || mediaPlayer?.isAudible == true)
+        mediaSessionManager?.updatePlaybackState(playing = playing, position = lastPosition)
     }
 
     /** The cached track as one value for the session. Main thread (all `lastMedia*` writers are). */
@@ -3030,8 +3090,9 @@ class CarlinkManager(
         val previousAlbum = lastMediaAlbumName
         val previousAppName = lastMediaAppName
         val previousDuration = lastDuration
+        val titleChanged = newSongName != null && newSongName != previousSongName
 
-        if (newSongName != null && newSongName != previousSongName) {
+        if (titleChanged) {
             lastMediaSongName = null
             lastMediaArtistName = null
             lastMediaAlbumName = null
@@ -3048,11 +3109,21 @@ class CarlinkManager(
         newSongName?.let { lastMediaSongName = it }
         val textChanged = mergeTextFields(obj, previousArtist, previousAlbum, previousAppName) or mergeTrackFields(obj)
         val albumCover = mergeArtwork(obj)
-        val duration = if (obj.has("durationMs")) obj.optLong("durationMs") else lastDuration
-        val position = if (obj.has("elapsedMs")) obj.optLong("elapsedMs") else lastPosition
-        // playbackStatus: 0 stop, 1 play, 2 pause (3/4 seek). 0 is the clear-snapshot signal.
+        val elapsed = if (obj.has("elapsedMs")) obj.optLong("elapsedMs") else null
+        val duration =
+            songLength(
+                titleChanged = titleChanged,
+                reported = if (obj.has("durationMs")) obj.optLong("durationMs") else null,
+                elapsed = elapsed,
+                current = previousDuration,
+            )
+        val position = elapsed ?: lastPosition
+        // playbackStatus: 0 stop, 1 play, 2 pause, 3/4 seek. 0 is the clear-snapshot signal. A seek is
+        // not a pause ([PlayStatus]): treating it as one had the session reporting PAUSED for 17-24 s of
+        // audible music after each track change (10-23), and AAOS routes the steering-wheel keys to
+        // whichever session is PLAYING, so presses in those windows went to the radio.
         val playStatus = if (obj.has("playbackStatus")) obj.optInt("playbackStatus") else null
-        val isPlaying = if (playStatus != null) playStatus == 1 else lastIsPlaying
+        val isPlaying = PlayStatus.playing(playStatus, lastIsPlaying)
         logPlayStatusChange(playStatus)
 
         lastDuration = duration
@@ -3062,7 +3133,7 @@ class CarlinkManager(
         // Broad predicate so incremental artist/album/appName/duration-only updates are not
         // suppressed. Position-only ticks still short-circuit because none of these change.
         val metadataChanged =
-            (newSongName != null && newSongName != previousSongName) ||
+            titleChanged ||
                 textChanged ||
                 albumCover != null ||
                 (duration > 0 && duration != previousDuration)
@@ -3072,7 +3143,7 @@ class CarlinkManager(
             CarlinkMediaBrowserService.updateNowPlaying(lastMediaSongName, lastMediaArtistName)
         }
 
-        mediaSessionManager?.updatePlaybackState(playing = isPlaying, position = position)
+        pushPlaybackState(phoneSaysStopped = PlayStatus.stopped(playStatus))
         markStreamingIfFirstMedia()
     }
 
