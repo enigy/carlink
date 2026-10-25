@@ -75,7 +75,7 @@ data class LayoutConfig(
     ): PixelRect? = if (split) SplitViewArea.carPlayArea(panelW, panelH, layout.paneOnLeft, width.percent) else null
 
     companion object {
-        const val DEFAULT_CORNER_DP = 48
+        const val DEFAULT_CORNER_DP = 52
         val CORNER_RANGE_DP = 8..128
     }
 }
