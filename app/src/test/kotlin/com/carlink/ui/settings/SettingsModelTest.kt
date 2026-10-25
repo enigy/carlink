@@ -96,6 +96,10 @@ class SettingsModelTest {
     @Test
     fun preferenceSummariesUseTheChoiceWords() {
         assertEquals("Fullscreen · Chevrolet loading screen", SettingsModel.displaySummary(DisplayMode.FULLSCREEN_IMMERSIVE, BackgroundLogoConfig.CHEVROLET))
+        assertEquals(
+            "Fullscreen · Media on right · Chevrolet loading screen",
+            SettingsModel.displaySummary(DisplayMode.FULLSCREEN_IMMERSIVE, BackgroundLogoConfig.CHEVROLET, PaneLayout.MEDIA_RIGHT),
+        )
         assertEquals("Automatic mic · Standard buffer", SettingsModel.callsSummary(CallMicConfig.AUTOMATIC, CallBufferConfig.STANDARD))
         assertEquals("Car call path · Low buffer", SettingsModel.callsSummary(CallMicConfig.CAR_CALL_PATH, CallBufferConfig.LOW))
         assertEquals("Directions on", SettingsModel.clusterSummary(true))

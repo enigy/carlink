@@ -87,10 +87,14 @@ object SettingsModel {
         return "$head · $knownCount known"
     }
 
+    /** Display: the mode, the split layout when one is on, and the loading screen. */
     fun displaySummary(
         mode: DisplayMode,
         logo: BackgroundLogoConfig,
-    ): String = "${mode.label} · " + if (logo == BackgroundLogoConfig.NONE) "plain loading screen" else "${logo.brandName} loading screen"
+        layout: PaneLayout = PaneLayout.FULL,
+    ): String =
+        mode.label + (if (layout.split) " · ${layout.label}" else "") + " · " +
+            if (logo == BackgroundLogoConfig.NONE) "plain loading screen" else "${logo.brandName} loading screen"
 
     fun callsSummary(
         mic: CallMicConfig,

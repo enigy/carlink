@@ -74,6 +74,8 @@ import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.settings.DisplayPane
 import com.carlink.ui.settings.DriverProfiles
 import com.carlink.ui.settings.LaneGuidanceStore
+import com.carlink.ui.settings.LayoutConfig
+import com.carlink.ui.settings.LayoutStore
 import com.carlink.ui.settings.LocalPaneScroll
 import com.carlink.ui.settings.PaneScroll
 import com.carlink.ui.settings.PhonesPane
@@ -211,12 +213,15 @@ private fun SettingsBody(
         savedMode = mode
         if (outcome == DisplayModeOutcome.DEFERRED) showDeferredNotice = true
     }
+    val applyLayout: (LayoutConfig) -> Unit = { config ->
+        if (panes.actions.onLayoutSelected(config) == DisplayModeOutcome.DEFERRED) showDeferredNotice = true
+    }
 
     Box(modifier = modifier.fillMaxWidth()) {
         if (twoPane) {
             Row(modifier = Modifier.fillMaxSize()) {
                 CategoryList(selected, summaries, onSelect = pick, modifier = Modifier.width((window.widthDp * 0.33f).dp.coerceIn(360.dp, 780.dp)))
-                DetailPane(selected, modifier = Modifier.weight(1f)) { CategoryPane(selected, panes, savedMode, applyMode, openProfile) }
+                DetailPane(selected, modifier = Modifier.weight(1f)) { CategoryPane(selected, panes, savedMode, applyMode, applyLayout, openProfile) }
             }
         } else if (!paneOpen) {
             CategoryList(selected, summaries, onSelect = pick, modifier = Modifier.fillMaxWidth())
@@ -224,25 +229,27 @@ private fun SettingsBody(
             BackHandler(enabled = visible) { paneOpen = false }
             DetailPane(selected, modifier = Modifier.fillMaxSize()) {
                 BackToCategories(onClick = { paneOpen = false })
-                CategoryPane(selected, panes, savedMode, applyMode, openProfile)
+                CategoryPane(selected, panes, savedMode, applyMode, applyLayout, openProfile)
             }
         }
         if (showDeferredNotice) DisplayModeDeferredNotice(onDismiss = { showDeferredNotice = false })
     }
 }
 
+@Suppress("LongParameterList") // the category, its context and the callbacks Display and Phones need
 @Composable
 private fun CategoryPane(
     category: SettingsCategory,
     panes: PaneContext,
     savedMode: DisplayMode,
     onApplyMode: (DisplayMode) -> Unit,
+    onApplyLayout: (LayoutConfig) -> Unit,
     // Show an iPhone's Cluster and Driving settings (the Phones list's Settings button).
     onOpenProfile: (mac: String) -> Unit,
 ) {
     when (category) {
         SettingsCategory.PHONES -> PhonesPane(panes.carlinkManager, panes.live, onOpenProfile = onOpenProfile)
-        SettingsCategory.DISPLAY -> DisplayPane(savedMode = savedMode, onApply = onApplyMode)
+        SettingsCategory.DISPLAY -> DisplayPane(savedMode = savedMode, onApply = onApplyMode, onApplyLayout = onApplyLayout)
         SettingsCategory.CALLS -> CallsPane(panes.carlinkManager)
         SettingsCategory.CLUSTER -> ClusterPane(panes.live, onResetCluster = panes.actions.onResetCluster)
         SettingsCategory.TROUBLESHOOT -> TroubleshootPane(panes.carlinkManager, panes.live, connected = panes.connected)
@@ -262,10 +269,11 @@ private fun categorySummaries(
     val mic by callAudio.callMicFlow.collectAsState()
     val buffer by callAudio.callBufferFlow.collectAsState()
     val laneGuidance by remember { LaneGuidanceStore.get(context) }.flow.collectAsState()
+    val layout by remember { LayoutStore.get(context) }.flow.collectAsState()
     val live = panes.live
     return mapOf(
         SettingsCategory.PHONES to SettingsModel.phonesSummary(live.connectedPhone, live.devices.size),
-        SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo),
+        SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo, layout.layout),
         SettingsCategory.CALLS to SettingsModel.callsSummary(mic, buffer),
         SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn, laneGuidance.anyOn),
         SettingsCategory.TROUBLESHOOT to SettingsModel.troubleshootSummary(live.driveLog),

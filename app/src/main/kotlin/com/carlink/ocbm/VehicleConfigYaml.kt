@@ -44,6 +44,15 @@ data class VehicleConfigSpec(
     val safeWidth: Int = width,
     val safeHeight: Int = height,
     val drawUIOutsideSafeArea: Boolean = false,
+    /**
+     * A second main view area — CarPlay's part of the split layout ([SplitViewArea]) — or null for
+     * the one full-panel area, which keeps the document byte-identical to before this existed.
+     * Emitted as `viewAreas[1]` with the box's `initial: true` extension key (the session STARTS in
+     * it; `vehicle_config.rs::ViewAreaEntry`) and arms `accessoryConfig.enablesViewAreas`. The box
+     * derives `viewAreaTransitionControl`, `initialViewArea` and `adjacentViewAreas` for `/info`
+     * itself (`info.rs::view_area_2`); none of those is a YAML key.
+     */
+    val viewArea2: PixelRect? = null,
     val wireless: Boolean = true,
     val pairing: String = "just_works",
     /** CarPlay `/info rightHandDrive`: puts CarPlay's dock and status bar on the driver's side. */
@@ -119,6 +128,11 @@ data class VehicleConfigSpec(
         PanelRule.verdict(width, height)?.let { throw IllegalArgumentException(it) }
         ViewAreaRule.teardownVerdict(PixelRect(safeOriginX, safeOriginY, safeWidth, safeHeight), width, height)?.let {
             throw IllegalArgumentException("safeArea: $it")
+        }
+        // The split's CarPlay area: a teardown rule ends the session, the floor locks it out black.
+        viewArea2?.let { a ->
+            ViewAreaRule.teardownVerdict(a, width, height)?.let { throw IllegalArgumentException("viewArea 2: $it") }
+            ViewAreaRule.floorVerdict(a.width, a.height)?.let { throw IllegalArgumentException("viewArea 2: $it") }
         }
     }
 
@@ -311,6 +325,23 @@ object VehicleConfigYaml {
         line("        width: ${s.safeWidth}")
         line("        height: ${s.safeHeight}")
         line("      drawUIOutsideSafeArea: ${s.drawUIOutsideSafeArea}")
+        // The split layout's CarPlay area, index 1. Its safeArea is the area itself: the box reads
+        // only `viewArea` and `initial` from this entry (`second_main_view_area`), the safe area it
+        // advertises for the split comes from entry 0. Key order follows the entry above.
+        s.viewArea2?.let { a ->
+            line("    - viewArea:")
+            line("        originX: ${a.x}")
+            line("        originY: ${a.y}")
+            line("        width: ${a.width}")
+            line("        height: ${a.height}")
+            line("      safeArea:")
+            line("        originX: ${a.x}")
+            line("        originY: ${a.y}")
+            line("        width: ${a.width}")
+            line("        height: ${a.height}")
+            line("      drawUIOutsideSafeArea: false")
+            line("      initial: true")
+        }
         line("    hidConfig:")
         line("      dPadSupport: ${s.dPadSupport}")
         line("      knobSupport: false")
@@ -340,7 +371,10 @@ object VehicleConfigYaml {
         line("  enablesMapAppearance: true")
         line("  enablesCornerMasks: false")
         line("  enablesVideoPlayback: true")
-        line("  enablesViewAreas: false")
+        // Armed with the split layout. The box arms it on its own for a declared second area too,
+        // but a declared feature the config does not claim is the kind of silent gap this file is
+        // about (the areas parse, the Dock button never appears).
+        line("  enablesViewAreas: ${s.viewArea2 != null}")
         line("  enablesEnhancedSiri: false")
         line("  enablesFocusTransfer: false")
         line("  enablesUIContext: false")

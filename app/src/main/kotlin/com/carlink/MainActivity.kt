@@ -62,6 +62,8 @@ import com.carlink.ui.components.LocalSettingsArrival
 import com.carlink.ui.components.SettingsSlideIn
 import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeStore
+import com.carlink.ui.settings.LayoutConfig
+import com.carlink.ui.settings.LayoutStore
 import com.carlink.ui.theme.CarlinkTheme
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
@@ -117,6 +119,14 @@ class MainActivity : ComponentActivity() {
      */
     private lateinit var displayModeStore: DisplayModeStore
     private var displayMode: DisplayMode = DisplayMode.DEFAULT
+
+    /**
+     * Settings › Display › Layout ([LayoutStore]): the split's view areas travel in the pushed config,
+     * so a change rebuilds the session under the same mid-session rule as a display mode.
+     * [appliedLayout] is the one the current manager was built with.
+     */
+    private lateinit var layoutStore: LayoutStore
+    private var appliedLayout: LayoutConfig = LayoutConfig()
 
     /** Carlink2 [210]: is the USB bridge installed? Drives the connecting screen's setup panel. */
     private val bridgeInstalledState = mutableStateOf(true)
@@ -249,6 +259,7 @@ class MainActivity : ComponentActivity() {
         // the content area DisplayProfile.detect() derives matches the bars actually on screen.
         displayModeStore = DisplayModeStore(this)
         displayMode = displayModeStore.get()
+        layoutStore = LayoutStore.get(this)
         appliedDisplayMode = displayMode
         applyDisplayMode()
 
@@ -285,6 +296,7 @@ class MainActivity : ComponentActivity() {
                         CarlinkApp(
                             carlinkManager = manager,
                             onDisplayModeSelected = { onDisplayModeSelected(it) },
+                            onLayoutSelected = { onLayoutSelected(it) },
                             cluster = ClusterHooks(onPhoneConnected = ::onPhoneConnectedRefreshCluster, onResetCluster = ::restartClusterBinding),
                             bridge = BridgeSetup(installed = bridgeInstalledState.value, onOpenFiles = ::openFilesForBridge),
                         )
@@ -434,6 +446,7 @@ class MainActivity : ComponentActivity() {
         // the same barInsets), so touch is normalised over the rectangle iOS encodes for.
         val profile = DisplayProfile.detect(this, appliedDisplayMode.visibleBarTypes)
         activeProfile = profile
+        appliedLayout = layoutStore.current
         val g = profile.geometry
         val cutout = profile.cutout
 
@@ -490,7 +503,8 @@ class MainActivity : ComponentActivity() {
      * `ui/adaptive/WindowLayout.kt`). A content area that actually moved — the panel, the window
      * (split-screen), the bars around it or the safe area — needs a new CT_SUBSCRIBE: the box only
      * knows the geometry it was pushed. The manager is then rebuilt exactly as Reset Connection does.
-     * A live mid-session resize (`CMD_VIEW_AREA`) is NOT used: this app declares a single view area.
+     * A live mid-session resize (`CMD_VIEW_AREA`) is a different thing: it moves CarPlay between the
+     * view areas the session already declared (the split layout), never to a new geometry.
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -534,6 +548,24 @@ class MainActivity : ComponentActivity() {
         return DisplayModeOutcome.APPLIED
     }
 
+    /**
+     * The user picked a layout (Settings › Display › Layout): persist it, then rebuild the session so
+     * the pushed config declares the new view areas — under the same mid-session rule as
+     * [onDisplayModeSelected]: with a phone session live it is only saved, and [displayModeApplier]
+     * rebuilds when that session ends. The window's bars do not change, so nothing to re-assert.
+     */
+    private fun onLayoutSelected(config: LayoutConfig): DisplayModeOutcome {
+        if (config == layoutStore.current) return if (config == appliedLayout) DisplayModeOutcome.APPLIED else DisplayModeOutcome.DEFERRED
+        logInfo("[LAYOUT] ${layoutStore.current} -> $config", tag = "MAIN")
+        layoutStore.set(config)
+        if (phoneSessionActive()) {
+            logInfo("[LAYOUT] phone session active (${Ocbm.pmName(carlinkManager?.projectionMode ?: Ocbm.PM_NONE)}) — layout saved, applies at next connection", tag = "MAIN")
+            return DisplayModeOutcome.DEFERRED
+        }
+        reinitialize()
+        return DisplayModeOutcome.APPLIED
+    }
+
     /** A phone session owns the box right now (the box's own word, not the app's state machine). */
     private fun phoneSessionActive(): Boolean {
         val m = carlinkManager?.projectionMode ?: return false
@@ -559,12 +591,13 @@ class MainActivity : ComponentActivity() {
     private val displayModeApplier =
         CarlinkManager.BoxStatusListener {
             val m = carlinkManager ?: return@BoxStatusListener
-            if (displayMode == appliedDisplayMode || phoneSessionActive()) return@BoxStatusListener
+            val pending = displayMode != appliedDisplayMode || layoutStore.current != appliedLayout
+            if (!pending || phoneSessionActive()) return@BoxStatusListener
             if (m.resetInFlight) {
                 logInfo("[DISPLAY] deferred mode ${displayMode.name} not applied — clean-slate reset in flight", tag = "MAIN")
                 return@BoxStatusListener
             }
-            logInfo("[DISPLAY] phone session ended — applying the deferred display mode ${displayMode.name}", tag = "MAIN")
+            logInfo("[DISPLAY] phone session ended — applying the deferred display mode ${displayMode.name}, layout ${layoutStore.current}", tag = "MAIN")
             reinitialize()
         }
 
@@ -962,6 +995,7 @@ class MainActivity : ComponentActivity() {
 fun CarlinkApp(
     carlinkManager: CarlinkManager,
     onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
+    onLayoutSelected: (LayoutConfig) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
     cluster: ClusterHooks = ClusterHooks(),
     /** Carlink2 [210]: whether the USB bridge is installed, and the connecting screen's Open Files button. */
     bridge: BridgeSetup = BridgeSetup(),
@@ -1011,6 +1045,7 @@ fun CarlinkApp(
                 SettingsActions(
                     onNavigateBack = closeSettings,
                     onDisplayModeSelected = onDisplayModeSelected,
+                    onLayoutSelected = onLayoutSelected,
                     onResetCluster = cluster.onResetCluster,
                 ),
         )

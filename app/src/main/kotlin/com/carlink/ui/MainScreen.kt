@@ -80,6 +80,7 @@ import com.carlink.ui.components.VideoSurface
 import com.carlink.ui.components.VideoSurfaceState
 import com.carlink.ui.components.rememberScene
 import com.carlink.ui.components.rememberVideoSurfaceState
+import com.carlink.ui.pane.SplitPane
 import com.carlink.ui.settings.BackgroundLogoStore
 import com.carlink.ui.settings.ResetConnectionDialog
 import com.carlink.ui.theme.AutomotiveDimens
@@ -167,6 +168,11 @@ fun MainScreen(
             surfaceState,
             Modifier.fillMaxSize().windowInsetsPadding(surfaceInsets.asWindowInsets()).clipToBounds(),
         )
+        // The split layout's pane, over the part of the frame CarPlay leaves free; same rectangle as
+        // the surface so its fraction of the frame is the pane's fraction of the screen.
+        if (ui.projecting) {
+            SplitPane(carlinkManager, Modifier.fillMaxSize().windowInsetsPadding(surfaceInsets.asWindowInsets()))
+        }
         if (!ui.projecting) {
             LoadingOverlay(carlinkManager, ui.statusText, bridge)
             TopActions(

@@ -68,6 +68,14 @@ class VideoSeam(
     @Volatile
     var onCodec: ((Boolean) -> Unit)? = null
 
+    /**
+     * Invoked with the view area iOS is drawing into, once per codec-config message ([ViewAreaRect]):
+     * the session's first, and then one per step of a Dock resize animation. The record's header
+     * carries it; nothing else on the wire does. Fires on the read thread: hand off, do not block.
+     */
+    @Volatile
+    var onViewArea: ((ViewAreaRect) -> Unit)? = null
+
     companion object {
         /** Comfortably holds a 4K IDR. See note 1 in the class doc — do NOT reduce to a frame size. */
         const val MAX_MESSAGE: Int = 16 * 1024 * 1024
@@ -225,6 +233,9 @@ class VideoSeam(
                 val bodyOff = hdrOff + SeamCrypto.HDR_LEN
                 val bodyLen = len - MIN_FRAME_MSG
                 if (opcode == SeamCrypto.OPCODE_CONFIG) {
+                    // The header's view-area rect first: a config whose record fails to parse below
+                    // still says where CarPlay is drawing.
+                    ViewAreaRect.parse(b, hdrOff)?.let { r -> runCatching { onViewArea?.invoke(r) } }
                     onConfig(b.copyOfRange(bodyOff, bodyOff + bodyLen))
                 } else if (opcode == SeamCrypto.OPCODE_FRAME) {
                     onFrame(b, hdrOff, bodyOff, bodyLen, seq)

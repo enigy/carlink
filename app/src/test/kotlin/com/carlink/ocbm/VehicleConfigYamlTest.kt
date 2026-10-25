@@ -320,6 +320,65 @@ metadata:
         assertFalse("the default document has no skip key", VehicleConfigYaml.render(VehicleConfigSpec()).contains("skip:"))
     }
 
+    // ---- split layout: viewAreas[1] -------------------------------------------------------------
+
+    /** Settings › Display › Layout › Media on right at 30 %: the device-proven second area, starting split. */
+    @Test
+    fun `the split layout adds a second view area with initial and arms enablesViewAreas`() {
+        val doc = VehicleConfigYaml.render(VehicleConfigSpec(viewArea2 = PixelRect(0, 0, 1680, 960)))
+        // From the first entry's last key to hidConfig: the whole second entry, at the first's indent.
+        val entry =
+            listOf(
+                "      drawUIOutsideSafeArea: false",
+                "    - viewArea:",
+                "        originX: 0",
+                "        originY: 0",
+                "        width: 1680",
+                "        height: 960",
+                "      safeArea:",
+                "        originX: 0",
+                "        originY: 0",
+                "        width: 1680",
+                "        height: 960",
+                "      drawUIOutsideSafeArea: false",
+                "      initial: true",
+                "    hidConfig:",
+            ).joinToString("\n", postfix = "\n")
+        assertTrue("second viewAreas entry missing or misshapen:\n$doc", doc.contains(entry))
+        assertTrue(doc.contains("  enablesViewAreas: true\n"))
+        assertFalse(doc.contains("enablesViewAreas: false"))
+        // The first entry is still the whole panel.
+        assertEquals(1, Regex("        originX: 0\n        originY: 0\n        width: 2400\n        height: 960\n      safeArea:").findAll(doc).count())
+    }
+
+    @Test
+    fun `without a second area the document is the pinned default, enablesViewAreas off`() {
+        assertEquals(expected, VehicleConfigYaml.render(VehicleConfigSpec(viewArea2 = null)))
+        assertFalse(expected.contains("initial:"))
+    }
+
+    @Test
+    fun `a second area iOS would tear the session down for is refused at construction`() {
+        for (bad in listOf(PixelRect(721, 0, 1680, 960), PixelRect(0, 0, 1681, 960), PixelRect(800, 0, 1680, 960), PixelRect(0, 0, 0, 960))) {
+            var threw = false
+            try {
+                VehicleConfigSpec(viewArea2 = bad)
+            } catch (_: IllegalArgumentException) {
+                threw = true
+            }
+            assertTrue("$bad must be rejected", threw)
+        }
+        // A landscape area below the 800x480 floor: a black lockout rather than a teardown, refused all
+        // the same. (780x960 would be a PORTRAIT area, legal against its own 480x800 floor.)
+        var threw = false
+        try {
+            VehicleConfigSpec(viewArea2 = PixelRect(0, 0, 790, 480))
+        } catch (_: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw)
+    }
+
     @Test
     fun `a skip name that could break the flow sequence is refused`() {
         var threw = false

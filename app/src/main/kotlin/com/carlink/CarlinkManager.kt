@@ -56,10 +56,12 @@ import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
 import com.carlink.ocbm.OcbmClient
 import com.carlink.ocbm.OemIcon
+import com.carlink.ocbm.PixelRect
 import com.carlink.ocbm.RawBulkTransport
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
 import com.carlink.ocbm.seam.SeamPipe
+import com.carlink.ocbm.seam.ViewAreaRect
 import com.carlink.protocol.AdapterConfig
 import com.carlink.protocol.MessageSerializer
 import com.carlink.protocol.MultiTouchAction
@@ -71,6 +73,7 @@ import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
 import com.carlink.ui.settings.DriverProfiles
 import com.carlink.ui.settings.LaneGuidanceStore
+import com.carlink.ui.settings.LayoutStore
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
@@ -85,6 +88,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -372,6 +378,19 @@ class CarlinkManager(
 
     /** Last raw `callState` record seen this session (null = none / idle). */
     @Volatile var callState: CallState? = null
+        private set
+
+    /**
+     * The view area iOS is drawing CarPlay into, from the video stream's own header
+     * ([VideoSeam.onViewArea]): null until a session's first codec config, then every animation
+     * step of a Dock resize. The pane in MainScreen lays itself over the rest of the frame from this,
+     * so a switch asked for by Settings, the pane's button or CarPlay's own Dock button all look alike.
+     */
+    private val viewAreaState = MutableStateFlow<ViewAreaRect?>(null)
+    val viewArea: StateFlow<ViewAreaRect?> = viewAreaState.asStateFlow()
+
+    /** CarPlay's area of the split layout the last pushed config declared ([vehicleConfigSpec]); null = one full area. */
+    @Volatile var declaredSplitArea: PixelRect? = null
         private set
 
     /** The reduced call view the notification currently shows. */
@@ -1239,6 +1258,15 @@ class CarlinkManager(
         val caps = VideoCodecs.probe(g.width, g.height, g.maxFps)
         // Settings › Cluster › Ask iPhone for lanes: the proven set plus lane guidance only.
         val askLanes = LaneGuidanceStore.get(context).current.ask
+        // Settings › Display › Layout: CarPlay's side of the split, or null for the whole panel. A
+        // panel with no legal area (below the floor) stays full screen rather than failing.
+        val layout = LayoutStore.get(context).current
+        val split = layout.carPlayArea(g.width, g.height)
+        declaredSplitArea = split
+        if (layout.split) {
+            val area = split?.let { "${it.width}x${it.height}@${it.x},${it.y}" } ?: "NONE (illegal for this panel; full screen)"
+            logInfo("[VIEW_AREA] layout ${layout.layout.name} ${layout.width.percent}%: CarPlay area $area", tag = Logger.Tags.VIDEO)
+        }
         logInfo(
             "[CONFIG] decoders at ${g.width}x${g.height}@${g.maxFps}: h264=${caps.h264Decoder ?: "NONE"} " +
                 "hevc=${caps.hevcDecoder ?: "NONE"} -> enablesHEVC=${caps.hevc}",
@@ -1265,6 +1293,7 @@ class CarlinkManager(
                 oemIconImages = oemIconImages,
                 oemIconLabel = context.getString(R.string.app_name),
                 rightHandDrive = DriveSideStore.get(context).current == DriveSide.RIGHT,
+                viewArea2 = split,
                 metadataTier = if (askLanes) "extended" else "proven",
                 metadataSkip = if (askLanes) VehicleConfigSpec.LANES_ONLY_SKIP else emptyList(),
             )
@@ -1421,6 +1450,18 @@ class CarlinkManager(
             c.sendAppearance(dark = night, isMap = false)
             c.sendAppearance(dark = night, isMap = true)
         }
+    }
+
+    /**
+     * Switch CarPlay to declared view area [index] — 0 the whole panel, 1 the split layout's CarPlay
+     * area — the deterministic form of the Dock resize button (`CMD_VIEW_AREA`). The box answers
+     * `updateViewArea` and iOS animates the crop; [viewArea] follows from the stream's own header.
+     * The box refuses an index the pushed config did not declare, so this is a no-op in full screen.
+     */
+    fun requestViewArea(index: Int) {
+        val c = client ?: return
+        logInfo("[VIEW_AREA] requesting view area $index", tag = Logger.Tags.VIDEO)
+        scope.launch(Dispatchers.IO) { c.sendCommand(Ocbm.CMD_VIEW_AREA, index.toByte()) }
     }
 
     /**
@@ -2250,6 +2291,15 @@ class CarlinkManager(
     private fun onLanesArmed(lanes: OcbmAvLanes) {
         logInfo("[SESSION] A/V lanes armed", tag = Logger.Tags.ADAPTR)
 
+        // Where CarPlay draws. Logged only when the pane appears or goes: a resize is ~250 steps.
+        lanes.videoSeam.onViewArea = { r ->
+            val before = viewAreaState.value
+            if (before != r) {
+                if (before == null || before.isFull != r.isFull) logInfo("[VIEW_AREA] CarPlay draws $r", tag = Logger.Tags.VIDEO)
+                viewAreaState.value = r
+            }
+        }
+
         // Audio consumers must start here or the pipes fill and eventually backpressure the read
         // thread. Both are flag-only on stop(); their consume threads are the sole releasers.
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
@@ -2293,6 +2343,8 @@ class CarlinkManager(
         // hold its codec and burn the join timeout.
         retireVideoEpoch("lanes retired")
         releaseAudio()
+        // No stream, no view area: the pane must not outlive the picture it sat beside.
+        viewAreaState.value = null
     }
 
     private fun releaseAudio() {

@@ -420,7 +420,8 @@ object Ocbm {
     /**
      * `[INPUT_COMMAND][CMD_VIEW_AREA][index u8]` -> `updateViewArea {viewAreaIndex}` — the deterministic
      * form of the CarPlay Dock resize button. The box refuses an index the pushed config did not
-     * declare. Constant only: view-area geometry is not wired in this app yet. lib.rs:493
+     * declare. Index 1 is the split layout's CarPlay area (`VehicleConfigSpec.viewArea2`), 0 the
+     * whole panel; `CarlinkManager.requestViewArea` sends it. lib.rs:493
      */
     const val CMD_VIEW_AREA: Byte = 0x11
 

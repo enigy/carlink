@@ -3,14 +3,21 @@ package com.carlink.ui.settings
 import android.view.Window
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.DisplaySettings
@@ -32,6 +39,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
@@ -55,17 +63,20 @@ private val MODE_ORDER =
     )
 
 /**
- * Display: the four display modes as radio cards plus the loading-screen brand.
+ * Display: the four display modes as radio cards, the split layout, the driving limit, the driver's
+ * seat and the loading-screen brand.
  *
  * Tapping a mode PREVIEWS it on the window at once, as the old dialog did; nothing is saved until
  * "Apply and restart CarPlay". Leaving the pane with a preview still showing puts back the bars the
  * window had before the first preview (read from the window itself, so a mode saved for the next
- * connection, but not yet applied, is never mistaken for what is on screen).
+ * connection, but not yet applied, is never mistaken for what is on screen). A layout has no preview:
+ * tapping one applies it ([onApplyLayout]), now or at the next connection.
  */
 @Composable
 internal fun DisplayPane(
     savedMode: DisplayMode,
     onApply: (DisplayMode) -> Unit,
+    onApplyLayout: (LayoutConfig) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val window = LocalActivity.current?.window
@@ -101,9 +112,93 @@ internal fun DisplayPane(
                 modifier = Modifier.weight(1f),
             )
         }
+        LayoutChoice(onApply = onApplyLayout)
         DriveSideChoice()
         SectionLabel("Loading screen", modifier = Modifier.padding(top = 8.dp))
         LoadingScreenChoice()
+    }
+}
+
+/**
+ * Layout: CarPlay on the whole panel, or on one side with Carlink3's pane on the other, and the
+ * pane's width. The split's view areas go to the box in the session config ([LayoutConfig]), so a
+ * tap applies now with no phone connected and at the next connection otherwise.
+ */
+@Composable
+private fun LayoutChoice(onApply: (LayoutConfig) -> Unit) {
+    val context = LocalContext.current
+    val store = remember { LayoutStore.get(context) }
+    val config by store.flow.collectAsState()
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        SectionLabel("Layout", modifier = Modifier.padding(top = 8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+            PaneLayout.entries.forEach { layout ->
+                LayoutCard(
+                    layout = layout,
+                    selected = layout == config.layout,
+                    onClick = {
+                        logWarn("[UI_ACTION] Layout -> ${layout.name}", tag = "UI")
+                        onApply(config.copy(layout = layout))
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        if (config.split) {
+            SettingsGroup(modifier = Modifier.widthIn(max = 760.dp)) {
+                ChoiceSetting(
+                    title = "Pane width",
+                    subtitle = "How much of the panel Carlink3's pane takes. CarPlay keeps the rest.",
+                    options = PaneWidth.entries,
+                    selected = config.width,
+                    onSelect = {
+                        logWarn("[UI_ACTION] Pane width -> ${it.name}", tag = "UI")
+                        onApply(config.copy(width = it))
+                    },
+                )
+            }
+        }
+        Text(
+            "CarPlay's Dock button and the pane's own switch between the split and full screen. With a phone connected, a change applies at the next connection.",
+            style = SettingsStyle.RowSubtitle,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** One layout as a radio card with a thumbnail of the panel: CarPlay's part lit, the pane's part dim. */
+@Composable
+private fun LayoutCard(
+    layout: PaneLayout,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
+        shape = SettingsStyle.GroupShape,
+        color = colors.surfaceContainer,
+        border = BorderStroke(3.dp, if (selected) colors.primary else LocalCarlinkColors.current.cardEdge),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.primaryContainer),
+                horizontalArrangement = if (layout.paneOnLeft) Arrangement.Start else Arrangement.End,
+            ) {
+                if (layout.split) Box(modifier = Modifier.fillMaxHeight().width(42.dp).background(colors.surfaceContainerHighest))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                RadioButton(selected = selected, onClick = null)
+                Text(layout.label, style = SettingsStyle.RowTitle)
+            }
+            Text(layout.summary, style = SettingsStyle.RowSubtitle, color = colors.onSurfaceVariant)
+        }
     }
 }
 
@@ -219,12 +314,12 @@ private fun LoadingScreenChoice() {
     )
 }
 
-/** Shown when a display mode was saved but held back by a live phone session. */
+/** Shown when a display mode or layout was saved but held back by a live phone session. */
 @Composable
 internal fun DisplayModeDeferredNotice(onDismiss: () -> Unit) {
     CarlinkDialog(
-        title = "Display mode saved",
-        text = "A phone session is active, so the new display mode applies at the next connection. The current session keeps its layout.",
+        title = "Display setting saved",
+        text = "A phone session is active, so the new setting applies at the next connection. The current session keeps its layout.",
         confirmLabel = "OK",
         onConfirm = onDismiss,
         onDismiss = onDismiss,
