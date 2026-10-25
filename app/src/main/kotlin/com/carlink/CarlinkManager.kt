@@ -13,6 +13,7 @@ import com.carlink.audio.MicProfile
 import com.carlink.audio.MicrophoneCaptureManager
 import com.carlink.audio.SilenceGuard
 import com.carlink.av.MediaAudioPlayer
+import com.carlink.av.SkipAftermath
 import com.carlink.av.TransientFocusPolicy
 import com.carlink.av.VideoCodecs
 import com.carlink.av.VideoRenderer
@@ -942,6 +943,15 @@ class CarlinkManager(
                     }
 
                     override fun onStop() {
+                        // The car stops the old source when its primary source changes. Right after a
+                        // skip we sent, that change is the press having reached the radio as well.
+                        if (skipAftermath.covers(SystemClock.elapsedRealtime())) {
+                            logWarn(
+                                "[MEDIA_SESSION] stop from the car right after a skip this app sent — ignored, the press reached another source too",
+                                tag = Logger.Tags.MEDIA_SESSION,
+                            )
+                            return
+                        }
                         sendMediaButton(Ocbm.MEDIA_BTN_PAUSE)
                     }
 
@@ -1642,8 +1652,15 @@ class CarlinkManager(
 
     private fun sendMediaButton(index: Byte) {
         val c = client ?: return
+        if (index == Ocbm.MEDIA_BTN_NEXT || index == Ocbm.MEDIA_BTN_PREV) skipAftermath.skipSent(SystemClock.elapsedRealtime())
         scope.launch(Dispatchers.IO) { c.sendMediaButton(index) }
     }
+
+    /**
+     * The window after a skip this app sent in which a focus loss or a car-issued stop is the same
+     * press reaching another source too, not the driver changing source ([SkipAftermath]).
+     */
+    private val skipAftermath = SkipAftermath()
 
     // ==================== Siri / telephony (3P shell) ====================
 
@@ -2258,7 +2275,19 @@ class CarlinkManager(
         val player =
             MediaAudioPlayer(
                 am,
-                onFocusLost = { sendMediaButton(Ocbm.MEDIA_BTN_PAUSE) },
+                onFocusLost = { reclaim ->
+                    // ...unless the loss is the aftermath of a skip we just sent: the car gave the
+                    // press to the radio as well, which started and took the focus. Keep the music.
+                    if (skipAftermath.covers(SystemClock.elapsedRealtime())) {
+                        logWarn(
+                            "[FOCUS] lost right after a skip this app sent — the car gave the press to another source too; keeping the music, asking for the audio back",
+                            tag = Logger.Tags.ADAPTR,
+                        )
+                        reclaim("the skip's aftermath")
+                    } else {
+                        sendMediaButton(Ocbm.MEDIA_BTN_PAUSE)
+                    }
+                },
                 // Audible media while our own Siri/call sink still holds transient focus: iOS has
                 // ended the session, so release the quiet sink and let AAOS hand focus back.
                 onAudibleWhileSuppressed = {

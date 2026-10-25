@@ -74,8 +74,12 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class MediaAudioPlayer(
     am: AudioManager?,
-    /** A permanent focus loss (another AAOS source took over): ask the phone to pause. */
-    onFocusLost: () -> Unit = {},
+    /**
+     * A permanent focus loss (another AAOS source took over): ask the phone to pause. The argument
+     * asks for the focus straight back instead, for the one case where the loss is not a source
+     * change: the aftermath of a skip this app sent ([SkipAftermath]).
+     */
+    onFocusLost: (reclaim: (why: String) -> Unit) -> Unit = {},
     /**
      * Audible media is arriving while AAOS focus still holds us below 1.0 — i.e. a transient holder
      * (normally this app's own Siri/call sink) has outlived the phone's session. The router releases
@@ -115,8 +119,9 @@ class MediaAudioPlayer(
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
 
-    private val focus =
-        MediaFocus(am, attrs, log, onChange = { applyGain() }, onLost = onFocusLost, onSuppressedAudible = onAudibleWhileSuppressed)
+    // Typed explicitly: the loss handler refers back to this property, which is recursive for inference.
+    private val focus: MediaFocus =
+        MediaFocus(am, attrs, log, onChange = { applyGain() }, onLost = { onFocusLost { why -> focus.reclaim(why) } }, onSuppressedAudible = onAudibleWhileSuppressed)
             .also { it.onEvent = onFocusEvent }
 
     /** When the last media access unit arrived: a gap of [MEDIA_GAP_MS] starts a new stream. */
@@ -533,6 +538,12 @@ private class MediaFocus(
         if (now - lastSuppressedAt < SUPPRESSED_NOTIFY_MS) return
         lastSuppressedAt = now
         runCatching { onSuppressedAudible() }
+    }
+
+    /** Ask again straight after a loss: clears the loss that would otherwise hold every request until a new stream. */
+    fun reclaim(why: String) {
+        ask.onStream()
+        request(why)
     }
 
     /** Give focus back ([why] for the log); nothing when not held. */

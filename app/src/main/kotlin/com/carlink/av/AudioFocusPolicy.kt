@@ -111,3 +111,37 @@ class MediaFocusAsk(
         const val REFUSED_RETRY_MS: Long = 2_000L
     }
 }
+
+/**
+ * The aftermath of a steering-wheel skip the car gave to two sources at once — pure so the window is
+ * unit-tested; `CarlinkManager` acts on it.
+ *
+ * On 10-25 at 11:26:03 (and once on 10-24 at 11:36:17) a Next press reached this app as the raw key,
+ * which skipped the iPhone's track — and GM's own handler, whose source was not this app, gave the
+ * same press to the radio. The radio started and took the media focus 58 ms after the key; the car
+ * then stopped this session (`stop from com.android.car`, 430 ms after). Treated as a source change,
+ * the loss paused the phone and the stop paused it again: the track advanced, the music fell silent
+ * and the radio played, which is not what one press of Next means.
+ *
+ * So a focus loss or a car-issued stop inside [windowMs] of a skip THIS APP SENT is that press's
+ * aftermath, not the driver choosing another source: keep the music and ask for the audio back. A
+ * loss at any other time is a real source change and pauses the phone as before.
+ */
+class SkipAftermath(
+    private val windowMs: Long = WINDOW_MS,
+) {
+    @Volatile private var skipAt = -1L
+
+    /** A Next or Previous was sent to the phone at [now]. */
+    fun skipSent(now: Long) {
+        skipAt = now
+    }
+
+    /** Whether an event at [now] falls inside the window after the last skip. */
+    fun covers(now: Long): Boolean = skipAt >= 0 && now - skipAt in 0..windowMs
+
+    companion object {
+        /** The radio's focus grab came 58 ms after the key, the car's stop 430 ms; the phone's own metadata for the new track within 700 ms. */
+        const val WINDOW_MS: Long = 1_500L
+    }
+}
