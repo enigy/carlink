@@ -26,6 +26,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,6 +53,10 @@ import com.carlink.logging.logWarn
 import com.carlink.ui.components.CarlinkDialog
 import com.carlink.ui.components.OnSettingsHidden
 import com.carlink.ui.theme.LocalCarlinkColors
+import kotlin.math.roundToInt
+
+/** The corner-radius slider moves in these steps. */
+private const val CORNER_STEP_DP = 4
 
 /** Display modes in the order the pane lists them (two by two on a wide pane). */
 private val MODE_ORDER =
@@ -155,6 +160,17 @@ private fun LayoutChoice(onApply: (LayoutConfig) -> Unit) {
                         logWarn("[UI_ACTION] Pane width -> ${it.name}", tag = "UI")
                         onApply(config.copy(width = it))
                     },
+                )
+                GroupDivider()
+                // Drawing only: saved straight to the store, no session rebuild, visible at once.
+                SettingRow(title = "Pane corner radius", subtitle = "${config.paneCornerDp} dp. Match it to CarPlay's corners beside the pane; applies at once.")
+                Slider(
+                    value = config.paneCornerDp.toFloat(),
+                    onValueChange = { store.set(config.copy(paneCornerDp = it.roundToInt())) },
+                    onValueChangeFinished = { logWarn("[UI_ACTION] Pane corner radius -> ${store.current.paneCornerDp} dp", tag = "UI") },
+                    valueRange = LayoutConfig.CORNER_RANGE_DP.first.toFloat()..LayoutConfig.CORNER_RANGE_DP.last.toFloat(),
+                    steps = (LayoutConfig.CORNER_RANGE_DP.last - LayoutConfig.CORNER_RANGE_DP.first) / CORNER_STEP_DP - 1,
+                    modifier = Modifier.padding(horizontal = 32.dp).padding(bottom = 16.dp),
                 )
             }
         }

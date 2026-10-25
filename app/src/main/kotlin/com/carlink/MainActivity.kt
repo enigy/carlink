@@ -555,9 +555,11 @@ class MainActivity : ComponentActivity() {
      * rebuilds when that session ends. The window's bars do not change, so nothing to re-assert.
      */
     private fun onLayoutSelected(config: LayoutConfig): DisplayModeOutcome {
-        if (config == layoutStore.current) return if (config == appliedLayout) DisplayModeOutcome.APPLIED else DisplayModeOutcome.DEFERRED
-        logInfo("[LAYOUT] ${layoutStore.current} -> $config", tag = "MAIN")
+        val before = layoutStore.current
+        logInfo("[LAYOUT] $before -> $config", tag = "MAIN")
         layoutStore.set(config)
+        // Only the view areas go to the box; a drawing-only change (the corner radius) applies at once.
+        if (config.sameSession(before)) return if (config.sameSession(appliedLayout)) DisplayModeOutcome.APPLIED else DisplayModeOutcome.DEFERRED
         if (phoneSessionActive()) {
             logInfo("[LAYOUT] phone session active (${Ocbm.pmName(carlinkManager?.projectionMode ?: Ocbm.PM_NONE)}) — layout saved, applies at next connection", tag = "MAIN")
             return DisplayModeOutcome.DEFERRED
@@ -591,7 +593,7 @@ class MainActivity : ComponentActivity() {
     private val displayModeApplier =
         CarlinkManager.BoxStatusListener {
             val m = carlinkManager ?: return@BoxStatusListener
-            val pending = displayMode != appliedDisplayMode || layoutStore.current != appliedLayout
+            val pending = displayMode != appliedDisplayMode || !layoutStore.current.sameSession(appliedLayout)
             if (!pending || phoneSessionActive()) return@BoxStatusListener
             if (m.resetInFlight) {
                 logInfo("[DISPLAY] deferred mode ${displayMode.name} not applied — clean-slate reset in flight", tag = "MAIN")

@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,10 +33,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
 import com.carlink.logging.logInfo
+import com.carlink.ui.settings.LayoutStore
 
 /**
  * Carlink3's side of the split layout (Settings › Display › Layout), laid over the part of the video
@@ -97,6 +100,8 @@ private fun PaneHost(
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val layout by remember { LayoutStore.get(context) }.flow.collectAsState()
     val call by carlinkManager.callPresentationFlow.collectAsState()
     val media by carlinkManager.nowPlaying.collectAsState()
     val showCall = call != CallRoster.Presentation.None
@@ -108,8 +113,8 @@ private fun PaneHost(
     Surface(
         modifier =
             modifier
-                // Rounded like CarPlay's own pane, so the art's corners match the picture beside it.
-                .clip(RoundedCornerShape(PANE_CORNER))
+                // Rounded like CarPlay's own pane (Settings › Display › Layout › Pane corner radius).
+                .clip(RoundedCornerShape(layout.paneCornerDp.dp))
                 // Every touch that lands here is the pane's: nothing falls through to the SurfaceView.
                 .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
         color = colors.surface,
@@ -202,8 +207,6 @@ private fun SplitTab(
     }
 }
 
-/** CarPlay's corner radius on the truck's panel, measured off a photo of the two side by side (10-25): about 3.5x the 32 dp that was here. */
-private val PANE_CORNER = 112.dp
 private val INK = Color(0xFF14181E)
 private const val SCRIM_TOP = 0.45f
 private const val SCRIM_BOTTOM = 0.75f
