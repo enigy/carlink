@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
@@ -142,8 +143,7 @@ private fun PaneHost(
             modifier
                 // Rounded like CarPlay's own pane beside it.
                 .clip(RoundedCornerShape(PANE_CORNER))
-                // Every touch that lands here is the pane's: nothing falls through to the SurfaceView.
-                .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
+                .consumeUnhandledTouches(),
         color = look.background,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -183,6 +183,22 @@ private fun PaneHost(
         }
     }
 }
+
+/**
+ * A backstop on the FINAL pointer pass: the pager and the buttons claim their gestures first on the
+ * Main pass, and only what no child took is consumed here. So a swipe reaches the pager, yet no pane
+ * touch falls through to the SurfaceView under the pane (CarPlay normalises touch over the whole
+ * frame). Consuming every change on the Main pass instead stole the swipe from the pager (owner,
+ * 10-26: "difficult to swipe, took several tries to find the touch area").
+ */
+private fun Modifier.consumeUnhandledTouches(): Modifier =
+    pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                awaitPointerEvent(PointerEventPass.Final).changes.forEach { if (!it.isConsumed) it.consume() }
+            }
+        }
+    }
 
 /** The pane's background, the colour of the words and buttons over it, and the scrim between art and words. */
 private class PaneLook(
