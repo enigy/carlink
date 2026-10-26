@@ -35,6 +35,17 @@ object PaneDeck {
     ): PaneCard = pages.firstOrNull { it != inFront } ?: PaneCard.CLOCK
 
     /**
+     * The card for the pane when music starts playing while [shown] is up: the music, taken from the
+     * clock only (owner, 10-26: "when music starts, bring the media card, instead of the clock"). A
+     * route the driver is looking at keeps the pane, and a deck without a music card is left alone.
+     * This is the play-after-pause case; a track that first appears is [after]'s rule.
+     */
+    fun onMusicStart(
+        pages: List<PaneCard>,
+        shown: PaneCard,
+    ): PaneCard = if (shown == PaneCard.CLOCK && PaneCard.MEDIA in pages) PaneCard.MEDIA else shown
+
+    /**
      * The card to show after the deck changed from [previous] to [current] while [shown] was up. A
      * card that went away gives way to the default; music that begins takes the pane, as it always
      * has; a route that begins takes it only from the clock, never from the music the driver is

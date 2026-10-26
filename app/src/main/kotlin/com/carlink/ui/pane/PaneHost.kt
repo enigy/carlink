@@ -88,6 +88,18 @@ fun SplitPane(
             dealt = pages
         }
     }
+    // Music starting (play after a pause, or already playing when the pane appears) brings the music
+    // card up from the clock; a new track's card is dealt by `after` above.
+    val playing = media.playing
+    LaunchedEffect(playing) {
+        if (playing) {
+            val next = PaneDeck.onMusicStart(pages, shown)
+            if (next != shown) {
+                logInfo("[UI_ACTION] Pane: music started, showing $next", tag = "UI")
+                shown = next
+            }
+        }
+    }
     val r = rect
     if (r != null) {
         Box(modifier = modifier) {

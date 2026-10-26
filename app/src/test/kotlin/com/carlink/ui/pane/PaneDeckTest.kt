@@ -38,6 +38,15 @@ class PaneDeckTest {
     }
 
     @Test
+    fun `music that starts playing takes the pane from the clock only`() {
+        assertEquals(MEDIA, PaneDeck.onMusicStart(pages = listOf(MEDIA, CLOCK), shown = CLOCK))
+        assertEquals(MEDIA, PaneDeck.onMusicStart(pages = listOf(DIRECTIONS, MEDIA, CLOCK), shown = CLOCK))
+        assertEquals("the driver is looking at the route", DIRECTIONS, PaneDeck.onMusicStart(pages = listOf(DIRECTIONS, MEDIA, CLOCK), shown = DIRECTIONS))
+        assertEquals("no music card to show", CLOCK, PaneDeck.onMusicStart(pages = listOf(CLOCK), shown = CLOCK))
+        assertEquals(MEDIA, PaneDeck.onMusicStart(pages = listOf(MEDIA, CLOCK), shown = MEDIA))
+    }
+
+    @Test
     fun `a route that begins takes the pane only from the clock`() {
         assertEquals(DIRECTIONS, PaneDeck.after(previous = listOf(CLOCK), current = listOf(DIRECTIONS, CLOCK), shown = CLOCK))
         assertEquals("the driver is looking at the music", MEDIA, PaneDeck.after(previous = listOf(MEDIA, CLOCK), current = listOf(DIRECTIONS, MEDIA, CLOCK), shown = MEDIA))
