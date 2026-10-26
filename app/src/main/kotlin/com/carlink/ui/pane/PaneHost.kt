@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
 import com.carlink.logging.logInfo
+import com.carlink.ocbm.CarPlayUrls
 import com.carlink.ui.settings.LayoutStore
 
 /**
@@ -65,7 +66,7 @@ fun SplitPane(
     // The cover lives here, not in the pane: it stays decoded and ready while the pane is hidden
     // behind full-screen CarPlay, and while a call card has the pane.
     val media by carlinkManager.nowPlaying.collectAsState()
-    val art = rememberAlbumArt(media.info.albumArt)
+    val art = rememberAlbumArt(media.info.albumArt, trackKey = media.info.title?.let { "$it|${media.info.artist}" })
     val r = rect
     if (r != null) {
         Box(modifier = modifier) {
@@ -136,7 +137,7 @@ private fun PaneHost(
                     PaneHeader(
                         title = title,
                         // The app that is playing: a tap on its name brings it forward in CarPlay.
-                        onTitle = if (showMedia) ({ carlinkManager.openCarPlayApp(NOW_PLAYING_URL) }) else null,
+                        onTitle = if (showMedia) ({ carlinkManager.openCarPlayApp(CarPlayUrls.NOW_PLAYING) }) else null,
                         onExpand = {
                             logInfo("[UI_ACTION] Pane: CarPlay full screen", tag = "UI")
                             carlinkManager.requestViewArea(0)
@@ -218,9 +219,6 @@ private fun SplitTab(
 }
 
 private val INK = Color(0xFF14181E)
-
-/** CarPlay's URL for the app that is playing now (Apple's `requestUI` scheme; being benched on this box). */
-private const val NOW_PLAYING_URL = "nowplaying:"
 private const val SCRIM_TOP = 0.45f
 private const val SCRIM_BOTTOM = 0.75f
 private const val HEADER_ALPHA = 0.85f

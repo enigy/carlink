@@ -12,15 +12,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.logging.logWarn
+import com.carlink.ocbm.CarPlayUrls
 
-/** The CarPlay app URLs to try (Apple's `requestUI` schemes; which ones this box and iOS honour is the question). */
-internal val CARPLAY_URL_BENCH = listOf("maps:", "nowplaying:", "mobilephone:", "music:")
+/** The CarPlay app URLs that work on the truck (benched 2026-10-26; `music:` did nothing), see [CarPlayUrls]. */
+internal val CARPLAY_URL_BENCH = listOf(CarPlayUrls.MAPS, CarPlayUrls.NOW_PLAYING, CarPlayUrls.PHONE)
 
 /**
- * Debug builds only: one button per candidate URL, each a `requestUI` with that URL to the main
- * screen, so the box change (CMD_REQUEST_UI_URL, box commit cbdd60b) can be benched with a phone
- * connected. The log line is `[CARPLAY_UI] requestUI url=…`; the box answers `[input] requestUI
- * url=… sent=…`. Remove once the working URLs are known.
+ * Debug builds only: one button per URL, each a `requestUI` with that URL to the main screen, kept
+ * for re-benching after a box change. The log line is `[CARPLAY_UI] requestUI url=…`; the box
+ * answers `[input] requestUI url=… sent=…`.
  */
 @Composable
 internal fun CarPlayUrlBench(carlinkManager: CarlinkManager) {

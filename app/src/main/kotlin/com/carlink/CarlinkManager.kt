@@ -54,6 +54,7 @@ import com.carlink.navigation.compose.ComposedIconStore
 import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
+import com.carlink.ocbm.CarPlayUrls
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
@@ -1502,6 +1503,27 @@ class CarlinkManager(
         scope.launch(Dispatchers.IO) { c.sendRequestUiUrl(url) }
     }
 
+    /**
+     * A call has just reached the pane while the split layout is up. iOS brings its own Phone app
+     * forward on the main screen as a call begins; the pane carries the call, so after
+     * [CarPlayUrls.CALL_RETURN_DELAY_MS] CarPlay is asked back to what it was showing — the app that
+     * was playing, else Maps. Nothing in full screen, where the pane is not there to take the call.
+     */
+    private fun onCallCardChange(
+        before: CallRoster.Presentation,
+        after: CallRoster.Presentation,
+    ) {
+        if (before != CallRoster.Presentation.None || after == CallRoster.Presentation.None) return
+        if (declaredSplitArea == null) return
+        val url = if (nowPlayingState.value.playing) CarPlayUrls.NOW_PLAYING else CarPlayUrls.MAPS
+        scope.launch {
+            delay(CarPlayUrls.CALL_RETURN_DELAY_MS)
+            if (callPresentationState.value == CallRoster.Presentation.None) return@launch
+            logInfo("[CARPLAY_UI] call is on the pane — asking CarPlay back to $url", tag = Logger.Tags.PHONE)
+            openCarPlayApp(url)
+        }
+    }
+
     /** A transport button from the pane's media card: the same HID tap the steering wheel and the media session send. */
     fun mediaControl(control: MediaControl) {
         logInfo("[UI_ACTION] pane media ${control.name}", tag = Logger.Tags.MEDIA_SESSION)
@@ -1785,7 +1807,9 @@ class CarlinkManager(
     }
 
     private fun notifyCallListeners(p: CallRoster.Presentation) {
+        val before = callPresentationState.value
         callPresentationState.value = p
+        onCallCardChange(before, p)
         val snapshot = synchronized(callStateListeners) { callStateListeners.toList() }
         snapshot.forEach { it.onCallPresentation(p) }
     }

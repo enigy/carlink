@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,20 +52,30 @@ import kotlinx.coroutines.withContext
 /**
  * The album art for the whole pane. The last cover stays up while the next track's has not arrived
  * (iOS sends the title first and the art a moment later), so there is no placeholder between songs:
- * [MediaBackdrop] crossfades straight from one cover to the next. A new cover is shown only once it
- * has stood for [ART_SETTLE_MS]: on a track change Spotify first sends a stand-in image and the real
- * cover a moment later (seen in the Spotify app itself, 10-25), and a cover replaced inside the
- * window is never shown. Decoded off the main thread.
+ * [MediaBackdrop] crossfades straight from one cover to the next.
+ *
+ * On a track change Spotify sends a stand-in image first and the real cover second, every time
+ * (the Spotify app shows the same, 10-25). So the [ART_TRUSTED_ARRIVAL]th cover of a track is shown
+ * the moment it lands, and a first cover only after [ART_SINGLE_WAIT_MS] with no second one — a
+ * source that sends one cover still gets it, late rather than never. [trackKey] (title and artist)
+ * starts the count over. Decoded off the main thread.
  *
  * Call this where it stays composed — the pane's host, not the pane — so the cover is kept, and the
  * next one decoded, while the pane is hidden behind full-screen CarPlay or a call card.
  */
 @Composable
-internal fun rememberAlbumArt(bytes: ByteArray?): ImageBitmap? {
+internal fun rememberAlbumArt(
+    bytes: ByteArray?,
+    trackKey: String?,
+): ImageBitmap? {
     var shown by remember { mutableStateOf<ImageBitmap?>(null) }
+    var arrivals by remember { mutableIntStateOf(0) }
+    LaunchedEffect(trackKey) { arrivals = 0 }
     LaunchedEffect(bytes) {
         if (bytes == null) return@LaunchedEffect
-        delay(ART_SETTLE_MS)
+        arrivals += 1
+        // A second cover inside the wait restarts this effect with the new bytes and skips the wait.
+        if (arrivals < ART_TRUSTED_ARRIVAL) delay(ART_SINGLE_WAIT_MS)
         val decoded = withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
         if (decoded != null) shown = decoded
     }
@@ -196,7 +207,8 @@ private fun TransportRow(
 
 private const val PROGRESS_TICK_MS = 250L
 private const val ART_FADE_MS = 600
-private const val ART_SETTLE_MS = 1_000L
+private const val ART_TRUSTED_ARRIVAL = 2
+private const val ART_SINGLE_WAIT_MS = 2_500L
 private const val TONE_SAMPLE = 16
 private const val SECONDARY_ALPHA = 0.72f
 private const val TRACK_ALPHA = 0.25f
