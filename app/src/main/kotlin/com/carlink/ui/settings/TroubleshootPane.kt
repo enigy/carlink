@@ -25,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
-import com.carlink.BuildConfig
 import com.carlink.CarlinkManager
 import com.carlink.logging.logWarn
 import com.carlink.ui.components.CarlinkDialog
@@ -81,7 +80,6 @@ internal fun TroubleshootPane(
         Text("Each fix asks you to confirm before it interrupts anything.", style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         SectionLabel("Logs", modifier = Modifier.padding(top = 8.dp))
         LogsGroup(carlinkManager, live)
-        if (BuildConfig.DEBUG) CarPlayUrlBench(carlinkManager)
         FixConfirmation(confirm, carlinkManager, onDone = { confirm = null }, onResetting = { resetting = it })
     }
 }
