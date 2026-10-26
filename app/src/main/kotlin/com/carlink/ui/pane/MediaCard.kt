@@ -41,8 +41,10 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import com.carlink.logging.logInfo
 import com.carlink.media.MediaControl
 import com.carlink.media.NowPlayingState
@@ -156,12 +158,12 @@ private fun TrackWords(state: NowPlayingState) {
     val info = state.info
     val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
     Column {
-        Text(info.title.orEmpty(), style = MaterialTheme.typography.headlineMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(info.title.orEmpty(), style = MaterialTheme.typography.headlineMedium.scaled(WORD_SCALE), maxLines = 2, overflow = TextOverflow.Ellipsis)
         val line2 = listOfNotNull(info.artist?.takeIf { it.isNotBlank() }, info.album?.takeIf { it.isNotBlank() }).joinToString(" · ")
         if (line2.isNotEmpty()) {
             Text(
                 line2,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.scaled(WORD_SCALE),
                 color = secondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -194,8 +196,9 @@ private fun ProgressRow(state: NowPlayingState) {
             drawStopIndicator = {},
         )
         Row(modifier = Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(NowPlayingState.clock(position), style = MaterialTheme.typography.labelLarge, color = content.copy(alpha = SECONDARY_ALPHA))
-            Text(if (duration > 0L) NowPlayingState.clock(duration) else "", style = MaterialTheme.typography.labelLarge, color = content.copy(alpha = SECONDARY_ALPHA))
+            val clock = MaterialTheme.typography.labelLarge.scaled(WORD_SCALE)
+            Text(NowPlayingState.clock(position), style = clock, color = content.copy(alpha = SECONDARY_ALPHA))
+            Text(if (duration > 0L) NowPlayingState.clock(duration) else "", style = clock, color = content.copy(alpha = SECONDARY_ALPHA))
         }
     }
 }
@@ -226,6 +229,14 @@ private fun TransportRow(
     }
 }
 
+/** The card's words and times, [WORD_SCALE] times Material's sizes: readable from the driver's seat (owner, 10-26: "increase the font in the media pane by 50 %"). */
+private fun TextStyle.scaled(factor: Float): TextStyle =
+    copy(
+        fontSize = fontSize * factor,
+        lineHeight = if (lineHeight.isSpecified) lineHeight * factor else lineHeight,
+    )
+
+private const val WORD_SCALE = 1.5f
 private const val PROGRESS_TICK_MS = 250L
 private const val ART_FADE_MS = 600
 private const val ART_SETTLE_MS = 1_000L
