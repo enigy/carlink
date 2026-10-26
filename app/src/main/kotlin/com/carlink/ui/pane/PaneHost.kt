@@ -158,19 +158,12 @@ private fun PaneHost(
             }
             CompositionLocalProvider(LocalContentColor provides look.content) {
                 Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                    PaneHeader(
-                        title = title,
-                        onTitle = onTitle,
-                        onExpand = {
-                            logInfo("[UI_ACTION] Pane: CarPlay full screen", tag = "UI")
-                            carlinkManager.requestViewArea(0)
-                        },
-                    )
-                    val body = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)
+                    val header: @Composable () -> Unit = { PaneHeader(title = title, onTitle = onTitle, onExpand = { carPlayFullScreen(carlinkManager) }) }
                     if (showCall) {
-                        CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = body)
+                        header()
+                        CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp))
                     } else {
-                        PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, modifier = body) { which, m ->
+                        PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, header = header, modifier = Modifier.fillMaxSize()) { which, m ->
                             when (which) {
                                 PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
                                 PaneCard.MEDIA -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = m)
@@ -199,6 +192,12 @@ private fun Modifier.consumeUnhandledTouches(): Modifier =
             }
         }
     }
+
+/** The pane's full-screen button: CarPlay back to the whole frame. */
+private fun carPlayFullScreen(carlinkManager: CarlinkManager) {
+    logInfo("[UI_ACTION] Pane: CarPlay full screen", tag = "UI")
+    carlinkManager.requestViewArea(0)
+}
 
 /** The pane's background, the colour of the words and buttons over it, and the scrim between art and words. */
 private class PaneLook(
