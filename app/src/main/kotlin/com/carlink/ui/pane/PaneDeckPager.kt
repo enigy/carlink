@@ -70,13 +70,19 @@ internal fun PaneDeckPager(
     // The same direction convention the pager uses for this layout direction, else a drag on the
     // header would move the deck the wrong way.
     val reverse = ScrollableDefaults.reverseDirection(LocalLayoutDirection.current, Orientation.Horizontal, reverseScrolling = false)
-    val swipesToo = Modifier.scrollable(pagerState, Orientation.Horizontal, reverseDirection = reverse, flingBehavior = PagerDefaults.flingBehavior(pagerState))
+    // A short, slow swipe counts. The pager's default snaps BACK unless the drag covered half the
+    // page or left fast (about 400 dp/s); in the car swipes are short and deliberate, and on the 25 %
+    // pane half a page is 240 dp, so most of them snapped back and read as "nothing happened" (owner,
+    // 10-26, release build). A fifth of the page — about an inch — now changes the card.
+    val fling = PagerDefaults.flingBehavior(state = pagerState, snapPositionalThreshold = SWIPE_THRESHOLD)
+    val swipesToo = Modifier.scrollable(pagerState, Orientation.Horizontal, reverseDirection = reverse, flingBehavior = fling)
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().then(swipesToo)) { header() }
         HorizontalPager(
             state = pagerState,
             key = { pages[it] },
             pageSpacing = 24.dp,
+            flingBehavior = fling,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp),
         ) { page ->
             val which = pages.getOrNull(page) ?: return@HorizontalPager
@@ -113,3 +119,6 @@ private fun PageDots(
 private val DOT = 9.dp
 private const val DOT_ON = 0.9f
 private const val DOT_OFF = 0.3f
+
+/** The fraction of the page a slow drag must cover to change the card (the pager's default is half). */
+private const val SWIPE_THRESHOLD = 0.2f
