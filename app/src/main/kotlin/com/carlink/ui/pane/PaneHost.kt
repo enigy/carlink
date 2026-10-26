@@ -26,8 +26,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
 import com.carlink.logging.logInfo
+import com.carlink.navigation.NavigationStateManager
 import com.carlink.ocbm.CarPlayUrls
 
 /**
@@ -48,8 +53,9 @@ import com.carlink.ocbm.CarPlayUrls
  * Settings, the pane's own full-screen button, or CarPlay's Dock button. While CarPlay has the whole
  * frame but a split is declared, a small tab at the pane's edge brings the split back.
  *
- * The card: a call while the iPhone reports one, else the music playing, else the clock. Music puts
- * its album art behind the whole pane and sets the words and buttons light or dark to suit it.
+ * The card: a call while the iPhone reports one; otherwise one of the deck ([PaneDeck]) — the route,
+ * the music, the clock — swiped between ([PaneDeckPager]), the music up by default. Music puts its
+ * album art behind the whole pane and sets the words and buttons light or dark to suit it.
  *
  * Sits ABOVE the SurfaceView and takes its own touches, so CarPlay — which still normalises touch over
  * the whole frame — never sees a tap meant for the pane.
@@ -65,6 +71,17 @@ fun SplitPane(
     // behind full-screen CarPlay, and while a call card has the pane.
     val media by carlinkManager.nowPlaying.collectAsState()
     val art = rememberAlbumArt(media.info.albumArt)
+    // The deck too: the card the driver swiped to is kept across a Dock hide and a call.
+    val nav by NavigationStateManager.state.collectAsState()
+    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack)
+    var shown by remember { mutableStateOf(PaneDeck.default(pages)) }
+    var dealt by remember { mutableStateOf(pages) }
+    LaunchedEffect(pages) {
+        if (pages != dealt) {
+            shown = PaneDeck.after(dealt, pages, shown)
+            dealt = pages
+        }
+    }
     val r = rect
     if (r != null) {
         Box(modifier = modifier) {
@@ -73,6 +90,7 @@ fun SplitPane(
                 PaneHost(
                     carlinkManager,
                     art = art,
+                    deck = Deck(pages, shown) { shown = it },
                     modifier =
                         Modifier
                             .fillMaxHeight()
@@ -92,22 +110,33 @@ fun SplitPane(
     }
 }
 
+/** The cards dealt, the one up, and where a swipe or a title tap reports a new one. */
+private class Deck(
+    val pages: List<PaneCard>,
+    val shown: PaneCard,
+    val onShown: (PaneCard) -> Unit,
+)
+
 /** The pane itself: the backdrop, a header naming the card with the full-screen button, then the card. */
 @Composable
 private fun PaneHost(
     carlinkManager: CarlinkManager,
     /** The current cover, kept by the caller; shown only behind the music card. */
     art: ImageBitmap?,
+    deck: Deck,
     modifier: Modifier = Modifier,
 ) {
     val call by carlinkManager.callPresentationFlow.collectAsState()
     val media by carlinkManager.nowPlaying.collectAsState()
+    val nav by NavigationStateManager.state.collectAsState()
     val showCall = call != CallRoster.Presentation.None
-    val showMedia = !showCall && media.hasTrack
-    // A call takes the pane with the theme's plain background; the cover waits for the music's return.
+    val card = if (showCall) null else deck.shown
+    val showMedia = card == PaneCard.MEDIA
+    // A call, the route and the clock take the pane with its plain background; the cover waits for the music's return.
     val art = if (showMedia) art else null
     val look = paneLook(art, rememberArtIsDark(art), night = isSystemInDarkTheme())
-    val title = paneTitle(showCall, showMedia, media.info.appName)
+    val title = paneTitle(card, media.info.appName)
+    val onTitle = titleTap(card, deck, carlinkManager)
     Surface(
         modifier =
             modifier
@@ -131,18 +160,23 @@ private fun PaneHost(
                 Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
                     PaneHeader(
                         title = title,
-                        // The app that is playing: a tap on its name brings it forward in CarPlay.
-                        onTitle = if (showMedia) ({ carlinkManager.openCarPlayApp(CarPlayUrls.NOW_PLAYING) }) else null,
+                        onTitle = onTitle,
                         onExpand = {
                             logInfo("[UI_ACTION] Pane: CarPlay full screen", tag = "UI")
                             carlinkManager.requestViewArea(0)
                         },
                     )
-                    val card = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)
-                    when {
-                        showCall -> CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = card)
-                        showMedia -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = card)
-                        else -> ClockCard(modifier = card)
+                    val body = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)
+                    if (showCall) {
+                        CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = body)
+                    } else {
+                        PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, modifier = body) { which, m ->
+                            when (which) {
+                                PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
+                                PaneCard.MEDIA -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = m)
+                                PaneCard.CLOCK -> ClockCard(modifier = m)
+                            }
+                        }
                     }
                 }
             }
@@ -174,16 +208,38 @@ private fun paneLook(
         else -> PaneLook(Color.White, INK, Color.White)
     }
 
-/** The header's word for the card: the phone, the app playing (its own name), or this app. */
+/**
+ * What a tap on the header's title does: it puts the card's app in front in CarPlay (the box's
+ * `requestUI` URL), and the pane moves on to what CarPlay is then not showing. Nothing for the clock
+ * or a call. Which app is in front is otherwise unknown to the app, so this tap is its one tell.
+ */
+private fun titleTap(
+    card: PaneCard?,
+    deck: Deck,
+    carlinkManager: CarlinkManager,
+): (() -> Unit)? {
+    val url =
+        when (card) {
+            PaneCard.MEDIA -> CarPlayUrls.NOW_PLAYING
+            PaneCard.DIRECTIONS -> CarPlayUrls.MAPS
+            else -> return null
+        }
+    return {
+        carlinkManager.openCarPlayApp(url)
+        deck.onShown(PaneDeck.beside(deck.shown, deck.pages))
+    }
+}
+
+/** The header's word for the card: the phone during a call (null card), the app playing (its own name), the route, or this app. */
 private fun paneTitle(
-    showCall: Boolean,
-    showMedia: Boolean,
+    card: PaneCard?,
     appName: String?,
 ): String =
-    when {
-        showCall -> "Phone"
-        showMedia -> appName?.takeIf { it.isNotBlank() } ?: "Music"
-        else -> "Carlink3"
+    when (card) {
+        null -> "Phone"
+        PaneCard.MEDIA -> appName?.takeIf { it.isNotBlank() } ?: "Music"
+        PaneCard.DIRECTIONS -> "Directions"
+        PaneCard.CLOCK -> "Carlink3"
     }
 
 @Composable
