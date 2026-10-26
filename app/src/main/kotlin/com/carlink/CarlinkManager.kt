@@ -3228,20 +3228,7 @@ class CarlinkManager(
         val previousAppName = lastMediaAppName
         val previousDuration = lastDuration
         val titleChanged = newSongName != null && newSongName != previousSongName
-
-        if (titleChanged) {
-            lastMediaSongName = null
-            lastMediaArtistName = null
-            lastMediaAlbumName = null
-            lastMediaGenre = null
-            lastMediaComposer = null
-            lastTrackNumber = 0
-            lastTrackCount = 0
-            lastAlbumCover = null
-            lastDuration = 0L
-            lastPosition = 0L
-            // Keep appName — it does not usually change mid-session.
-        }
+        if (titleChanged) clearTrackForNewTitle()
 
         newSongName?.let { lastMediaSongName = it }
         val textChanged = mergeTextFields(obj, previousArtist, previousAlbum, previousAppName) or mergeTrackFields(obj)
@@ -3269,21 +3256,38 @@ class CarlinkManager(
         if (elapsed != null) lastPositionAtMs = SystemClock.elapsedRealtime()
         lastIsPlaying = isPlaying || pressedPlay
 
-        // Broad predicate so incremental artist/album/appName/duration-only updates are not
-        // suppressed. Position-only ticks still short-circuit because none of these change.
-        val metadataChanged =
-            titleChanged ||
-                textChanged ||
-                albumCover != null ||
-                (duration > 0 && duration != previousDuration)
-
-        if (metadataChanged) {
-            publishMetadata()
-            CarlinkMediaBrowserService.updateNowPlaying(lastMediaSongName, lastMediaArtistName)
-        }
-
+        publishIfChanged(titleChanged || textChanged || albumCover != null, duration, previousDuration)
         pushPlaybackState()
         markStreamingIfFirstMedia()
+    }
+
+    /**
+     * Publish the track when something in it changed. Broad on purpose, so incremental artist / album /
+     * app-name / duration-only updates are not suppressed; position-only ticks still short-circuit
+     * because none of these change.
+     */
+    private fun publishIfChanged(
+        wordsOrArtChanged: Boolean,
+        duration: Long,
+        previousDuration: Long,
+    ) {
+        if (!wordsOrArtChanged && (duration <= 0 || duration == previousDuration)) return
+        publishMetadata()
+        CarlinkMediaBrowserService.updateNowPlaying(lastMediaSongName, lastMediaArtistName)
+    }
+
+    /** A new title: the previous song's attributes go, so none of them is shown under the new one. The app name stays — it rarely changes mid-session. */
+    private fun clearTrackForNewTitle() {
+        lastMediaSongName = null
+        lastMediaArtistName = null
+        lastMediaAlbumName = null
+        lastMediaGenre = null
+        lastMediaComposer = null
+        lastTrackNumber = 0
+        lastTrackCount = 0
+        lastAlbumCover = null
+        lastDuration = 0L
+        lastPosition = 0L
     }
 
     /**
