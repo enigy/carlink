@@ -80,6 +80,9 @@ private val URI_GRANT_CONSUMERS =
 private fun isGmAaosObserver(packageName: String): Boolean =
     packageName.startsWith("com.gm.") || packageName.startsWith("com.android.car.") || packageName == "com.android.systemui"
 
+/** AAOS's Media Center, whose `MediaConnectorService` sends the car's own prepare/play to the primary source. */
+private const val CAR_MEDIA_CONNECTOR = "com.android.car.media"
+
 /** A player command as the drive log names it. */
 private fun playerCommandName(command: Int): String =
     when (command) {
@@ -306,6 +309,11 @@ class MediaSessionManager(
 
     /** Raw media-button decoder; touched only on the session's application thread (main). */
     private val keyDecoder = MediaKeyDecoder()
+
+    /** The package whose player command arrived last, so the transport callback can name who asked. */
+    @Volatile
+    var lastCommandSender: String? = null
+        private set
 
     private var player: UsbAdapterPlayer? = null
     private var mediaSession: MediaLibrarySession? = null
@@ -705,7 +713,16 @@ class MediaSessionManager(
                 controller: MediaSession.ControllerInfo,
                 playerCommand: Int,
             ): Int {
-                log("[MEDIA_SESSION] ${playerCommandName(playerCommand)} from ${controller.packageName}")
+                val name = playerCommandName(playerCommand)
+                log("[MEDIA_SESSION] $name from ${controller.packageName}")
+                // A prepare or play from AAOS's MediaConnectorService is the car making this app its
+                // primary media source: it runs only on the boot restore and on a source switch
+                // (CarMediaService.startMediaConnectorService). One plain line, so a drive log shows
+                // when GM switched to this app instead of inferring it from focus losses.
+                if (controller.packageName == CAR_MEDIA_CONNECTOR && (playerCommand == Player.COMMAND_PREPARE || playerCommand == Player.COMMAND_PLAY_PAUSE)) {
+                    log("[MEDIA_SESSION] car selected this app as primary source (connector $name)")
+                }
+                lastCommandSender = controller.packageName
                 return super.onPlayerCommandRequest(session, controller, playerCommand)
             }
 
@@ -1450,14 +1467,18 @@ class MediaSessionManager(
             val p = player ?: return
             try {
                 placeholderForced = true
-                // Flip the gate first; the Player's inactive branch will substitute
-                // PLACEHOLDER_METADATA + STATE_READY in getState() regardless of what
-                // we cache below. The explicit updates below ensure listeners observe
-                // a clean transition (onPlaybackStateChanged + onMediaMetadataChanged
-                // fire to placeholder values rather than carrying stale active-session
-                // metadata into the next active phase).
+                // The playback state is left as the music left it, never pushed to PAUSED here: a
+                // phone that walked away playing keeps this session PLAYING, which is what
+                // CarMediaService persists for the source and what its boot autoplay
+                // (RETAIN_PER_SOURCE) and power-policy resume key on (research note 2026-10-26).
+                // A session that never streamed (its "preparing" BUFFERING + playWhenReady) does
+                // go to ready-paused, so nothing idle ever reads as playing. Set BEFORE the flag
+                // flips: the inactive branch of getState() forces STATE_READY, and READY with the
+                // preparing phase's playWhenReady=true would be a PLAYING blip that made this app
+                // the car's primary source on a failed connect.
+                val keepPlaying = lastPushedPlaying == true
+                p.updatePlaybackState(Player.STATE_READY, keepPlaying, 0L, C.TIME_UNSET)
                 p.setSessionActive(false)
-                p.updatePlaybackState(Player.STATE_READY, false, 0L, C.TIME_UNSET)
                 p.updateMediaMetadata(buildPlaceholderMetadata("Not connected"))
                 // Reset dedup + art state. Revoke any still-published URI grant so
                 // consumers don't retain access to album art from an ended session.
@@ -1475,7 +1496,7 @@ class MediaSessionManager(
                 lastPushedPositionMs = 0L
                 lastPushedTimeNanos = 0L
                 lastPushedDurationMs = 0L
-                log("[MEDIA_SESSION] State: INACTIVE (placeholder, ready-paused)")
+                log("[MEDIA_SESSION] State: INACTIVE (placeholder, ${if (keepPlaying) "left PLAYING for the car's autoplay" else "ready-paused"})")
             } catch (e: Exception) {
                 log("[MEDIA_SESSION] Failed to set inactive state: ${e.message}")
             }
