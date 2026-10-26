@@ -20,12 +20,14 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import com.carlink.logging.logInfo
@@ -71,10 +73,15 @@ internal fun PaneDeckPager(
     // header would move the deck the wrong way.
     val reverse = ScrollableDefaults.reverseDirection(LocalLayoutDirection.current, Orientation.Horizontal, reverseScrolling = false)
     // A short, slow swipe counts. The pager's default snaps BACK unless the drag covered half the
-    // page or left fast (about 400 dp/s); in the car swipes are short and deliberate, and on the 25 %
-    // pane half a page is 240 dp, so most of them snapped back and read as "nothing happened" (owner,
-    // 10-26, release build). A fifth of the page — about an inch — now changes the card.
-    val fling = PagerDefaults.flingBehavior(state = pagerState, snapPositionalThreshold = SWIPE_THRESHOLD)
+    // page or left fast (about 400 dp/s); in the car swipes are short and deliberate, so most of them
+    // snapped back and read as "nothing happened" (owner, 10-26, release build). A quarter inch
+    // ([SWIPE_DISTANCE]) now changes the card, as the head unit's own pages do. The pager wants it as
+    // a fraction of the page, so it is taken from the measured page width (a guess before the first
+    // layout); key(): the fling behaviour captures the fraction when it is made.
+    val pageSizePx = pagerState.layoutInfo.pageSize
+    val swipePx = with(LocalDensity.current) { SWIPE_DISTANCE.toPx() }
+    val threshold = if (pageSizePx > 0) (swipePx / pageSizePx).coerceIn(MIN_THRESHOLD, MAX_THRESHOLD) else GUESS_THRESHOLD
+    val fling = key(threshold) { PagerDefaults.flingBehavior(state = pagerState, snapPositionalThreshold = threshold) }
     val swipesToo = Modifier.scrollable(pagerState, Orientation.Horizontal, reverseDirection = reverse, flingBehavior = fling)
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().then(swipesToo)) { header() }
@@ -120,5 +127,10 @@ private val DOT = 9.dp
 private const val DOT_ON = 0.9f
 private const val DOT_OFF = 0.3f
 
-/** The fraction of the page a slow drag must cover to change the card (the pager's default is half). */
-private const val SWIPE_THRESHOLD = 0.2f
+/** The distance a slow drag must cover to change the card: a quarter inch (160 dp to the inch), like the head unit's own pages. */
+private val SWIPE_DISTANCE = 40.dp
+
+/** The fraction used until the pager has measured its page (a quarter inch on a typical pane). */
+private const val GUESS_THRESHOLD = 0.08f
+private const val MIN_THRESHOLD = 0.02f
+private const val MAX_THRESHOLD = 0.5f
