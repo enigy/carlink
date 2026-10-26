@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -125,23 +129,27 @@ internal fun rememberArtIsDark(image: ImageBitmap?): Boolean =
 
 /**
  * The art filling the pane, crossfaded between tracks; [background] (the pane's day or night colour)
- * when there is none. The lower part, where the words and the progress sit, is FROSTED: the same
- * cover drawn again blurred, fading in from clear at [FROST_FADE_START] of the height to full at
- * [FROST_FADE_END]. Grainy, high-contrast art put its texture right behind the title (owner, 10-26:
- * "bac" in "Backyard" hard to read at a glance); a darker scrim alone leaves the dark grains, the
- * blur turns them into smooth colour while the cover stays whole and sharp above the words.
+ * when there is none. The part behind the words is FROSTED: the same cover drawn again blurred,
+ * fading in from clear a quarter inch ([FROST_LEAD]) above the title to full at the title's top
+ * ([wordsTopInRoot], the music card's measured title position in root coordinates; the band falls
+ * back to [FROST_FALLBACK] of the height until the card has been laid out). Grainy, high-contrast
+ * art put its texture right behind the title (owner, 10-26: "bac" in "Backyard" hard to read at a
+ * glance); a darker scrim alone leaves the dark grains, the blur turns them into smooth colour while
+ * the cover stays whole and sharp above the words. The first cut started the fade at a fixed 38 % of
+ * the pane, well above the title (owner, 10-26: "bring it down closer to the Title text start").
  */
 @Composable
 internal fun MediaBackdrop(
     image: ImageBitmap?,
     background: Color,
+    wordsTopInRoot: Float,
     modifier: Modifier = Modifier,
 ) {
     Crossfade(targetState = image, animationSpec = tween(ART_FADE_MS), label = "album art", modifier = modifier) { img ->
         if (img != null) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().frostedBand())
+                Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().frostedBand(wordsTopInRoot))
             }
         } else {
             Box(modifier = Modifier.fillMaxSize().background(background))
@@ -149,17 +157,29 @@ internal fun MediaBackdrop(
     }
 }
 
-/** Blurs the content and keeps only its lower band, faded in from [FROST_FADE_START] to [FROST_FADE_END] of the height. */
-private fun Modifier.frostedBand(): Modifier =
-    this
+/**
+ * Blurs the content and keeps only the band from [FROST_LEAD] above [wordsTopInRoot] (clear) to the
+ * words' top (full) and everything below it. Root coordinates, so the band stays put under the padded
+ * column and the pager; this layer's own root offset is measured and taken off.
+ */
+@Composable
+private fun Modifier.frostedBand(wordsTopInRoot: Float): Modifier {
+    var selfTopInRoot by remember { mutableFloatStateOf(Float.NaN) }
+    val lead = with(LocalDensity.current) { FROST_LEAD.toPx() }
+    return this
+        .onGloballyPositioned { selfTopInRoot = it.positionInRoot().y }
         .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
         .drawWithContent {
             drawContent()
+            val measured = !wordsTopInRoot.isNaN() && !selfTopInRoot.isNaN()
+            val full = if (measured) wordsTopInRoot - selfTopInRoot else size.height * FROST_FALLBACK
+            val clear = (full - lead).coerceAtLeast(0f)
             drawRect(
-                brush = Brush.verticalGradient(FROST_FADE_START to Color.Transparent, FROST_FADE_END to Color.Black),
+                brush = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = clear, endY = full.coerceAtLeast(clear + 1f)),
                 blendMode = BlendMode.DstIn,
             )
         }.blur(FROST_RADIUS)
+}
 
 /**
  * The music card's words and controls, over the backdrop: title, artist and album, a progress bar
@@ -172,20 +192,25 @@ internal fun MediaCard(
     state: NowPlayingState,
     onControl: (MediaControl) -> Unit,
     modifier: Modifier = Modifier,
+    /** The title's top edge in root coordinates, whenever it is laid out; the pane frosts the art from there. */
+    onWordsTop: (Float) -> Unit = {},
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Spacer(modifier = Modifier.weight(1f))
-        TrackWords(state)
+        TrackWords(state, modifier = Modifier.onGloballyPositioned { onWordsTop(it.positionInRoot().y) })
         ProgressRow(state)
         TransportRow(playing = state.playing, onControl = onControl)
     }
 }
 
 @Composable
-private fun TrackWords(state: NowPlayingState) {
+private fun TrackWords(
+    state: NowPlayingState,
+    modifier: Modifier = Modifier,
+) {
     val info = state.info
     val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
-    Column {
+    Column(modifier = modifier) {
         Text(info.title.orEmpty(), style = MaterialTheme.typography.headlineMedium.scaled(WORD_SCALE), maxLines = 2, overflow = TextOverflow.Ellipsis)
         val line2 = listOfNotNull(info.artist?.takeIf { it.isNotBlank() }, info.album?.takeIf { it.isNotBlank() }).joinToString(" · ")
         if (line2.isNotEmpty()) {
@@ -266,8 +291,12 @@ private fun TextStyle.scaled(factor: Float): TextStyle =
 
 private const val WORD_SCALE = 1.5f
 private val FROST_RADIUS = 24.dp
-private const val FROST_FADE_START = 0.38f
-private const val FROST_FADE_END = 0.6f
+
+/** How far above the title the frost begins: a quarter inch (owner, 10-26). */
+private val FROST_LEAD = 40.dp
+
+/** Where the frost is full until the card has reported its title's position: a fraction of the pane's height. */
+private const val FROST_FALLBACK = 0.6f
 private const val PROGRESS_TICK_MS = 250L
 private const val ART_FADE_MS = 600
 private const val ART_SETTLE_MS = 1_000L

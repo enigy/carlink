@@ -29,6 +29,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -155,6 +156,8 @@ private fun PaneHost(
     val look = paneLook(art, rememberArtIsDark(art), night = isSystemInDarkTheme())
     val title = paneTitle(card, media.info.appName)
     val onTitle = titleTap(card, deck, carlinkManager)
+    // Where the music card's title starts (root coordinates): the frost on the art begins just above it.
+    var wordsTop by remember { mutableFloatStateOf(Float.NaN) }
     Surface(
         modifier =
             modifier
@@ -163,7 +166,7 @@ private fun PaneHost(
         color = look.background,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            MediaBackdrop(art, background = look.background, modifier = Modifier.fillMaxSize())
+            MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, modifier = Modifier.fillMaxSize())
             if (art != null) {
                 Box(
                     modifier =
@@ -182,7 +185,7 @@ private fun PaneHost(
                         PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, header = header, modifier = Modifier.fillMaxSize()) { which, m ->
                             when (which) {
                                 PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
-                                PaneCard.MEDIA -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = m)
+                                PaneCard.MEDIA -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = m, onWordsTop = { wordsTop = it })
                                 PaneCard.CLOCK -> ClockCard(modifier = m)
                             }
                         }
