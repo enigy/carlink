@@ -13,11 +13,4 @@ object CarPlayUrls {
 
     /** The Phone app. */
     const val PHONE = "mobilephone:"
-
-    /**
-     * How long after a call reaches the pane before CarPlay is asked back to what it was showing:
-     * iOS pulls its Phone app forward on its own as the call begins, and asking before it has done
-     * so would be undone by it.
-     */
-    const val CALL_RETURN_DELAY_MS = 1_500L
 }
