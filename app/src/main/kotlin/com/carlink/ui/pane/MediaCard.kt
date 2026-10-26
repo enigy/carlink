@@ -115,18 +115,18 @@ internal fun rememberArtIsDark(image: ImageBitmap?): Boolean =
         } ?: true
     }
 
-/** The art filling the pane, crossfaded between tracks; the pane's surface colour when there is none. */
+/** The art filling the pane, crossfaded between tracks; [background] (the pane's day or night colour) when there is none. */
 @Composable
 internal fun MediaBackdrop(
     image: ImageBitmap?,
+    background: Color,
     modifier: Modifier = Modifier,
 ) {
-    val surface = MaterialTheme.colorScheme.surface
     Crossfade(targetState = image, animationSpec = tween(ART_FADE_MS), label = "album art", modifier = modifier) { img ->
         if (img != null) {
             Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         } else {
-            Box(modifier = Modifier.fillMaxSize().background(surface))
+            Box(modifier = Modifier.fillMaxSize().background(background))
         }
     }
 }

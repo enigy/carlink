@@ -2,6 +2,7 @@ package com.carlink.ui.pane
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -99,14 +100,13 @@ private fun PaneHost(
     art: ImageBitmap?,
     modifier: Modifier = Modifier,
 ) {
-    val colors = MaterialTheme.colorScheme
     val call by carlinkManager.callPresentationFlow.collectAsState()
     val media by carlinkManager.nowPlaying.collectAsState()
     val showCall = call != CallRoster.Presentation.None
     val showMedia = !showCall && media.hasTrack
     // A call takes the pane with the theme's plain background; the cover waits for the music's return.
     val art = if (showMedia) art else null
-    val look = paneLook(art, rememberArtIsDark(art), colors.onSurface)
+    val look = paneLook(art, rememberArtIsDark(art), night = isSystemInDarkTheme())
     val title = paneTitle(showCall, showMedia, media.info.appName)
     Surface(
         modifier =
@@ -115,10 +115,10 @@ private fun PaneHost(
                 .clip(RoundedCornerShape(PANE_CORNER))
                 // Every touch that lands here is the pane's: nothing falls through to the SurfaceView.
                 .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
-        color = colors.surface,
+        color = look.background,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            MediaBackdrop(art, modifier = Modifier.fillMaxSize())
+            MediaBackdrop(art, background = look.background, modifier = Modifier.fillMaxSize())
             if (art != null) {
                 Box(
                     modifier =
@@ -150,22 +150,28 @@ private fun PaneHost(
     }
 }
 
-/** The colour of the words and buttons, and of the scrim behind them, for what is behind the pane. */
+/** The pane's background, the colour of the words and buttons over it, and the scrim between art and words. */
 private class PaneLook(
+    val background: Color,
     val content: Color,
     val scrim: Color,
 )
 
-/** Over art the words are white or near-black for the cover; without art the theme's own colour. */
+/**
+ * Without art the pane is white by day and near-black by night — the car's day/night, the same
+ * signal CarPlay's own night mode follows (owner, 10-26). Over art the words are white or near-black
+ * for the cover, whatever the time of day.
+ */
 private fun paneLook(
     art: ImageBitmap?,
     dark: Boolean,
-    onSurface: Color,
+    night: Boolean,
 ): PaneLook =
     when {
-        art == null -> PaneLook(onSurface, Color.Black)
-        dark -> PaneLook(Color.White, Color.Black)
-        else -> PaneLook(INK, Color.White)
+        art == null && night -> PaneLook(NIGHT_PANE, Color.White, Color.Black)
+        art == null -> PaneLook(Color.White, INK, Color.White)
+        dark -> PaneLook(NIGHT_PANE, Color.White, Color.Black)
+        else -> PaneLook(Color.White, INK, Color.White)
     }
 
 /** The header's word for the card: the phone, the app playing (its own name), or this app. */
@@ -214,6 +220,9 @@ private fun SplitTab(
 }
 
 private val INK = Color(0xFF14181E)
+
+/** The pane at night: the head unit's own near-black, from the design mockup. */
+private val NIGHT_PANE = Color(0xFF0B0D10)
 
 /** CarPlay's corner radius on the truck's panel, matched by eye with a slider on 10-25 and then fixed. */
 private val PANE_CORNER = 52.dp
