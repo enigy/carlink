@@ -315,7 +315,11 @@ class UsbAdapterPlayer(
                 .setPlaylist(listOf(placeholderItemData))
                 .setCurrentMediaItemIndex(0)
                 .setPlaybackState(Player.STATE_READY)
-                .setPlayWhenReady(false, Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE)
+                // The last playWhenReady, not false: a phone that walked away mid-song leaves the
+                // session reporting PLAYING, which is the state CarMediaService persists for this
+                // source and the one its boot autoplay (RETAIN_PER_SOURCE) and power-policy resume
+                // key on. MediaSessionManager.setInactive sets it before flipping the flag.
+                .setPlayWhenReady(snapshot.isPlaying, Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE)
                 .setIsLoading(false)
                 .build()
         }

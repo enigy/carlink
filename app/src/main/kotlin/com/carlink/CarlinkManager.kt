@@ -41,6 +41,7 @@ import com.carlink.logging.logError
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.media.CarlinkMediaBrowserService
+import com.carlink.media.ConnectPlay
 import com.carlink.media.MediaSessionManager
 import com.carlink.media.NowPlayingInfo
 import com.carlink.media.PlayStatus
@@ -72,6 +73,7 @@ import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
 import com.carlink.ui.settings.DriverProfiles
 import com.carlink.ui.settings.LaneGuidanceStore
+import com.carlink.ui.settings.MusicStore
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
@@ -935,6 +937,16 @@ class CarlinkManager(
             val transportCallback =
                 object : MediaSessionManager.MediaControlCallback {
                     override fun onPlay() {
+                        // The car's own play() (boot autoplay, media power back, Media Center) lands
+                        // some 40 s before the phone is connected (drive log 10-25 22:06) and used to
+                        // be dropped by sendMediaButton for want of a client. Remembered instead, and
+                        // delivered when the phone reports its music ([ConnectPlay]).
+                        if (state != State.STREAMING) {
+                            val from = mediaSessionManager?.lastCommandSender ?: "the car"
+                            connectPlay.defer(from)
+                            logInfo("[MEDIA] play from $from before CarPlay is up — deferred until the phone reports its music", tag = Logger.Tags.MEDIA_SESSION)
+                            return
+                        }
                         sendMediaButton(Ocbm.MEDIA_BTN_PLAY)
                     }
 
@@ -943,16 +955,13 @@ class CarlinkManager(
                     }
 
                     override fun onStop() {
-                        // The car stops the old source when its primary source changes. Right after a
-                        // skip we sent, that change is the press having reached the radio as well.
-                        if (skipAftermath.covers(SystemClock.elapsedRealtime())) {
-                            logWarn(
-                                "[MEDIA_SESSION] stop from the car right after a skip this app sent — ignored, the press reached another source too",
-                                tag = Logger.Tags.MEDIA_SESSION,
-                            )
-                            return
-                        }
-                        sendMediaButton(Ocbm.MEDIA_BTN_PAUSE)
+                        // The car stops the old source when its primary source changes — after a
+                        // steering-wheel skip the car also gave to the radio (10-25 11:26), or when
+                        // the driver picked another source. The music is left to the phone either
+                        // way: if the new source plays, the audio focus loss pauses the phone
+                        // (onLanesArmed); if it does not, there is nothing to pause for. Answering
+                        // with a Pause here was what silenced the music after a skip (1.00).
+                        logInfo("[MEDIA_SESSION] stop from the car (its primary source changed) — music left to the phone; a focus loss pauses it", tag = Logger.Tags.MEDIA_SESSION)
                     }
 
                     override fun onSkipToNext() {
@@ -1662,6 +1671,33 @@ class CarlinkManager(
      */
     private val skipAftermath = SkipAftermath()
 
+    /** The one Play pressed for the phone at connect: the car's deferred `play()`, or the resume setting. */
+    private val connectPlay = ConnectPlay(resumeOnConnect = { MusicStore.get(context).resumeOnConnect })
+    private var connectPlayJob: Job? = null
+
+    /**
+     * The first status of a session: a stopped phone may get one Play ([ConnectPlay]). True when it
+     * was pressed; the session then reports PLAYING at once, as the car asked, so the connect-time
+     * stop never becomes the state the car persists. If the phone has not started within
+     * [CONNECT_PLAY_GRACE_MS] the report is taken back.
+     */
+    private fun connectPlayFor(playStatus: Int?): Boolean {
+        val reason = playStatus?.let { connectPlay.onStatus(it) } ?: return false
+        logInfo("[MEDIA] $reason: pressing Play for the phone, which reports its music stopped", tag = Logger.Tags.MEDIA_SESSION)
+        sendMediaButton(Ocbm.MEDIA_BTN_PLAY)
+        connectPlayJob?.cancel()
+        connectPlayJob =
+            scope.launch {
+                delay(CONNECT_PLAY_GRACE_MS)
+                if (PlayStatus.stopped(lastPlayStatus)) {
+                    logInfo("[MEDIA] the phone did not start within ${CONNECT_PLAY_GRACE_MS}ms of Play — reporting it paused", tag = Logger.Tags.MEDIA_SESSION)
+                    lastIsPlaying = false
+                    pushPlaybackState()
+                }
+            }
+        return true
+    }
+
     // ==================== Siri / telephony (3P shell) ====================
 
     /**
@@ -2294,7 +2330,8 @@ class CarlinkManager(
                     voiceRouter?.releaseQuietSinks("media audible again", TransientFocusPolicy.MEDIA_RESUME_MIN_QUIET_MS)
                 },
                 onFocusEvent = { logInfo("[FOCUS] $it", tag = Logger.Tags.ADAPTR) },
-                // Music became audible: report PLAYING now, before the phone's metadata catches up.
+                // Music became audible: re-publish the phone's state, which audibility no longer
+                // overrides (1.02) — this only replays a push the dedup may have swallowed.
                 onAudible = { scope.launch { pushPlaybackState() } },
             ).also { it.start() }
         mediaPlayer = player
@@ -3044,14 +3081,13 @@ class CarlinkManager(
     }
 
     /**
-     * The session's PLAYING bit, which AAOS uses to pick the session the steering-wheel keys go to.
-     * Audible music being rendered counts as playing even while the phone's metadata lags or says seek
-     * ([MediaAudioPlayer.isAudible]); only the phone's own stop/pause ([phoneSaysStopped]) overrides it,
-     * so a true pause is reported at once rather than after the audible tail.
+     * The session's PLAYING bit, which AAOS uses to pick its primary media source — the session the
+     * steering-wheel keys and the HUD title follow. It is the phone's own play status ([PlayStatus]:
+     * play, pause and stop count; a seek leaves it), nothing else: every PAUSED↔PLAYING flip is a
+     * transition the car acts on, and counting audible audio as playing (1.01) added flips of its own.
      */
-    private fun pushPlaybackState(phoneSaysStopped: Boolean = false) {
-        val playing = !phoneSaysStopped && (lastIsPlaying || mediaPlayer?.isAudible == true)
-        mediaSessionManager?.updatePlaybackState(playing = playing, position = lastPosition)
+    private fun pushPlaybackState() {
+        mediaSessionManager?.updatePlaybackState(playing = lastIsPlaying, position = lastPosition)
     }
 
     /** The cached track as one value for the session. Main thread (all `lastMedia*` writers are). */
@@ -3123,10 +3159,11 @@ class CarlinkManager(
         val playStatus = if (obj.has("playbackStatus")) obj.optInt("playbackStatus") else null
         val isPlaying = PlayStatus.playing(playStatus, lastIsPlaying)
         logPlayStatusChange(playStatus)
+        val pressedPlay = connectPlayFor(playStatus)
 
         lastDuration = duration
         lastPosition = position
-        lastIsPlaying = isPlaying
+        lastIsPlaying = isPlaying || pressedPlay
 
         // Broad predicate so incremental artist/album/appName/duration-only updates are not
         // suppressed. Position-only ticks still short-circuit because none of these change.
@@ -3141,7 +3178,7 @@ class CarlinkManager(
             CarlinkMediaBrowserService.updateNowPlaying(lastMediaSongName, lastMediaArtistName)
         }
 
-        pushPlaybackState(phoneSaysStopped = PlayStatus.stopped(playStatus))
+        pushPlaybackState()
         markStreamingIfFirstMedia()
     }
 
@@ -3289,6 +3326,8 @@ class CarlinkManager(
             }
 
             State.DISCONNECTED -> {
+                connectPlay.disarm()
+                connectPlayJob?.cancel()
                 mediaSessionManager?.setInactive()
                 CarlinkMediaBrowserService.clearNowPlaying()
                 // Keep the FGS through an active reconnect backoff. This branch runs POSTED to
@@ -3302,6 +3341,8 @@ class CarlinkManager(
             }
 
             State.DEVICE_CONNECTED -> {
+                // A session: the phone's first play status decides whether Play is pressed for it.
+                connectPlay.arm()
                 // Re-publish with phase-specific text now that the handshake is behind us and we
                 // are only waiting for the first media.
                 mediaSessionManager?.setProjectionActive(connectingPhase = false)
@@ -3593,3 +3634,6 @@ class CarlinkManager(
         logDebug(message, tag = Logger.Tags.ADAPTR)
     }
 }
+
+/** How long the phone gets to start after the connect-time Play before the session reports it paused after all. */
+private const val CONNECT_PLAY_GRACE_MS = 3_000L

@@ -85,6 +85,7 @@ internal fun PhonesPane(
         } else {
             AddPhoneHint(carlinkManager.adapterName)
         }
+        ResumeMusicRow()
 
         deviceToRemove?.let { device ->
             RemoveDeviceDialog(
@@ -99,6 +100,25 @@ internal fun PhonesPane(
                 onDismiss = { deviceToRemove = null },
             )
         }
+    }
+}
+
+/** Settings › Phones › Resume music when the phone connects ([MusicStore]). */
+@Composable
+private fun ResumeMusicRow() {
+    val context = LocalContext.current
+    val music = remember { MusicStore.get(context) }
+    val resume by music.resumeOnConnectFlow.collectAsState()
+    SettingsGroup {
+        SwitchRow(
+            title = "Resume music when the phone connects",
+            subtitle = "Press Play for the phone when it connects with its music stopped, as the car's own CarPlay does",
+            checked = resume,
+            onCheckedChange = {
+                logWarn("[UI_ACTION] Resume music on connect -> $it", tag = "UI")
+                music.setResumeOnConnect(it)
+            },
+        )
     }
 }
 
