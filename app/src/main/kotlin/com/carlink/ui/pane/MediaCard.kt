@@ -151,7 +151,8 @@ internal fun MediaBackdrop(
 
 /** Blurs the content and keeps only its lower band, faded in from [FROST_FADE_START] to [FROST_FADE_END] of the height. */
 private fun Modifier.frostedBand(): Modifier =
-    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    this
+        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
         .drawWithContent {
             drawContent()
             drawRect(
