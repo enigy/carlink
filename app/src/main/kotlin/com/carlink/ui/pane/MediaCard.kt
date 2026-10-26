@@ -35,10 +35,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
@@ -117,7 +123,14 @@ internal fun rememberArtIsDark(image: ImageBitmap?): Boolean =
         } ?: true
     }
 
-/** The art filling the pane, crossfaded between tracks; [background] (the pane's day or night colour) when there is none. */
+/**
+ * The art filling the pane, crossfaded between tracks; [background] (the pane's day or night colour)
+ * when there is none. The lower part, where the words and the progress sit, is FROSTED: the same
+ * cover drawn again blurred, fading in from clear at [FROST_FADE_START] of the height to full at
+ * [FROST_FADE_END]. Grainy, high-contrast art put its texture right behind the title (owner, 10-26:
+ * "bac" in "Backyard" hard to read at a glance); a darker scrim alone leaves the dark grains, the
+ * blur turns them into smooth colour while the cover stays whole and sharp above the words.
+ */
 @Composable
 internal fun MediaBackdrop(
     image: ImageBitmap?,
@@ -126,12 +139,27 @@ internal fun MediaBackdrop(
 ) {
     Crossfade(targetState = image, animationSpec = tween(ART_FADE_MS), label = "album art", modifier = modifier) { img ->
         if (img != null) {
-            Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().frostedBand())
+            }
         } else {
             Box(modifier = Modifier.fillMaxSize().background(background))
         }
     }
 }
+
+/** Blurs the content and keeps only its lower band, faded in from [FROST_FADE_START] to [FROST_FADE_END] of the height. */
+private fun Modifier.frostedBand(): Modifier =
+    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            drawRect(
+                brush = Brush.verticalGradient(FROST_FADE_START to Color.Transparent, FROST_FADE_END to Color.Black),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        .blur(FROST_RADIUS)
 
 /**
  * The music card's words and controls, over the backdrop: title, artist and album, a progress bar
@@ -237,6 +265,9 @@ private fun TextStyle.scaled(factor: Float): TextStyle =
     )
 
 private const val WORD_SCALE = 1.5f
+private val FROST_RADIUS = 24.dp
+private const val FROST_FADE_START = 0.38f
+private const val FROST_FADE_END = 0.6f
 private const val PROGRESS_TICK_MS = 250L
 private const val ART_FADE_MS = 600
 private const val ART_SETTLE_MS = 1_000L
