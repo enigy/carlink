@@ -159,8 +159,7 @@ private fun Modifier.frostedBand(): Modifier =
                 brush = Brush.verticalGradient(FROST_FADE_START to Color.Transparent, FROST_FADE_END to Color.Black),
                 blendMode = BlendMode.DstIn,
             )
-        }
-        .blur(FROST_RADIUS)
+        }.blur(FROST_RADIUS)
 
 /**
  * The music card's words and controls, over the backdrop: title, artist and album, a progress bar
