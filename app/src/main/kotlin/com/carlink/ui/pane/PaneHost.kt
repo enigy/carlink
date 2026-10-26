@@ -38,8 +38,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
@@ -59,7 +57,14 @@ import com.carlink.ocbm.CarPlayUrls
  * album art behind the whole pane and sets the words and buttons light or dark to suit it.
  *
  * Sits ABOVE the SurfaceView and takes its own touches, so CarPlay — which still normalises touch over
- * the whole frame — never sees a tap meant for the pane.
+ * the whole frame — never sees a tap meant for the pane. Nothing extra is needed for that: Material's
+ * `Surface` carries an empty `pointerInput` of its own, and Compose hit-tests stop at the topmost
+ * sibling that has one, so no pane touch reaches the view below ([PaneSwipeBandTest] counts them).
+ * The "backstop" that used to consume every unclaimed change on the Final pass was the swipe bug
+ * (owner, 10-26: swipes landed only in a band at the pane's middle, truck and emulator alike): the
+ * pager's drag detector verifies on that same Final pass that nobody consumed the first moves, and
+ * the backstop had — so a slow-starting drag was cancelled before it reached touch slop, and only a
+ * swipe fast enough to pass slop on its first move ever landed.
  */
 @Composable
 fun SplitPane(
@@ -142,8 +147,7 @@ private fun PaneHost(
         modifier =
             modifier
                 // Rounded like CarPlay's own pane beside it.
-                .clip(RoundedCornerShape(PANE_CORNER))
-                .consumeUnhandledTouches(),
+                .clip(RoundedCornerShape(PANE_CORNER)),
         color = look.background,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -176,22 +180,6 @@ private fun PaneHost(
         }
     }
 }
-
-/**
- * A backstop on the FINAL pointer pass: the pager and the buttons claim their gestures first on the
- * Main pass, and only what no child took is consumed here. So a swipe reaches the pager, yet no pane
- * touch falls through to the SurfaceView under the pane (CarPlay normalises touch over the whole
- * frame). Consuming every change on the Main pass instead stole the swipe from the pager (owner,
- * 10-26: "difficult to swipe, took several tries to find the touch area").
- */
-private fun Modifier.consumeUnhandledTouches(): Modifier =
-    pointerInput(Unit) {
-        awaitPointerEventScope {
-            while (true) {
-                awaitPointerEvent(PointerEventPass.Final).changes.forEach { if (!it.isConsumed) it.consume() }
-            }
-        }
-    }
 
 /** The pane's full-screen button: CarPlay back to the whole frame. */
 private fun carPlayFullScreen(carlinkManager: CarlinkManager) {
