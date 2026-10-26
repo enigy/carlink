@@ -21,6 +21,14 @@ class TrackChangeHoldTest {
     }
 
     @Test
+    fun aLengthThatLandedJustBeforeTheTitleIsTheNewSongs() {
+        // 10-25 22:07:24: the length at .128, the title at .686.
+        assertTrue(TrackChangeHold.lengthLedTitle(lengthArrivedAtMs = 10_128, nowMs = 10_686))
+        assertFalse("a minute-old length is the song being left", TrackChangeHold.lengthLedTitle(lengthArrivedAtMs = 10_000, nowMs = 70_000))
+        assertFalse("no length has arrived yet", TrackChangeHold.lengthLedTitle(lengthArrivedAtMs = 0, nowMs = 500))
+    }
+
+    @Test
     fun aLengthChangeMidSongIsPublishedAtOnce() {
         assertFalse(TrackChangeHold.startsHold(reportedLength = 138_000, currentLength = 180_000, elapsedMs = 60_000))
         assertFalse("no elapsed time to place it", TrackChangeHold.startsHold(reportedLength = 138_000, currentLength = 180_000, elapsedMs = null))

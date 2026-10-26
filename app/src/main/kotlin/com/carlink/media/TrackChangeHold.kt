@@ -21,6 +21,17 @@ object TrackChangeHold {
     private const val SAME_LENGTH_MS = 1_000L
 
     /**
+     * A length that landed this recently before a title change belongs to the NEW title: Spotify sends
+     * the next song's length in a record of its own, with no elapsed time (so [startsHold] cannot see
+     * it), about half a second before the title (10-25 22:07, every skip). Clearing it with the title
+     * left the pane's progress bar without a length for the whole song.
+     */
+    fun lengthLedTitle(
+        lengthArrivedAtMs: Long,
+        nowMs: Long,
+    ): Boolean = lengthArrivedAtMs > 0L && nowMs - lengthArrivedAtMs <= TITLE_WAIT_MS
+
+    /**
      * A record without a new title that reports a different length near the start of a song: the next
      * song's attributes have begun arriving ahead of its title.
      */

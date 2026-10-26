@@ -711,6 +711,9 @@ class CarlinkManager(
     private var heldLength: Long? = null
     private var heldLengthJob: Job? = null
 
+    /** `elapsedRealtime()` when a song length last arrived; a title change right after it keeps that length ([TrackChangeHold.lengthLedTitle]). */
+    private var lastLengthAtMs: Long = 0L
+
     /**
      * Album art arrives out of band from the track that references it, so it is cached by id
      * until the two meet.
@@ -791,6 +794,7 @@ class CarlinkManager(
         nowPlayingState.value = NowPlayingState.NONE
         heldLengthJob?.cancel()
         heldLength = null
+        lastLengthAtMs = 0L
         synchronized(artworkById) { artworkById.clear() }
         pendingArtworkId = null
         _connectedBtMac = null
@@ -3101,12 +3105,16 @@ class CarlinkManager(
         elapsed: Long?,
         current: Long,
     ): Long {
+        val now = SystemClock.elapsedRealtime()
+        if (reported != null && reported > 0) lastLengthAtMs = now
         if (titleChanged) {
             heldLengthJob?.cancel()
             val held = heldLength
             heldLength = null
             if (held != null && reported == null) logInfo("[MEDIA] title arrived after its length; both sent together", tag = Logger.Tags.MEDIA_SESSION)
-            return reported ?: held ?: lastDuration
+            // A length that came in its own record just before the title is this song's, not the last's.
+            val ledBy = if (TrackChangeHold.lengthLedTitle(lastLengthAtMs, now)) current else lastDuration
+            return reported ?: held ?: ledBy
         }
         if (!TrackChangeHold.startsHold(reported, current, elapsed)) return reported ?: lastDuration
         if (heldLength == null) {
