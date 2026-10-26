@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.carlink.logging.logInfo
 import com.carlink.media.MediaControl
 import com.carlink.media.NowPlayingState
 import kotlinx.coroutines.Dispatchers
@@ -54,32 +55,52 @@ import kotlinx.coroutines.withContext
  * (iOS sends the title first and the art a moment later), so there is no placeholder between songs:
  * [MediaBackdrop] crossfades straight from one cover to the next.
  *
- * On a track change Spotify sends a stand-in image first and the real cover second, every time
- * (the Spotify app shows the same, 10-25). So the [ART_TRUSTED_ARRIVAL]th cover of a track is shown
- * the moment it lands, and a first cover only after [ART_SINGLE_WAIT_MS] with no second one — a
- * source that sends one cover still gets it, late rather than never. [trackKey] (title and artist)
- * starts the count over. Decoded off the main thread.
+ * Spotify's stand-in. On every skip (log 10-25 21:22) the same 18 KB stand-in image arrives under
+ * the OLD title, the title then changes with the stand-in still attached, and the real cover lands
+ * 0.6–0.7 s later. The stand-in is the same bytes every time, so it is learned: a cover replaced
+ * before it has stood for [ART_SETTLE_MS] is remembered as a stand-in ([ArtStandIns]) and refused on
+ * sight from then on. Until one is known every cover waits out the settle; once one is known every
+ * other cover is shown the moment it lands. Decoded off the main thread.
  *
  * Call this where it stays composed — the pane's host, not the pane — so the cover is kept, and the
  * next one decoded, while the pane is hidden behind full-screen CarPlay or a call card.
  */
 @Composable
-internal fun rememberAlbumArt(
-    bytes: ByteArray?,
-    trackKey: String?,
-): ImageBitmap? {
+internal fun rememberAlbumArt(bytes: ByteArray?): ImageBitmap? {
     var shown by remember { mutableStateOf<ImageBitmap?>(null) }
-    var arrivals by remember { mutableIntStateOf(0) }
-    LaunchedEffect(trackKey) { arrivals = 0 }
+    // The cover waiting out its settle; left set when a newer cover cancels the wait, which is the tell.
+    var pendingHash by remember { mutableIntStateOf(0) }
     LaunchedEffect(bytes) {
         if (bytes == null) return@LaunchedEffect
-        arrivals += 1
-        // A second cover inside the wait restarts this effect with the new bytes and skips the wait.
-        if (arrivals < ART_TRUSTED_ARRIVAL) delay(ART_SINGLE_WAIT_MS)
+        val hash = bytes.contentHashCode()
+        if (pendingHash != 0 && pendingHash != hash) {
+            ArtStandIns.learn(pendingHash)
+            logInfo("[MEDIA] album art stand-in learned (${bytes.size} B replaced it inside ${ART_SETTLE_MS}ms)", tag = "UI")
+        }
+        pendingHash = 0
+        if (ArtStandIns.isStandIn(hash)) return@LaunchedEffect
+        if (!ArtStandIns.anyKnown) {
+            pendingHash = hash
+            delay(ART_SETTLE_MS)
+            pendingHash = 0
+        }
         val decoded = withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
         if (decoded != null) shown = decoded
     }
     return shown
+}
+
+/** Covers known to be stand-ins (by content hash), for the life of the process. */
+internal object ArtStandIns {
+    private val hashes = HashSet<Int>()
+
+    val anyKnown: Boolean get() = synchronized(hashes) { hashes.isNotEmpty() }
+
+    fun isStandIn(hash: Int): Boolean = synchronized(hashes) { hash in hashes }
+
+    fun learn(hash: Int) {
+        synchronized(hashes) { hashes.add(hash) }
+    }
 }
 
 /** Whether [image] is dark overall ([ArtTone]); true without art, for the pane's own dark surface. */
@@ -207,8 +228,7 @@ private fun TransportRow(
 
 private const val PROGRESS_TICK_MS = 250L
 private const val ART_FADE_MS = 600
-private const val ART_TRUSTED_ARRIVAL = 2
-private const val ART_SINGLE_WAIT_MS = 2_500L
+private const val ART_SETTLE_MS = 1_000L
 private const val TONE_SAMPLE = 16
 private const val SECONDARY_ALPHA = 0.72f
 private const val TRACK_ALPHA = 0.25f

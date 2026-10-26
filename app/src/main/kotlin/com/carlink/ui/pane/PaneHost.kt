@@ -66,7 +66,7 @@ fun SplitPane(
     // The cover lives here, not in the pane: it stays decoded and ready while the pane is hidden
     // behind full-screen CarPlay, and while a call card has the pane.
     val media by carlinkManager.nowPlaying.collectAsState()
-    val art = rememberAlbumArt(media.info.albumArt, trackKey = media.info.title?.let { "$it|${media.info.artist}" })
+    val art = rememberAlbumArt(media.info.albumArt)
     val r = rect
     if (r != null) {
         Box(modifier = modifier) {
