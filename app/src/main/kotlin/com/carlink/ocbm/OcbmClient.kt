@@ -663,6 +663,20 @@ class OcbmClient(
     /** Global night mode — one input alongside iOS's own logic, not a per-display override. */
     fun sendNightMode(on: Boolean): Boolean = sendCommand(Ocbm.CMD_NIGHT_MODE, if (on) 1 else 0)
 
+    /**
+     * `requestUI` with a URL: bring that CarPlay app forward on the main screen (`CMD_REQUEST_UI_URL`).
+     * False, with nothing sent, for an empty URL or one over [Ocbm.REQUEST_UI_URL_MAX] bytes — the
+     * box would refuse it anyway.
+     */
+    fun sendRequestUiUrl(url: String): Boolean {
+        val bytes = url.toByteArray(Charsets.UTF_8)
+        if (bytes.isEmpty() || bytes.size > Ocbm.REQUEST_UI_URL_MAX) {
+            log.w("requestUI url refused: ${bytes.size} B (1..${Ocbm.REQUEST_UI_URL_MAX})")
+            return false
+        }
+        return enqueue(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_COMMAND, Ocbm.CMD_REQUEST_UI_URL) + bytes, "command 0x12 requestUI $url")
+    }
+
     /** Explicit per-display appearance. Silently ignored unless the pushed config advertised it. */
     fun sendAppearance(
         dark: Boolean,

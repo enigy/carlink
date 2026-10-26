@@ -1,9 +1,11 @@
 package com.carlink.ui.pane
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -131,10 +133,15 @@ private fun PaneHost(
             }
             CompositionLocalProvider(LocalContentColor provides look.content) {
                 Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                    PaneHeader(title = title, onExpand = {
-                        logInfo("[UI_ACTION] Pane: CarPlay full screen", tag = "UI")
-                        carlinkManager.requestViewArea(0)
-                    })
+                    PaneHeader(
+                        title = title,
+                        // The app that is playing: a tap on its name brings it forward in CarPlay.
+                        onTitle = if (showMedia) ({ carlinkManager.openCarPlayApp(NOW_PLAYING_URL) }) else null,
+                        onExpand = {
+                            logInfo("[UI_ACTION] Pane: CarPlay full screen", tag = "UI")
+                            carlinkManager.requestViewArea(0)
+                        },
+                    )
                     val card = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)
                     when {
                         showCall -> CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = card)
@@ -180,11 +187,14 @@ private fun paneTitle(
 @Composable
 private fun PaneHeader(
     title: String,
+    onTitle: (() -> Unit)?,
     onExpand: () -> Unit,
 ) {
     val content = LocalContentColor.current
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, style = MaterialTheme.typography.titleMedium, color = content.copy(alpha = HEADER_ALPHA), modifier = Modifier.weight(1f))
+        val titleModifier = if (onTitle != null) Modifier.clip(MaterialTheme.shapes.small).clickable(onClick = onTitle).padding(horizontal = 8.dp, vertical = 6.dp) else Modifier
+        Text(title, style = MaterialTheme.typography.titleMedium, color = content.copy(alpha = HEADER_ALPHA), modifier = titleModifier)
+        Spacer(modifier = Modifier.weight(1f))
         PaneButton(Icons.Default.Fullscreen, "CarPlay full screen", onClick = onExpand, size = 56.dp, iconSize = 32.dp, tint = content.copy(alpha = HEADER_ALPHA))
     }
 }
@@ -208,6 +218,9 @@ private fun SplitTab(
 }
 
 private val INK = Color(0xFF14181E)
+
+/** CarPlay's URL for the app that is playing now (Apple's `requestUI` scheme; being benched on this box). */
+private const val NOW_PLAYING_URL = "nowplaying:"
 private const val SCRIM_TOP = 0.45f
 private const val SCRIM_BOTTOM = 0.75f
 private const val HEADER_ALPHA = 0.85f

@@ -372,7 +372,7 @@ pub const CAP_MFI: u32 = 0x0000_0004;
 pub const CAP_IP: u32 = 0x0000_0008;
 pub const CAP_FILE: u32 = 0x0000_0010;
 pub const CAP_ETH: u32 = 0x0000_0020; // box can bridge a raw-ethernet netdev (ncm0) over CH_ETH
-pub const CAP_PHONE_POLICY: u32 = 0x0000_0040; // box takes MGMT_SET_POLICY / MGMT_CONNECT_DEVICE (enigy/ocbm phone-priority)
+pub const CAP_PHONE_POLICY: u32 = 0x0000_0040; // box takes MGMT_SET_POLICY / MGMT_CONNECT_DEVICE
 pub const CAP_PAIR_WINDOW: u32 = 0x0000_0080; // box takes MGMT_PAIR_WINDOW and gates pairing behind it
 
 // OCBM_CH_IP stream-mux sub-frame types. Payload = [type u8][conn_id u16 LE][data].
@@ -509,6 +509,17 @@ pub const CMD_NIGHT_MODE: u8 = 0x10;
 // answer path (`receiver::events::switch_view_area`). Device-proven 2026-09-05: iOS's own request is
 // advisory and the accessory is the authority, so this is the deterministic way to drive a resize.
 pub const CMD_VIEW_AREA: u8 = 0x11;
+// Open a CarPlay app on the MAIN screen by URL (2026-10-25, for the Carlink3 split-screen pane: the
+// playing app when the driver taps the source name, Maps back after a call pulled Phone forward).
+// `[INPUT_COMMAND][CMD_REQUEST_UI_URL][url…]` — the URL is the remaining bytes, UTF-8, no terminator,
+// 1..=REQUEST_UI_URL_MAX bytes. carplayd sends `{type:"requestUI", params:{url}}`, the shape
+// `_AirPlayReceiverSessionRequestUI` builds when a url is given (CMD_REQUEST_UI is the no-url twin).
+// An empty, over-long or non-UTF-8 URL is refused with a log line and nothing is sent. Which URLs iOS
+// honours on the main screen (`maps:`, `nowplaying:`, `mobilephone:`, `music:`) is a bench question;
+// only the cluster URLs are proven. If requestUI ignores the url, the fallback is
+// `showUI{uuid: DISPLAY_UUID, url}` — same command id, different body.
+pub const CMD_REQUEST_UI_URL: u8 = 0x12;
+pub const REQUEST_UI_URL_MAX: usize = 255;
 pub const APPEARANCE_STREAM_MAIN: u8 = 0x00;
 pub const APPEARANCE_STREAM_ALT: u8 = 0x01;
 pub const APPEARANCE_MODE_LIGHT: u8 = 0x00;
@@ -1103,13 +1114,14 @@ mod tests {
             CMD_REQUEST_UI, CMD_REQUEST_SIRI, CMD_SIRI_DOWN, CMD_SIRI_UP, CMD_NAV_START, CMD_NAV_STOP,
             CMD_NAV_CARD, CMD_LIMITED_UI_ON, CMD_LIMITED_UI_OFF, CMD_NAV_APP, CMD_NAV_APPEARANCE,
             CMD_NAV_ZOOM_IN, CMD_NAV_ZOOM_OUT, CMD_UI_APPEARANCE, CMD_MAP_APPEARANCE, CMD_NIGHT_MODE,
-            CMD_VIEW_AREA,
+            CMD_VIEW_AREA, CMD_REQUEST_UI_URL,
         ];
         let mut sorted = ids.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), ids.len(), "duplicate CMD_* id");
         assert_eq!(CMD_VIEW_AREA, 0x11);
+        assert_eq!(CMD_REQUEST_UI_URL, 0x12);
     }
 
     #[test]

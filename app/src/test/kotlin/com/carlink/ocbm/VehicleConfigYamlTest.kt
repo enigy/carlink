@@ -155,7 +155,8 @@ metadata:
         val doc = VehicleConfigYaml.render(VehicleConfigSpec(viewArea2 = PixelRect(0, 0, 1680, 960), viewAreaAnimMs = 1500))
         assertTrue(doc, doc.lines().contains("view_area_anim_ms: 1500"))
         assertFalse(VehicleConfigYaml.render(VehicleConfigSpec()).contains("view_area_anim_ms"))
-        for (bad in listOf(999, 10_001, 0)) {
+        assertEquals(500, VehicleConfigSpec(viewAreaAnimMs = 500).viewAreaAnimMs)
+        for (bad in listOf(99, 10_001, 0)) {
             var threw = false
             try {
                 VehicleConfigSpec(viewAreaAnimMs = bad)

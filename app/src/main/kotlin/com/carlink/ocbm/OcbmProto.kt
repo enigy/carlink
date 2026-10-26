@@ -425,6 +425,15 @@ object Ocbm {
      */
     const val CMD_VIEW_AREA: Byte = 0x11
 
+    /**
+     * `[INPUT_COMMAND][CMD_REQUEST_UI_URL][url…]` -> `{type:"requestUI", params:{url}}`: ask iOS to bring
+     * a CarPlay app forward on the main screen. The URL is the remaining bytes, UTF-8, no terminator,
+     * 1..[REQUEST_UI_URL_MAX] bytes; the box refuses anything else with a log line. Box commit cbdd60b
+     * (2026-10-25). lib.rs:521
+     */
+    const val CMD_REQUEST_UI_URL: Byte = 0x12
+    const val REQUEST_UI_URL_MAX: Int = 255
+
     const val APPEARANCE_STREAM_MAIN: Byte = 0x00 // lib.rs:275
     const val APPEARANCE_STREAM_ALT: Byte = 0x01 // lib.rs:276
     const val APPEARANCE_MODE_LIGHT: Byte = 0x00 // lib.rs:277

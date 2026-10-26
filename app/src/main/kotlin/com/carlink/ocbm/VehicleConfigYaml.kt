@@ -168,8 +168,8 @@ data class VehicleConfigSpec(
          */
         val LANES_ONLY_SKIP = listOf("communications", "call_history", "power", "app_discovery", "destination", "device_info")
 
-        /** The box's shipped range for `view_area_anim_ms` (`levers::VIEW_AREA_ANIM_MS_RANGE`, owner 2026-09-09). */
-        val VIEW_AREA_ANIM_MS_RANGE = 1_000..10_000
+        /** The box's range for `view_area_anim_ms` (`levers::VIEW_AREA_ANIM_MS_RANGE`; floor lowered from 1000 to 100 in box commit cbdd60b, 2026-10-25). */
+        val VIEW_AREA_ANIM_MS_RANGE = 100..10_000
 
         private val SKIP_TOKEN = Regex("[a-z][a-z_]*")
     }

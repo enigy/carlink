@@ -1491,6 +1491,17 @@ class CarlinkManager(
         scope.launch(Dispatchers.IO) { c.sendCommand(Ocbm.CMD_VIEW_AREA, index.toByte()) }
     }
 
+    /**
+     * Bring a CarPlay app forward on the main screen by URL (`requestUI` with `url`): `nowplaying:` for
+     * the app that is playing when the pane's source name is tapped, `maps:` to put Maps back. Which
+     * URLs iOS honours on this box is being benched (Settings › Troubleshoot in debug builds).
+     */
+    fun openCarPlayApp(url: String) {
+        val c = client ?: return
+        logInfo("[CARPLAY_UI] requestUI url=$url", tag = Logger.Tags.ADAPTR)
+        scope.launch(Dispatchers.IO) { c.sendRequestUiUrl(url) }
+    }
+
     /** A transport button from the pane's media card: the same HID tap the steering wheel and the media session send. */
     fun mediaControl(control: MediaControl) {
         logInfo("[UI_ACTION] pane media ${control.name}", tag = Logger.Tags.MEDIA_SESSION)

@@ -13,8 +13,11 @@ package com.carlink.ocbm
  * illegal or below the product floor is simply not declared: the session comes up full screen.
  */
 object SplitViewArea {
-    /** How long a switch between the split and full screen animates (owner, 2026-10-25: 1.5 s was a tad long); the box's floor and default are 1000 and 3000. */
-    const val TRANSITION_MS = 1_000
+    /**
+     * How long a switch between the split and full screen animates. Owner, 2026-10-25: 1 s measured
+     * 1.4 s tap-to-picture on the truck. The box's floor is 100 since its commit cbdd60b, its default 3000.
+     */
+    const val TRANSITION_MS = 500
 
     /**
      * The CarPlay rectangle for a pane of [panePercent] of the panel on the left or the right, or null
