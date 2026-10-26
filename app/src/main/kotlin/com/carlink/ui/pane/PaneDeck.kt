@@ -3,12 +3,19 @@ package com.carlink.ui.pane
 /** The cards the pane shows in turn, in swipe order: the route first, the music, the clock last. */
 enum class PaneCard { DIRECTIONS, MEDIA, CLOCK }
 
+/** CarPlay showing [app] full on its side, put in front by the pane's title, and the card the pane stepped [to] beside it. */
+data class Aside(
+    val app: PaneCard,
+    val to: PaneCard,
+)
+
 /**
  * Which cards the pane offers and which one it shows. The pane cannot see which CarPlay app is in
  * front (the box reports no such thing), so it shows what CarPlay is NOT showing by its own tells:
- * the music by default, and the route once the driver has put the Now Playing app in front from the
- * pane's own source tap. A swipe picks any card. The call card is not here: a call takes the whole
- * pane for as long as it lasts, and the deck resumes where it was.
+ * the music by default, the route once the driver has put the Now Playing app in front from the
+ * pane's own source tap, and the music again once a tap on CarPlay's Dock says they left it. A swipe
+ * picks any card. The call card is not here: a call takes the whole pane for as long as it lasts, and
+ * the deck resumes where it was.
  */
 object PaneDeck {
     /** The cards available now. The clock is always there, so the deck is never empty. */
@@ -33,6 +40,18 @@ object PaneDeck {
         inFront: PaneCard,
         pages: List<PaneCard>,
     ): PaneCard = pages.firstOrNull { it != inFront } ?: PaneCard.CLOCK
+
+    /**
+     * The card for the pane once the driver leaves the CarPlay app the pane's title put in front
+     * ([aside]) while [shown] is up: the app's own card back (owner, 10-26: back to the music when they
+     * leave Now Playing), if the pane still shows the card it stepped to and the app's card is still
+     * dealt. A card the driver swiped to since is theirs, and stays.
+     */
+    fun onLeft(
+        aside: Aside,
+        shown: PaneCard,
+        pages: List<PaneCard>,
+    ): PaneCard = if (shown == aside.to && aside.app in pages) aside.app else shown
 
     /**
      * The card for the pane when music starts playing while [shown] is up: the music, taken from the

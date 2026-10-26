@@ -397,6 +397,10 @@ private fun ProjectionSurface(
                             ui.containerSize.width,
                             ui.containerSize.height,
                         )
+                        // A lift on CarPlay's Dock tells the pane the driver left the app in front.
+                        if (event.actionMasked == MotionEvent.ACTION_UP && surfaceState.width > 0 && surfaceState.height > 0) {
+                            carlinkManager.onCarPlayTap(event.x / surfaceState.width, event.y / surfaceState.height)
+                        }
                     }
                     true
                 },

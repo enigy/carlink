@@ -55,6 +55,7 @@ import com.carlink.navigation.compose.ComposedIconStore
 import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
+import com.carlink.ocbm.CarPlayDock
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
@@ -398,6 +399,16 @@ class CarlinkManager(
     /** CarPlay's area of the split layout the last pushed config declared ([vehicleConfigSpec]); null = one full area. */
     @Volatile var declaredSplitArea: PixelRect? = null
         private set
+
+    /** The last pushed config put CarPlay's Dock on the right (`rightHandDrive`); the drive side applies per connection. */
+    @Volatile private var dockOnRight = false
+
+    /**
+     * Taps on CarPlay's Dock ([CarPlayDock]), counted: the pane reads a new count as the driver leaving
+     * the CarPlay app in front, the one app switch it can see ([onCarPlayTap]).
+     */
+    private val dockTapsState = MutableStateFlow(0)
+    val dockTaps: StateFlow<Int> = dockTapsState.asStateFlow()
 
     /** The track and its playback for the split layout's media card: the media session's merge, as a flow. */
     private val nowPlayingState = MutableStateFlow(NowPlayingState.NONE)
@@ -1337,6 +1348,7 @@ class CarlinkManager(
                 metadataTier = if (askLanes) "extended" else "proven",
                 metadataSkip = if (askLanes) VehicleConfigSpec.LANES_ONLY_SKIP else emptyList(),
             )
+        dockOnRight = spec.rightHandDrive
         LaneActivity.noteAsked(askLanes)
         if (askLanes) logWarn("[LANES] asking the iPhone for lane guidance: tier extended, skip ${VehicleConfigSpec.LANES_ONLY_SKIP}", tag = Logger.Tags.NAVI)
         logInfo("[CONFIG] ${g.describe()}", tag = Logger.Tags.ADAPTR)
@@ -1513,6 +1525,24 @@ class CarlinkManager(
         val c = client ?: return
         logInfo("[CARPLAY_UI] requestUI url=$url", tag = Logger.Tags.ADAPTR)
         scope.launch(Dispatchers.IO) { c.sendRequestUiUrl(url) }
+    }
+
+    /**
+     * A finger lifted from CarPlay at [x], [y] (0..1 of the frame), from MainScreen's touch forwarding.
+     * A lift on the Dock counts in [dockTaps]. Lifts out to twice the Dock's taken width are logged with
+     * their depth, so a drive log shows where the Dock really ends ([CarPlayDock.SHARE] is not measured).
+     */
+    fun onCarPlayTap(
+        x: Float,
+        y: Float,
+    ) {
+        val area = viewAreaState.value ?: return
+        val depth = CarPlayDock.depth(area, dockOnRight, x)
+        val width = CarPlayDock.width(area)
+        if (depth < 0f || depth > width * 2) return
+        val onDock = CarPlayDock.contains(area, dockOnRight, x, y)
+        logInfo("[CARPLAY_UI] tap ${depth.toInt()} px in from the Dock edge (Dock taken as ${width.toInt()} px): ${if (onDock) "Dock" else "not Dock"}", tag = Logger.Tags.ADAPTR)
+        if (onDock) dockTapsState.value += 1
     }
 
     /** A transport button from the pane's media card: the same HID tap the steering wheel and the media session send. */

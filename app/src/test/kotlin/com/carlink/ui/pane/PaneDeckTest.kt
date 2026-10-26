@@ -32,6 +32,15 @@ class PaneDeckTest {
     }
 
     @Test
+    fun `leaving the app the title put in front brings its card back`() {
+        val nowPlaying = Aside(app = MEDIA, to = CLOCK)
+        assertEquals(MEDIA, PaneDeck.onLeft(nowPlaying, shown = CLOCK, pages = listOf(MEDIA, CLOCK)))
+        assertEquals(MEDIA, PaneDeck.onLeft(Aside(app = MEDIA, to = DIRECTIONS), shown = DIRECTIONS, pages = listOf(DIRECTIONS, MEDIA, CLOCK)))
+        assertEquals("the driver swiped since", DIRECTIONS, PaneDeck.onLeft(nowPlaying, shown = DIRECTIONS, pages = listOf(DIRECTIONS, MEDIA, CLOCK)))
+        assertEquals("the track went away", CLOCK, PaneDeck.onLeft(nowPlaying, shown = CLOCK, pages = listOf(CLOCK)))
+    }
+
+    @Test
     fun `music that begins takes the pane`() {
         assertEquals(MEDIA, PaneDeck.after(previous = listOf(CLOCK), current = listOf(MEDIA, CLOCK), shown = CLOCK))
         assertEquals(MEDIA, PaneDeck.after(previous = listOf(DIRECTIONS, CLOCK), current = listOf(DIRECTIONS, MEDIA, CLOCK), shown = DIRECTIONS))

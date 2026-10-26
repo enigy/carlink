@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,8 +44,10 @@ import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
 import com.carlink.logging.logInfo
+import com.carlink.media.NowPlayingState
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.ocbm.CarPlayUrls
+import kotlinx.coroutines.delay
 
 /**
  * Carlink3's side of the split layout (Settings › Display › Layout), laid over the part of the video
@@ -79,28 +82,7 @@ fun SplitPane(
     val media by carlinkManager.nowPlaying.collectAsState()
     val art = rememberAlbumArt(media.info.albumArt)
     // The deck too: the card the driver swiped to is kept across a Dock hide and a call.
-    val nav by NavigationStateManager.state.collectAsState()
-    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack)
-    var shown by remember { mutableStateOf(PaneDeck.default(pages)) }
-    var dealt by remember { mutableStateOf(pages) }
-    LaunchedEffect(pages) {
-        if (pages != dealt) {
-            shown = PaneDeck.after(dealt, pages, shown)
-            dealt = pages
-        }
-    }
-    // Music starting (play after a pause, or already playing when the pane appears) brings the music
-    // card up from the clock; a new track's card is dealt by `after` above.
-    val playing = media.playing
-    LaunchedEffect(playing) {
-        if (playing) {
-            val next = PaneDeck.onMusicStart(pages, shown)
-            if (next != shown) {
-                logInfo("[UI_ACTION] Pane: music started, showing $next", tag = "UI")
-                shown = next
-            }
-        }
-    }
+    val deck = rememberDeck(carlinkManager, media, session = rect != null)
     val r = rect
     if (r != null) {
         Box(modifier = modifier) {
@@ -109,7 +91,7 @@ fun SplitPane(
                 PaneHost(
                     carlinkManager,
                     art = art,
-                    deck = Deck(pages, shown) { shown = it },
+                    deck = deck,
                     modifier =
                         Modifier
                             .fillMaxHeight()
@@ -129,11 +111,74 @@ fun SplitPane(
     }
 }
 
-/** The cards dealt, the one up, and where a swipe or a title tap reports a new one. */
+/**
+ * The deck's cards and the one up, moved by the driver's swipes and by four events besides: a track
+ * or route that comes or goes ([PaneDeck.after]), music starting ([PaneDeck.onMusicStart]), the title
+ * tap that puts a card's app in front in CarPlay ([PaneDeck.beside]), and a tap on CarPlay's Dock
+ * after that ([PaneDeck.onLeft]).
+ */
+@Composable
+private fun rememberDeck(
+    carlinkManager: CarlinkManager,
+    media: NowPlayingState,
+    session: Boolean,
+): Deck {
+    val nav by NavigationStateManager.state.collectAsState()
+    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack)
+    var shown by remember { mutableStateOf(PaneDeck.default(pages)) }
+    var dealt by remember { mutableStateOf(pages) }
+    // Now Playing put in front by the pane's title, and the card the pane stepped to; null when it is
+    // not known to be in front. Forgotten with the session.
+    var aside by remember { mutableStateOf<Aside?>(null) }
+    LaunchedEffect(pages) {
+        if (pages != dealt) {
+            shown = PaneDeck.after(dealt, pages, shown)
+            dealt = pages
+        }
+    }
+    // Music starting (play after a pause, or already playing when the pane appears) brings the music
+    // card up from the clock; a new track's card is dealt by `after` above. Not while Now Playing is in
+    // front: CarPlay shows the music then, and a play pressed there would put it on both sides.
+    val playing = media.playing
+    LaunchedEffect(playing) {
+        if (playing && aside == null) {
+            val next = PaneDeck.onMusicStart(pages, shown)
+            if (next != shown) {
+                logInfo("[UI_ACTION] Pane: music started, showing $next", tag = "UI")
+                shown = next
+            }
+        }
+    }
+    val dockTaps by carlinkManager.dockTaps.collectAsState()
+    val dealtNow by rememberUpdatedState(pages)
+    LaunchedEffect(dockTaps) {
+        val left = aside ?: return@LaunchedEffect
+        // The Dock also holds CarPlay's own full-screen button, which leaves the app in front where it
+        // is: a tap that starts a resize is not a leave. The wait also lets CarPlay's switch land first.
+        val area = carlinkManager.viewArea.value
+        delay(LEAVE_SETTLE_MS)
+        if (carlinkManager.viewArea.value != area) return@LaunchedEffect
+        aside = null
+        val next = PaneDeck.onLeft(left, shown, dealtNow)
+        if (next != shown) {
+            logInfo("[UI_ACTION] Pane: CarPlay Dock tapped, ${left.app} left, showing $next", tag = "UI")
+            shown = next
+        }
+    }
+    LaunchedEffect(session) { if (!session) aside = null }
+    return Deck(pages, shown, onShown = { shown = it }) { app ->
+        val to = PaneDeck.beside(app, pages)
+        aside = if (app == PaneCard.MEDIA) Aside(app, to) else null
+        shown = to
+    }
+}
+
+/** The cards dealt, the one up, where a swipe reports a new one, and where a title tap reports the card whose app it put in front. */
 private class Deck(
     val pages: List<PaneCard>,
     val shown: PaneCard,
     val onShown: (PaneCard) -> Unit,
+    val onInFront: (PaneCard) -> Unit,
 )
 
 /** The pane itself: the backdrop, a header naming the card with the full-screen button, then the card. */
@@ -244,7 +289,7 @@ private fun titleTap(
         }
     return {
         carlinkManager.openCarPlayApp(url)
-        deck.onShown(PaneDeck.beside(deck.shown, deck.pages))
+        deck.onInFront(deck.shown)
     }
 }
 
@@ -304,3 +349,6 @@ private const val SCRIM_TOP = 0.45f
 private const val SCRIM_BOTTOM = 0.75f
 private const val HEADER_ALPHA = 0.85f
 private const val TAB_ALPHA = 0.7f
+
+/** How long after a Dock tap the pane waits before taking it as a leave: past CarPlay's 500 ms resize start. */
+private const val LEAVE_SETTLE_MS = 800L
