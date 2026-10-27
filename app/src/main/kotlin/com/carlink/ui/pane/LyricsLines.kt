@@ -1,5 +1,13 @@
 package com.carlink.ui.pane
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -20,8 +28,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,9 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -91,15 +97,18 @@ internal object LyricWindow {
  * the lines before and after it dimmer the farther they are, as many as the driver set ([LyricWindow],
  * three by default, up to two before and two after). A gap in the words shows a note.
  *
- * MOVING ON (prototype C, "Drift"): at the next line the lines glide up a slot, the new sung line
- * grows into its size, a line fades in at the bottom, and the line falling off the top dissolves into
- * mist the way the loading screen's words do (EtherealStatus: it rises, spreads and blurs away). A
- * jump (a seek, a new song) moves without the glide.
+ * MOVING ON (prototype C, "Drift"): at the next line every line glides up to its new place, the new
+ * sung line grows into its size as the old one shrinks out of it, a line condenses in at the bottom,
+ * and the line falling off the top dissolves into mist the way the loading screen's words do
+ * (EtherealStatus: it rises, spreads and blurs away). Each line moves on its own ([LyricsDrift.kt]),
+ * so a long line wrapping onto two, or a short one after it, glides the lines below it instead of
+ * jolting the block (owner, 10-28). A jump (a seek, a new song) brings the new lines in the same way.
  *
  * HOW MANY (prototype C, "Drag the edge"): a vertical drag on the lyrics sets the count, up for more
  * and down for fewer, a line per [LINE_STEP]; the small handle on the frost's top edge says it can be
- * dragged. The block keeps the height of its lines whatever they hold, so the title under it moves
- * only when the count changes, and the pane's frost, which starts above the block, grows with it.
+ * dragged. The block keeps the height of its lines whatever they hold (the lines sit at its top), so
+ * the title under it moves only when the count changes, and then glides; the pane's frost, which
+ * starts above the block, grows with it.
  */
 @Composable
 internal fun LyricsLines(
@@ -114,15 +123,15 @@ internal fun LyricsLines(
     val ahead = LyricWindow.ahead(count)
     val clock = rememberPlaybackClock(state)
     val index by remember(lyrics, state) { derivedStateOf { lyrics.indexAt(state.positionAt(clock.longValue)) } }
-    val drift = rememberDrift(lyrics, index)
+    val window = rememberDrift(lyrics, index, behind)
     val sungSize = MaterialTheme.typography.titleLarge.scaled(WORD_SCALE)
     val sung = sungSize.copy(fontWeight = FontWeight.SemiBold)
     val near = MaterialTheme.typography.titleMedium.scaled(WORD_SCALE)
-    var leavingPx by remember { mutableIntStateOf(0) }
     Box(
         modifier =
             modifier
                 .fillMaxWidth()
+                .animateContentSize(tween(GLIDE_MS))
                 .lineCountDrag(music)
                 .semantics { contentDescription = "Lyrics, $count lines: drag up for more, down for fewer" },
     ) {
@@ -141,53 +150,76 @@ internal fun LyricsLines(
                     .size(HANDLE_WIDTH, HANDLE_HEIGHT)
                     .background(handle, CircleShape),
         )
-        Column(modifier = Modifier.align(Alignment.BottomStart).graphicsLayer { translationY = (1f - drift.glide) * leavingPx }) {
-            if (drift.stepping) {
-                // With no line above the sung one, the line that leaves is the one just sung.
-                val look = if (behind == 0) LineLook(sung, 1f, 2) else LineLook(near, nearAlpha(-behind - 1))
-                val gone = lyrics.lines.getOrNull(drift.at - behind - 1)?.text
-                LyricText(gone, look, Modifier.above().onSizeChanged { leavingPx = it.height }) { mist(drift.mist) }
-            }
-            for (k in -behind..ahead) {
-                val text = lyrics.lines.getOrNull(drift.at + k)?.text
-                when {
-                    k == 0 -> LyricText(text, LineLook(sung, 1f, 2)) { if (drift.stepping) lift(drift.glide) }
-                    k == ahead && drift.stepping -> LyricText(text, LineLook(near, nearAlpha(k))) { emerge(drift.fade) }
-                    else -> LyricText(text, LineLook(near, nearAlpha(k)))
-                }
+        // One element per line, keyed by its place in the song, from the leaving one (if any) down: a
+        // line keeps its identity while it moves, so its own glide, size and dimness can follow it.
+        Column(modifier = Modifier.padding(top = HANDLE_ROOM)) {
+            val leaving = window.leaving?.takeIf { it < window.at - behind }
+            for (i in (leaving ?: (window.at - behind))..(window.at + ahead)) {
+                key(i) { LyricRow(lyrics.lines.getOrNull(i)?.text, k = i - window.at, leaving = i == leaving, sung = sung, near = near) }
             }
         }
     }
 }
 
-/** A lyric line's type, dimness and how many lines it may wrap to: the sung one two, the rest one. */
-private class LineLook(
-    val style: TextStyle,
-    val alpha: Float,
-    val maxLines: Int = 1,
-)
-
-/** One lyric line, a note for a gap, nothing (but its room) past either end of the song; [effect] animates it. */
+/**
+ * One lyric line [k] places from the sung one: a note for a gap, nothing (but its room) past either end
+ * of the song. Its dimness, size, place, entrance and, when [leaving], its mist all ease rather than
+ * snap ([LyricsDrift.kt]).
+ */
 @Composable
-private fun LyricText(
+private fun LyricRow(
     text: String?,
-    look: LineLook,
-    modifier: Modifier = Modifier,
-    effect: GraphicsLayerScope.() -> Unit = {},
+    k: Int,
+    leaving: Boolean,
+    sung: TextStyle,
+    near: TextStyle,
 ) {
+    val isSung = k == 0 && !leaving
+    val dim = animateFloatAsState(if (isSung) 1f else nearAlpha(k), tween(GLIDE_MS), label = "lyric dim")
+    val role = rememberRoleScale(isSung, ratio = sung.fontSize.value / near.fontSize.value)
+    val enter = rememberEntrance()
+    val mist = rememberMist(leaving)
+    val place = if (leaving) Modifier.above() else Modifier
     Text(
         text?.ifBlank { NOTE }.orEmpty(),
-        style = look.style,
-        color = LocalContentColor.current.copy(alpha = look.alpha),
-        maxLines = look.maxLines,
+        style = if (isSung) sung else near,
+        color = LocalContentColor.current,
+        maxLines = if (isSung) 2 else 1,
         overflow = TextOverflow.Ellipsis,
         modifier =
-            modifier
+            place
+                .glidePlacement()
                 .withGlowRoom(GLOW_ROOM)
-                .graphicsLayer(effect)
+                .graphicsLayer { lyricMotion(dim.value, role.value, enter.value, mist.value) }
                 .padding(GLOW_ROOM)
                 .padding(bottom = LINE_GAP),
     )
+}
+
+/**
+ * The lyrics gliding in and out over the title (owner, 10-28: "glide in/out"): turning them on, or a
+ * song with lyrics arriving, unfolds the block up from the title as its words fade in; turning them
+ * off, or a song without, folds it back down into the title. The last lyrics stay in view while they
+ * fold away. Spaced from the title by [LYRICS_TO_TITLE], which folds with them.
+ */
+@Composable
+internal fun LyricsReveal(
+    lyrics: SyncedLyrics?,
+    state: NowPlayingState,
+    modifier: Modifier = Modifier,
+) {
+    val kept = remember { arrayOfNulls<SyncedLyrics>(1) }
+    if (lyrics != null) kept[0] = lyrics
+    val shown = lyrics ?: kept[0]
+    AnimatedVisibility(
+        visible = lyrics != null,
+        modifier = modifier,
+        enter = expandVertically(tween(GLIDE_MS), expandFrom = Alignment.Bottom) + fadeIn(tween(GLIDE_MS)),
+        exit = shrinkVertically(tween(GLIDE_MS), shrinkTowards = Alignment.Bottom) + fadeOut(tween(GLIDE_MS)),
+        label = "lyrics",
+    ) {
+        if (shown != null) LyricsLines(shown, state, modifier = Modifier.padding(bottom = LYRICS_TO_TITLE))
+    }
 }
 
 /** The dimness of the line [k] places from the sung one: before it fainter than after it, both fading with distance. */
@@ -253,6 +285,9 @@ private const val LOOKUP_SETTLE_MS = 1_500L
 // Room around a line for its blur: a layer draws offscreen at its own bounds and would cut it off.
 private val GLOW_ROOM = 16.dp
 private val LINE_GAP = 4.dp
+
+/** Between the lyrics and the title under them; folds away with the lyrics ([LyricsReveal]). */
+private val LYRICS_TO_TITLE = 24.dp
 
 private const val BEHIND_ALPHA = 0.45f
 private const val FAR_BEHIND_ALPHA = 0.3f

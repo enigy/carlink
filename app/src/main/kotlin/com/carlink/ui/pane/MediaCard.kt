@@ -220,8 +220,8 @@ internal fun MediaCard(
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Spacer(modifier = Modifier.weight(1f))
-        Column(modifier = Modifier.onGloballyPositioned { onWordsTop(it.positionInRoot().y) }, verticalArrangement = Arrangement.spacedBy(24.dp)) {
-            if (lyrics != null) LyricsLines(lyrics, state)
+        Column(modifier = Modifier.onGloballyPositioned { onWordsTop(it.positionInRoot().y) }) {
+            LyricsReveal(lyrics, state)
             TrackWords(state)
         }
         ProgressRow(state)

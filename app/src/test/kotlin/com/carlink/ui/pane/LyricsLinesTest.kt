@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -77,7 +78,25 @@ class LyricsLinesTest {
         compose.onNodeWithText("line 4").assertDoesNotExist()
     }
 
+    @Test
+    fun turning_lyrics_off_folds_them_away_rather_than_dropping_them() {
+        val on = mutableStateOf<SyncedLyrics?>(lyrics)
+        compose.setContent {
+            MaterialTheme { Box(modifier = Modifier.size(480.dp, 600.dp)) { LyricsReveal(on.value, paused) } }
+        }
+        compose.mainClock.advanceTimeBy(SETTLE_MS)
+        compose.onNodeWithText("line 3").assertExists()
+        compose.mainClock.autoAdvance = false
+        compose.runOnIdle { on.value = null }
+        compose.mainClock.advanceTimeBy(FRAME_MS * 3)
+        compose.onNodeWithText("line 3").assertExists()
+        compose.mainClock.advanceTimeBy(SETTLE_MS)
+        compose.onNodeWithText("line 3").assertDoesNotExist()
+    }
+
     private companion object {
+        const val SETTLE_MS = 2_000L
+        const val FRAME_MS = 16L
         const val LYRICS = "lyrics"
     }
 }
