@@ -85,7 +85,7 @@ internal fun PhonesPane(
         } else {
             AddPhoneHint(carlinkManager.adapterName)
         }
-        MusicRows()
+        ResumeMusicRow()
 
         deviceToRemove?.let { device ->
             RemoveDeviceDialog(
@@ -103,13 +103,12 @@ internal fun PhonesPane(
     }
 }
 
-/** Settings › Phones: Resume music when the phone connects, and Lyrics in the music card ([MusicStore]). */
+/** Settings › Phones › Resume music when the phone connects ([MusicStore]). */
 @Composable
-private fun MusicRows() {
+private fun ResumeMusicRow() {
     val context = LocalContext.current
     val music = remember { MusicStore.get(context) }
     val resume by music.resumeOnConnectFlow.collectAsState()
-    val lyrics by music.lyricsFlow.collectAsState()
     SettingsGroup {
         SwitchRow(
             title = "Resume music when the phone connects",
@@ -118,16 +117,6 @@ private fun MusicRows() {
             onCheckedChange = {
                 logWarn("[UI_ACTION] Resume music on connect -> $it", tag = "UI")
                 music.setResumeOnConnect(it)
-            },
-        )
-        GroupDivider()
-        SwitchRow(
-            title = "Lyrics in the music card",
-            subtitle = "Look the song up on LRCLIB (its title, artist, album and length go online) and show the words in time with the music",
-            checked = lyrics,
-            onCheckedChange = {
-                logWarn("[UI_ACTION] Lyrics -> $it", tag = "UI")
-                music.setLyrics(it)
             },
         )
     }

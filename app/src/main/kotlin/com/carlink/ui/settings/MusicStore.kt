@@ -12,8 +12,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * and what the driver expects from the car's own CarPlay. Off: the music waits for the driver, as in
  * 1.01. App-wide, not per iPhone.
  *
- * Settings › Phones › Lyrics in the music card. On (the default): the pane looks the song up on LRCLIB
- * ([com.carlink.media.LrcLib]) and shows its words in time with it. Off: nothing leaves the car.
+ * Lyrics: the music card's own switch in the pane's header ([com.carlink.ui.pane.LyricsToggle]), kept
+ * here. On (the default): the pane looks the song up on LRCLIB ([com.carlink.media.LrcLib]) and shows
+ * its words in time with it. Off: nothing leaves the car.
  */
 class MusicStore private constructor(
     context: Context,

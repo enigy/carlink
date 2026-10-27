@@ -33,7 +33,7 @@
          it for non-calling apps). CallNotificationHost falls back to a plain card if refused. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Lyrics for the music card from lrclib.net (media/LrcLib.kt), the app's only use of the network;
-         Settings › Phones › Lyrics in the music card turns it off. Normal permission, no prompt. -->
+         the lyrics button in the music card's header turns it off. Normal permission, no prompt. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- The truck's speed and outside temperature (car/VehicleData.kt): speed is dangerous (asked at
          start-up, in the Location group); outside temperature and the display units are normal. -->

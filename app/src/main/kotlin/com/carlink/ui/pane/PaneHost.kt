@@ -229,7 +229,7 @@ private fun PaneHost(
             }
             CompositionLocalProvider(LocalContentColor provides look.content) {
                 Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                    val header: @Composable () -> Unit = { PaneHeader(title = title, onTitle = onTitle, onExpand = { carPlayFullScreen(carlinkManager) }) }
+                    val header: @Composable () -> Unit = { PaneHeader(title, onTitle, lyricsButton = showMedia) { carPlayFullScreen(carlinkManager) } }
                     if (showCall) {
                         header()
                         CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp))
@@ -314,10 +314,12 @@ private fun paneTitle(
         PaneCard.VEHICLE -> "Vehicle"
     }
 
+/** The card's name (tappable where [onTitle] is set), the lyrics switch on the music card ([lyricsButton]), and CarPlay full screen. */
 @Composable
 private fun PaneHeader(
     title: String,
     onTitle: (() -> Unit)?,
+    lyricsButton: Boolean,
     onExpand: () -> Unit,
 ) {
     val content = LocalContentColor.current
@@ -325,6 +327,7 @@ private fun PaneHeader(
         val titleModifier = if (onTitle != null) Modifier.clip(MaterialTheme.shapes.small).clickable(onClick = onTitle).padding(horizontal = 8.dp, vertical = 6.dp) else Modifier
         Text(title, style = MaterialTheme.typography.titleMedium, color = content.copy(alpha = HEADER_ALPHA), modifier = titleModifier)
         Spacer(modifier = Modifier.weight(1f))
+        if (lyricsButton) LyricsToggle(modifier = Modifier.padding(end = 8.dp))
         PaneButton(Icons.Default.Fullscreen, "CarPlay full screen", onClick = onExpand, size = 56.dp, iconSize = 32.dp, tint = content.copy(alpha = HEADER_ALPHA))
     }
 }
