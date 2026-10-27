@@ -46,6 +46,7 @@ import com.carlink.callui.CallRoster
 import com.carlink.car.VehicleData
 import com.carlink.logging.logInfo
 import com.carlink.media.NowPlayingState
+import com.carlink.media.SyncedLyrics
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.ocbm.CarPlayUrls
 import kotlinx.coroutines.delay
@@ -82,6 +83,7 @@ fun SplitPane(
     // behind full-screen CarPlay, and while a call card has the pane.
     val media by carlinkManager.nowPlaying.collectAsState()
     val art = rememberAlbumArt(media.info.albumArt)
+    val lyrics = rememberLyrics(media.info)
     // The deck too: the card the driver swiped to is kept across a Dock hide and a call.
     val deck = rememberDeck(carlinkManager, media, session = rect != null)
     val r = rect
@@ -92,6 +94,7 @@ fun SplitPane(
                 PaneHost(
                     carlinkManager,
                     art = art,
+                    lyrics = lyrics,
                     deck = deck,
                     modifier =
                         Modifier
@@ -189,6 +192,8 @@ private fun PaneHost(
     carlinkManager: CarlinkManager,
     /** The current cover, kept by the caller; shown only behind the music card. */
     art: ImageBitmap?,
+    /** The song's timed lyrics, kept by the caller like the cover; shown in the music card. */
+    lyrics: SyncedLyrics?,
     deck: Deck,
     modifier: Modifier = Modifier,
 ) {
@@ -232,7 +237,7 @@ private fun PaneHost(
                         PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, header = header, modifier = Modifier.fillMaxSize()) { which, m ->
                             when (which) {
                                 PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
-                                PaneCard.MEDIA -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = m, onWordsTop = { wordsTop = it })
+                                PaneCard.MEDIA -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = m, lyrics = lyrics, onWordsTop = { wordsTop = it })
                                 PaneCard.CLOCK -> ClockCard(modifier = m)
                                 PaneCard.VEHICLE -> VehicleCard(modifier = m)
                             }

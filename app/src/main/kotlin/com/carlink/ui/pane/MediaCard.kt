@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.LongState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,6 +59,7 @@ import androidx.compose.ui.unit.isSpecified
 import com.carlink.logging.logInfo
 import com.carlink.media.MediaControl
 import com.carlink.media.NowPlayingState
+import com.carlink.media.SyncedLyrics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -182,25 +184,44 @@ private fun Modifier.frostedBand(wordsTopInRoot: Float): Modifier {
 }
 
 /**
- * The music card's words and controls, over the backdrop: title, artist and album, a progress bar
- * that runs between the iPhone's position ticks, and the three transport buttons. The buttons send
- * the same HID taps the steering wheel does. Colours come from `LocalContentColor`, set by the pane
- * for the art behind.
+ * The music card's words and controls, over the backdrop: the song's lyrics when it has timed ones
+ * ([LyricsLines]), title, artist and album, a progress bar that runs between the iPhone's position
+ * ticks, and the three transport buttons. The buttons send the same HID taps the steering wheel does.
+ * Colours come from `LocalContentColor`, set by the pane for the art behind.
  */
 @Composable
 internal fun MediaCard(
     state: NowPlayingState,
     onControl: (MediaControl) -> Unit,
     modifier: Modifier = Modifier,
-    /** The title's top edge in root coordinates, whenever it is laid out; the pane frosts the art from there. */
+    /** The song's timed lyrics ([rememberLyrics]), or null for none. */
+    lyrics: SyncedLyrics? = null,
+    /** The first words' top edge (the lyrics', else the title's) in root coordinates; the pane frosts the art from there. */
     onWordsTop: (Float) -> Unit = {},
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Spacer(modifier = Modifier.weight(1f))
-        TrackWords(state, modifier = Modifier.onGloballyPositioned { onWordsTop(it.positionInRoot().y) })
+        Column(modifier = Modifier.onGloballyPositioned { onWordsTop(it.positionInRoot().y) }, verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            if (lyrics != null) LyricsLines(lyrics, state)
+            TrackWords(state)
+        }
         ProgressRow(state)
         TransportRow(playing = state.playing, onControl = onControl)
     }
+}
+
+/** Now (elapsed realtime), run forward four times a second while [state] plays: the clock the progress bar and the lyrics read the position by. */
+@Composable
+internal fun rememberPlaybackClock(state: NowPlayingState): LongState {
+    val now = remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(state.playing, state.positionAtMs) {
+        now.longValue = SystemClock.elapsedRealtime()
+        while (state.playing) {
+            delay(PROGRESS_TICK_MS)
+            now.longValue = SystemClock.elapsedRealtime()
+        }
+    }
+    return now
 }
 
 @Composable
@@ -230,15 +251,8 @@ private fun TrackWords(
 @Composable
 private fun ProgressRow(state: NowPlayingState) {
     val content = LocalContentColor.current
-    var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    LaunchedEffect(state.playing, state.positionAtMs) {
-        now = SystemClock.elapsedRealtime()
-        while (state.playing) {
-            delay(PROGRESS_TICK_MS)
-            now = SystemClock.elapsedRealtime()
-        }
-    }
-    val position = state.positionAt(now)
+    val clock = rememberPlaybackClock(state)
+    val position = state.positionAt(clock.longValue)
     val duration = state.info.durationMs
     Column {
         LinearProgressIndicator(
@@ -283,13 +297,13 @@ private fun TransportRow(
 }
 
 /** The card's words and times, [WORD_SCALE] times Material's sizes: readable from the driver's seat (owner, 10-26: "increase the font in the media pane by 50 %"). */
-private fun TextStyle.scaled(factor: Float): TextStyle =
+internal fun TextStyle.scaled(factor: Float): TextStyle =
     copy(
         fontSize = fontSize * factor,
         lineHeight = if (lineHeight.isSpecified) lineHeight * factor else lineHeight,
     )
 
-private const val WORD_SCALE = 1.5f
+internal const val WORD_SCALE = 1.5f
 private val FROST_RADIUS = 24.dp
 
 /** How far above the title the frost begins: a quarter inch (owner, 10-26). */
