@@ -311,7 +311,7 @@ private fun paneTitle(
         PaneCard.CLOCK -> "Carlink3"
     }
 
-/** The music card wired to the truck: its buttons tap the phone, shuffle and repeat put CarPlay's Now Playing up ([MediaCard]). */
+/** The music card wired to the truck: its buttons go to the phone through [CarlinkManager.mediaControl] ([MediaCard]). */
 @Composable
 private fun MusicCard(
     carlinkManager: CarlinkManager,
@@ -325,10 +325,6 @@ private fun MusicCard(
         onControl = carlinkManager::mediaControl,
         modifier = modifier,
         lyrics = lyrics,
-        onModes = {
-            logInfo("[UI_ACTION] Pane: shuffle/repeat -> CarPlay Now Playing", tag = "UI")
-            carlinkManager.openCarPlayApp(CarPlayUrls.NOW_PLAYING)
-        },
         onWordsTop = onWordsTop,
     )
 }

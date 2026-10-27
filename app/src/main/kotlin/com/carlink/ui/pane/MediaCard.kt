@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -202,12 +203,11 @@ private fun Modifier.frostedBand(
  * The music card's words and controls, over the backdrop: the song's lyrics when it has timed ones
  * ([LyricsLines]), title, artist and album, a progress bar that runs between the iPhone's position
  * ticks, and the transport row: shuffle, previous, play/pause, next, repeat. The three in the middle
- * send the same HID taps the steering wheel does. Shuffle and repeat show the phone's own modes; the
- * car has no way to set them (CarPlay's media remote has no such keys), so a tap goes to [onModes],
- * which puts CarPlay's Now Playing up, where the phone's own buttons change them. Colours come from
+ * send the same HID taps the steering wheel does. Shuffle and repeat show the phone's own modes, and
+ * a tap sends the media remote's Random Play or Repeat key, or brings CarPlay's Now Playing up where
+ * the app ignores those (Spotify; [com.carlink.media.ModeTaps]). Colours come from
  * `LocalContentColor`, set by the pane for the art behind.
  */
-@Suppress("LongParameterList") // the state, its three kinds of tap, the lyrics, where the words start
 @Composable
 internal fun MediaCard(
     state: NowPlayingState,
@@ -215,8 +215,6 @@ internal fun MediaCard(
     modifier: Modifier = Modifier,
     /** The song's timed lyrics ([rememberLyrics]), or null for none. */
     lyrics: SyncedLyrics? = null,
-    /** A tap on shuffle or repeat. */
-    onModes: () -> Unit = {},
     /** The first words' top edge (the lyrics', else the title's) in root coordinates; the pane frosts the art from there. */
     onWordsTop: (Float) -> Unit = {},
 ) {
@@ -227,7 +225,7 @@ internal fun MediaCard(
             TrackWords(state)
         }
         ProgressRow(state)
-        TransportRow(state = state, onControl = onControl, onModes = onModes)
+        TransportRow(state = state, onControl = onControl)
     }
 }
 
@@ -293,13 +291,13 @@ private fun ProgressRow(state: NowPlayingState) {
 
 /**
  * Shuffle at the left, previous, a filled play/pause disc that shows the state the phone reports, next,
- * and repeat at the right (owner, 10-27: prototype A, "Beside the transport buttons").
+ * and repeat at the right (owner, 10-27: prototype A, "Beside the transport buttons"). Shuffle has a
+ * second lit state for Spotify's Smart Shuffle: the same disc with a sparkle on its shoulder.
  */
 @Composable
 private fun TransportRow(
     state: NowPlayingState,
     onControl: (MediaControl) -> Unit,
-    onModes: () -> Unit,
 ) {
     val playing = state.playing
     val content = LocalContentColor.current
@@ -309,7 +307,19 @@ private fun TransportRow(
     val discFill = content.copy(alpha = DISC_ALPHA)
     val repeat = state.repeating
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        ModeButton(Icons.Default.Shuffle, if (state.shuffling) "Shuffle on" else "Shuffle off", on = state.shuffling, onClick = onModes)
+        val shuffleLabel =
+            when {
+                state.smartShuffle -> "Smart Shuffle on"
+                state.shuffling -> "Shuffle on"
+                else -> "Shuffle off"
+            }
+        ModeButton(
+            Icons.Default.Shuffle,
+            shuffleLabel,
+            on = state.shuffling,
+            onClick = { onControl(MediaControl.SHUFFLE) },
+            badge = if (state.smartShuffle) Icons.Default.AutoAwesome else null,
+        )
         PaneButton(Icons.Default.SkipPrevious, "Previous", onClick = { onControl(MediaControl.PREVIOUS) }, size = 66.dp, iconSize = 36.dp, fill = discFill, border = ring)
         PaneButton(
             if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -329,7 +339,7 @@ private fun TransportRow(
                 else -> "Repeat off"
             },
             on = repeat != null,
-            onClick = onModes,
+            onClick = { onControl(MediaControl.REPEAT) },
         )
     }
 }

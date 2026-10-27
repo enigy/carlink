@@ -130,25 +130,33 @@ private const val PRESS_MS = 40
 private const val RELEASE_MS = 220
 private const val FLASH_MS = 180L
 
-/** Shuffle or repeat: a lit disc when the phone has it on, a dim icon when off, as the lyrics switch. */
+/**
+ * Shuffle or repeat: a lit disc when the phone has it on, a dim icon when off, as the lyrics switch.
+ * A [badge] on the disc's shoulder marks a second on state (Spotify's Smart Shuffle).
+ */
 @Composable
 internal fun ModeButton(
     icon: ImageVector,
     label: String,
     on: Boolean,
     onClick: () -> Unit,
+    badge: ImageVector? = null,
 ) {
     val content = LocalContentColor.current
-    PaneButton(
-        icon,
-        label,
-        onClick = onClick,
-        size = 56.dp,
-        iconSize = 28.dp,
-        fill = if (on) content.copy(alpha = MODE_LIT_ALPHA) else Color.Transparent,
-        tint = content.copy(alpha = if (on) 1f else MODE_OFF_ALPHA),
-    )
+    Box {
+        PaneButton(
+            icon,
+            label,
+            onClick = onClick,
+            size = 56.dp,
+            iconSize = 28.dp,
+            fill = if (on) content.copy(alpha = MODE_LIT_ALPHA) else Color.Transparent,
+            tint = content.copy(alpha = if (on) 1f else MODE_OFF_ALPHA),
+        )
+        if (badge != null) Icon(badge, contentDescription = null, tint = content, modifier = Modifier.align(Alignment.TopEnd).size(MODE_BADGE))
+    }
 }
 
 private const val MODE_LIT_ALPHA = 0.22f
 private const val MODE_OFF_ALPHA = 0.45f
+private val MODE_BADGE = 18.dp

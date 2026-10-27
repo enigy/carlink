@@ -61,4 +61,15 @@ class NowPlayingStateTest {
         assertEquals(NowPlayingState.REPEAT_ALL, s.copy(repeatMode = 2).repeating)
         assertEquals("off", null, s.copy(repeatMode = 0).repeating)
     }
+
+    @Test
+    fun `smart shuffle is spotify's second shuffle state only`() {
+        val spotify = NowPlayingState(track.copy(appName = "Spotify"), playing = true, positionMs = 0L, positionAtMs = 0L)
+        assertTrue(spotify.copy(shuffleMode = NowPlayingState.SHUFFLE_SMART).smartShuffle)
+        assertTrue("still lit as shuffling", spotify.copy(shuffleMode = NowPlayingState.SHUFFLE_SMART).shuffling)
+        assertFalse("plain shuffle", spotify.copy(shuffleMode = 1).smartShuffle)
+        assertFalse("off", spotify.copy(shuffleMode = 0).smartShuffle)
+        val music = NowPlayingState(track, playing = true, positionMs = 0L, positionAtMs = 0L)
+        assertFalse("another app's mode 2 is album shuffle", music.copy(shuffleMode = 2).smartShuffle)
+    }
 }

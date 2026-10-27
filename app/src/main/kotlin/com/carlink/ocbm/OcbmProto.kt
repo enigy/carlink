@@ -360,6 +360,13 @@ object Ocbm {
     const val MEDIA_BTN_NEXT: Byte = 4
     const val MEDIA_BTN_PREV: Byte = 5
 
+    // Box b7144f0 (2026-10-27) extends the descriptor to Apple's template plus two: 6 is AC Navigation
+    // Guidance (0x029E, no visible effect yet), 7 Random Play (0xB9) and 8 Repeat (0xBC), which reach the
+    // playing app's changeShuffleMode / changeRepeatMode. Apple Music cycles both; Spotify ignores them.
+    const val MEDIA_BTN_NAV_GUIDANCE: Byte = 6
+    const val MEDIA_BTN_RANDOM_PLAY: Byte = 7
+    const val MEDIA_BTN_REPEAT: Byte = 8
+
     // INPUT_NAV actions (uid-3 D-Pad) — lib.rs:216-222.
     const val NAV_UP: Byte = 1
     const val NAV_DOWN: Byte = 2

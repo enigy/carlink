@@ -44,6 +44,7 @@ import com.carlink.media.CarlinkMediaBrowserService
 import com.carlink.media.ConnectPlay
 import com.carlink.media.MediaControl
 import com.carlink.media.MediaSessionManager
+import com.carlink.media.ModeTaps
 import com.carlink.media.NowPlayingInfo
 import com.carlink.media.NowPlayingState
 import com.carlink.media.PlayStatus
@@ -56,6 +57,7 @@ import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.CarPlayDock
+import com.carlink.ocbm.CarPlayUrls
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
@@ -99,11 +101,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
 
@@ -1554,7 +1558,37 @@ class CarlinkManager(
     /** A transport button from the pane's media card: the same HID tap the steering wheel and the media session send. */
     fun mediaControl(control: MediaControl) {
         logInfo("[UI_ACTION] pane media ${control.name}", tag = Logger.Tags.MEDIA_SESSION)
+        when (control) {
+            MediaControl.SHUFFLE -> tapMode(control) { it.shuffleMode }
+            MediaControl.REPEAT -> tapMode(control) { it.repeatMode }
+            else -> sendMediaButton(control.button)
+        }
+    }
+
+    /**
+     * Shuffle or repeat from the pane ([ModeTaps]): the media remote's key, with CarPlay's Now Playing
+     * brought up instead for Spotify, for a mode the phone never reported, and for a key that has not
+     * moved the mode within [ModeTaps.WAIT_MS], so a tap never just does nothing.
+     */
+    private fun tapMode(
+        control: MediaControl,
+        mode: (NowPlayingState) -> Int?,
+    ) {
+        val state = nowPlayingState.value
+        val before = mode(state)
+        if (ModeTaps.route(state.info.appName, before) == ModeTaps.Route.NOW_PLAYING) {
+            logInfo("[MEDIA] ${control.name} for ${state.info.appName} (mode $before): opening Now Playing", tag = Logger.Tags.MEDIA_SESSION)
+            openCarPlayApp(CarPlayUrls.NOW_PLAYING)
+            return
+        }
         sendMediaButton(control.button)
+        scope.launch {
+            val moved = withTimeoutOrNull(ModeTaps.WAIT_MS) { nowPlayingState.first { mode(it) != before } } != null
+            if (!moved) {
+                logInfo("[MEDIA] ${control.name} left the mode at $before for ${ModeTaps.WAIT_MS}ms: opening Now Playing", tag = Logger.Tags.MEDIA_SESSION)
+                openCarPlayApp(CarPlayUrls.NOW_PLAYING)
+            }
+        }
     }
 
     /**
