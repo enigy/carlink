@@ -3,6 +3,31 @@ package com.carlink.ui.pane
 /** The cards the pane shows in turn, in swipe order: the route first, the music, the clock (with the truck's speed and outside temperature) last. */
 enum class PaneCard { DIRECTIONS, MEDIA, CLOCK }
 
+/**
+ * What fills the pane behind the card: the plain day or night colour ([PLAIN]); the album art with a
+ * frosted band behind the words ([BAND], the music card); or the art frosted all over ([FROSTED], the
+ * clock while music plays: owner, 10-27, back to plain once it stops, the 1.07 look).
+ */
+enum class PaneBackdrop {
+    PLAIN,
+    BAND,
+    FROSTED,
+    ;
+
+    companion object {
+        /** The backdrop for [card] (null: a call) while the phone is [playing] or not. */
+        fun of(
+            card: PaneCard?,
+            playing: Boolean,
+        ): PaneBackdrop =
+            when {
+                card == PaneCard.MEDIA -> BAND
+                card == PaneCard.CLOCK && playing -> FROSTED
+                else -> PLAIN
+            }
+    }
+}
+
 /** CarPlay showing [app] full on its side, put in front by the pane's title, and the card the pane stepped [to] beside it. */
 data class Aside(
     val app: PaneCard,

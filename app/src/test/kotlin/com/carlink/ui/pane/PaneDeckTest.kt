@@ -15,6 +15,16 @@ class PaneDeckTest {
     }
 
     @Test
+    fun `the clock wears the frosted cover only while music plays`() {
+        assertEquals(PaneBackdrop.FROSTED, PaneBackdrop.of(CLOCK, playing = true))
+        assertEquals("stopped or paused: the 1.07 plain clock", PaneBackdrop.PLAIN, PaneBackdrop.of(CLOCK, playing = false))
+        assertEquals(PaneBackdrop.BAND, PaneBackdrop.of(MEDIA, playing = true))
+        assertEquals(PaneBackdrop.BAND, PaneBackdrop.of(MEDIA, playing = false))
+        assertEquals(PaneBackdrop.PLAIN, PaneBackdrop.of(DIRECTIONS, playing = true))
+        assertEquals("a call", PaneBackdrop.PLAIN, PaneBackdrop.of(null, playing = true))
+    }
+
+    @Test
     fun `a fresh pane shows the music before the route`() {
         assertEquals(MEDIA, PaneDeck.default(listOf(DIRECTIONS, MEDIA, CLOCK)))
         assertEquals(DIRECTIONS, PaneDeck.default(listOf(DIRECTIONS, CLOCK)))

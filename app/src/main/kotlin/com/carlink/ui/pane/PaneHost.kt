@@ -201,9 +201,9 @@ private fun PaneHost(
     val nav by NavigationStateManager.state.collectAsState()
     val showCall = call != CallRoster.Presentation.None
     val card = if (showCall) null else deck.shown
-    val showMedia = card == PaneCard.MEDIA
-    // A call, the route and the clock take the pane with its plain background; the cover waits for the music's return.
-    val art = if (showMedia) art else null
+    // The cover behind the music, and frosted behind the clock while music plays; a call, the route and a quiet clock take the plain background.
+    val backdrop = PaneBackdrop.of(card, media.playing)
+    val art = if (backdrop != PaneBackdrop.PLAIN) art else null
     val look = paneLook(art, rememberArtIsDark(art), night = isSystemInDarkTheme())
     val title = paneTitle(card, media.info.appName)
     val onTitle = titleTap(card, deck, carlinkManager)
@@ -217,7 +217,7 @@ private fun PaneHost(
         color = look.background,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, modifier = Modifier.fillMaxSize())
+            MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, frostAll = backdrop == PaneBackdrop.FROSTED, modifier = Modifier.fillMaxSize())
             if (art != null) {
                 Box(
                     modifier =
