@@ -14,7 +14,8 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Lyrics: the music card's own switch in the pane's header ([com.carlink.ui.pane.LyricsToggle]), kept
  * here. On (the default): the pane looks the song up on LRCLIB ([com.carlink.media.LrcLib]) and shows
- * its words in time with it. Off: nothing leaves the car.
+ * its words in time with it. Off: nothing leaves the car. How many lines it shows is dragged on the
+ * card itself ([com.carlink.ui.pane.LyricsLines]), kept here too.
  */
 class MusicStore private constructor(
     context: Context,
@@ -22,6 +23,7 @@ class MusicStore private constructor(
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val resume = MutableStateFlow(prefs.getBoolean(KEY_RESUME, true))
     private val lyrics = MutableStateFlow(prefs.getBoolean(KEY_LYRICS, true))
+    private val lyricLines = MutableStateFlow(prefs.getInt(KEY_LYRIC_LINES, DEFAULT_LYRIC_LINES).coerceIn(MIN_LYRIC_LINES, MAX_LYRIC_LINES))
 
     val resumeOnConnectFlow: StateFlow<Boolean> = resume.asStateFlow()
 
@@ -41,11 +43,26 @@ class MusicStore private constructor(
         lyrics.value = on
     }
 
+    /** How many lyric lines the music card shows: the sung one, those before it and those after ([com.carlink.ui.pane.LyricWindow]). */
+    val lyricLinesFlow: StateFlow<Int> = lyricLines.asStateFlow()
+
+    fun setLyricLines(count: Int) {
+        val n = count.coerceIn(MIN_LYRIC_LINES, MAX_LYRIC_LINES)
+        prefs.edit().putInt(KEY_LYRIC_LINES, n).apply()
+        lyricLines.value = n
+    }
+
     companion object {
         // PERSISTENCE CONTRACT: renaming any of these orphans the stored choice.
         private const val PREFS_NAME = "carlink_music"
         private const val KEY_RESUME = "resume_on_connect"
         private const val KEY_LYRICS = "lyrics"
+        private const val KEY_LYRIC_LINES = "lyric_lines"
+
+        /** The sung line alone up to two before and two after it (owner, 10-27); three by default. */
+        const val MIN_LYRIC_LINES = 1
+        const val MAX_LYRIC_LINES = 5
+        private const val DEFAULT_LYRIC_LINES = 3
 
         @Volatile private var instance: MusicStore? = null
 

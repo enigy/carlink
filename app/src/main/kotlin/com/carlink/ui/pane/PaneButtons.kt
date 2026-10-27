@@ -129,3 +129,26 @@ private const val HIGHLIGHT_ALPHA = 0.28f
 private const val PRESS_MS = 40
 private const val RELEASE_MS = 220
 private const val FLASH_MS = 180L
+
+/** Shuffle or repeat: a lit disc when the phone has it on, a dim icon when off, as the lyrics switch. */
+@Composable
+internal fun ModeButton(
+    icon: ImageVector,
+    label: String,
+    on: Boolean,
+    onClick: () -> Unit,
+) {
+    val content = LocalContentColor.current
+    PaneButton(
+        icon,
+        label,
+        onClick = onClick,
+        size = 56.dp,
+        iconSize = 28.dp,
+        fill = if (on) content.copy(alpha = MODE_LIT_ALPHA) else Color.Transparent,
+        tint = content.copy(alpha = if (on) 1f else MODE_OFF_ALPHA),
+    )
+}
+
+private const val MODE_LIT_ALPHA = 0.22f
+private const val MODE_OFF_ALPHA = 0.45f

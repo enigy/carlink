@@ -48,4 +48,17 @@ class NowPlayingStateTest {
         assertEquals("4:03", NowPlayingState.clock(243_000L))
         assertEquals("1:02:05", NowPlayingState.clock(3_725_000L))
     }
+
+    @Test
+    fun `the phone's shuffle and repeat modes read as on or off`() {
+        val s = NowPlayingState(track, playing = true, positionMs = 0L, positionAtMs = 0L)
+        assertFalse("not reported yet", s.shuffling)
+        assertEquals(null, s.repeating)
+        assertTrue("by songs", s.copy(shuffleMode = 1).shuffling)
+        assertTrue("by albums", s.copy(shuffleMode = 2).shuffling)
+        assertFalse(s.copy(shuffleMode = 0).shuffling)
+        assertEquals(NowPlayingState.REPEAT_ONE, s.copy(repeatMode = 1).repeating)
+        assertEquals(NowPlayingState.REPEAT_ALL, s.copy(repeatMode = 2).repeating)
+        assertEquals("off", null, s.copy(repeatMode = 0).repeating)
+    }
 }

@@ -8,7 +8,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -65,6 +69,37 @@ internal fun ClockCard(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * The time and the outside temperature for the pane's header on every other card (owner, 10-27:
+ * prototype B, centred): the time minute by minute in the head unit's 12- or 24-hour style, the
+ * temperature once the truck reports it ([VehicleReadings]).
+ */
+@Composable
+internal fun HeaderClock(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val timeFormat = remember(context) { DateTimeFormatter.ofPattern(if (DateFormat.is24HourFormat(context)) "H:mm" else "h:mm") }
+    var now by remember { mutableStateOf(LocalDateTime.now()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = LocalDateTime.now()
+            delay(MILLIS_PER_MINUTE - System.currentTimeMillis() % MILLIS_PER_MINUTE)
+        }
+    }
+    val vehicle by VehicleReadings.state.collectAsState()
+    val outside = vehicle.outside(vehicle.imperial(Locale.getDefault()))
+    val words = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum")
+    val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(now.format(timeFormat), style = words)
+        if (outside != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Thermostat, contentDescription = "Outside", tint = secondary, modifier = Modifier.size(20.dp))
+                Text("$outside°", style = words, color = secondary)
+            }
+        }
+    }
+}
+
 /** Speed and outside temperature as two large readings under a hairline, a hairline between them. Nothing when neither is known. */
 @Composable
 private fun VehicleStrip(
@@ -107,5 +142,6 @@ private fun Reading(
 
 private val DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE, MMMM d")
 internal const val MILLIS_PER_SECOND = 1_000L
+private const val MILLIS_PER_MINUTE = 60_000L
 private const val SECONDARY_ALPHA = 0.72f
 private const val RULE_ALPHA = 0.14f

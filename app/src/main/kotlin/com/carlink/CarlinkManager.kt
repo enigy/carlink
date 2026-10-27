@@ -709,6 +709,10 @@ class CarlinkManager(
     private var lastMediaComposer: String? = null
     private var lastTrackNumber: Int = 0
     private var lastTrackCount: Int = 0
+
+    /** The phone's shuffle and repeat modes (iAP2 PlaybackAttributes 5 and 6, parsed box-side); null until it says. */
+    private var lastShuffleMode: Int? = null
+    private var lastRepeatMode: Int? = null
     private var lastAlbumCover: ByteArray? = null
     private var lastDuration: Long = 0L
     private var lastPosition: Long = 0L
@@ -799,6 +803,8 @@ class CarlinkManager(
         lastTrackNumber = 0
         lastTrackCount = 0
         lastAlbumCover = null
+        lastShuffleMode = null
+        lastRepeatMode = null
         lastDuration = 0L
         lastPosition = 0L
         lastPositionAtMs = 0L
@@ -3213,7 +3219,7 @@ class CarlinkManager(
      */
     private fun pushPlaybackState() {
         mediaSessionManager?.updatePlaybackState(playing = lastIsPlaying, position = lastPosition)
-        nowPlayingState.value = NowPlayingState(nowPlayingInfo(), lastIsPlaying, lastPosition, lastPositionAtMs)
+        nowPlayingState.value = NowPlayingState(nowPlayingInfo(), lastIsPlaying, lastPosition, lastPositionAtMs, lastShuffleMode, lastRepeatMode)
     }
 
     /** The cached track to the media session and the pane's media card together. Main thread. */
@@ -3262,6 +3268,7 @@ class CarlinkManager(
 
         newSongName?.let { lastMediaSongName = it }
         val textChanged = mergeTextFields(obj, previousArtist, previousAlbum, previousAppName) or mergeTrackFields(obj)
+        mergeModes(obj)
         val albumCover = mergeArtwork(obj)
         val elapsed = if (obj.has("elapsedMs")) obj.optLong("elapsedMs") else null
         val duration =
@@ -3361,6 +3368,21 @@ class CarlinkManager(
             if (it != previousAppName) changed = true
         }
         return changed
+    }
+
+    /**
+     * The phone's shuffle and repeat modes, for the pane's buttons. Delta-merged like the rest, and
+     * published on a change by themselves: they are playback state, not track metadata, so the media
+     * session never sees them.
+     */
+    private fun mergeModes(obj: JSONObject) {
+        val shuffle = if (obj.has("shuffleMode")) obj.optInt("shuffleMode") else lastShuffleMode
+        val repeat = if (obj.has("repeatMode")) obj.optInt("repeatMode") else lastRepeatMode
+        if (shuffle == lastShuffleMode && repeat == lastRepeatMode) return
+        lastShuffleMode = shuffle
+        lastRepeatMode = repeat
+        logInfo("[MEDIA] phone shuffle=$shuffle repeat=$repeat", tag = Logger.Tags.MEDIA_SESSION)
+        nowPlayingState.value = nowPlayingState.value.copy(shuffleMode = shuffle, repeatMode = repeat)
     }
 
     /** Genre / composer / track position — the rest of what the macOS host renders. Delta-merged like the text. */

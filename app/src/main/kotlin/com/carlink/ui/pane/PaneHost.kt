@@ -6,7 +6,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fullscreen
@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
@@ -227,7 +228,7 @@ private fun PaneHost(
             }
             CompositionLocalProvider(LocalContentColor provides look.content) {
                 Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                    val header: @Composable () -> Unit = { PaneHeader(title, onTitle, lyricsButton = showMedia) { carPlayFullScreen(carlinkManager) } }
+                    val header: @Composable () -> Unit = { PaneHeader(title, onTitle, card) { carPlayFullScreen(carlinkManager) } }
                     if (showCall) {
                         header()
                         CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp))
@@ -235,7 +236,7 @@ private fun PaneHost(
                         PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, header = header, modifier = Modifier.fillMaxSize()) { which, m ->
                             when (which) {
                                 PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
-                                PaneCard.MEDIA -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = m, lyrics = lyrics, onWordsTop = { wordsTop = it })
+                                PaneCard.MEDIA -> MusicCard(carlinkManager, media, lyrics, m) { wordsTop = it }
                                 PaneCard.CLOCK -> ClockCard(modifier = m)
                             }
                         }
@@ -310,21 +311,58 @@ private fun paneTitle(
         PaneCard.CLOCK -> "Carlink3"
     }
 
-/** The card's name (tappable where [onTitle] is set), the lyrics switch on the music card ([lyricsButton]), and CarPlay full screen. */
+/** The music card wired to the truck: its buttons tap the phone, shuffle and repeat put CarPlay's Now Playing up ([MediaCard]). */
+@Composable
+private fun MusicCard(
+    carlinkManager: CarlinkManager,
+    media: NowPlayingState,
+    lyrics: SyncedLyrics?,
+    modifier: Modifier = Modifier,
+    onWordsTop: (Float) -> Unit,
+) {
+    MediaCard(
+        state = media,
+        onControl = carlinkManager::mediaControl,
+        modifier = modifier,
+        lyrics = lyrics,
+        onModes = {
+            logInfo("[UI_ACTION] Pane: shuffle/repeat -> CarPlay Now Playing", tag = "UI")
+            carlinkManager.openCarPlayApp(CarPlayUrls.NOW_PLAYING)
+        },
+        onWordsTop = onWordsTop,
+    )
+}
+
+/**
+ * The card's name (tappable where [onTitle] is set), the lyrics switch on the music card and CarPlay
+ * full screen; centred between them on every card but the clock (a call's too: [card] null), the time
+ * and the outside temperature (owner, 10-27: prototype B, "Centred in the header"). A long name is
+ * cut short before it reaches the clock.
+ */
 @Composable
 private fun PaneHeader(
     title: String,
     onTitle: (() -> Unit)?,
-    lyricsButton: Boolean,
+    card: PaneCard?,
     onExpand: () -> Unit,
 ) {
     val content = LocalContentColor.current
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        val titleModifier = if (onTitle != null) Modifier.clip(MaterialTheme.shapes.small).clickable(onClick = onTitle).padding(horizontal = 8.dp, vertical = 6.dp) else Modifier
-        Text(title, style = MaterialTheme.typography.titleMedium, color = content.copy(alpha = HEADER_ALPHA), modifier = titleModifier)
-        Spacer(modifier = Modifier.weight(1f))
-        if (lyricsButton) LyricsToggle(modifier = Modifier.padding(end = 8.dp))
-        PaneButton(Icons.Default.Fullscreen, "CarPlay full screen", onClick = onExpand, size = 56.dp, iconSize = 32.dp, tint = content.copy(alpha = HEADER_ALPHA))
+    val clock = card != PaneCard.CLOCK
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+        val tappable = if (onTitle != null) Modifier.clip(MaterialTheme.shapes.small).clickable(onClick = onTitle).padding(horizontal = 8.dp, vertical = 6.dp) else Modifier
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            color = content.copy(alpha = HEADER_ALPHA),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = if (clock) tappable.widthIn(max = TITLE_BESIDE_CLOCK) else tappable,
+        )
+        if (clock) HeaderClock(modifier = Modifier.align(Alignment.Center))
+        Row(modifier = Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
+            if (card == PaneCard.MEDIA) LyricsToggle(modifier = Modifier.padding(end = 8.dp))
+            PaneButton(Icons.Default.Fullscreen, "CarPlay full screen", onClick = onExpand, size = 56.dp, iconSize = 32.dp, tint = content.copy(alpha = HEADER_ALPHA))
+        }
     }
 }
 
@@ -357,6 +395,9 @@ private const val SCRIM_TOP = 0.45f
 private const val SCRIM_BOTTOM = 0.75f
 private const val HEADER_ALPHA = 0.85f
 private const val TAB_ALPHA = 0.7f
+
+/** The widest a card name runs while the time sits centred beside it. */
+private val TITLE_BESIDE_CLOCK = 168.dp
 
 /** How long after a Dock tap the pane waits before taking it as a leave: past CarPlay's 500 ms resize start. */
 private const val LEAVE_SETTLE_MS = 800L

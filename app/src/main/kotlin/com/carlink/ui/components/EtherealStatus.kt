@@ -249,7 +249,7 @@ private fun StepDots(step: LoadingStep) {
  * `graphicsLayer { … }.padding(room)` gets layer bounds with space for the glow, while
  * neighbours are spaced as if the padding weren't there.
  */
-private fun Modifier.withGlowRoom(room: Dp): Modifier =
+internal fun Modifier.withGlowRoom(room: Dp): Modifier =
     layout { measurable, constraints ->
         val px = room.roundToPx()
         val placeable = measurable.measure(constraints.offset(2 * px, 2 * px))

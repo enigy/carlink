@@ -16,7 +16,17 @@ data class NowPlayingState(
     val positionMs: Long,
     /** `SystemClock.elapsedRealtime()` when [positionMs] arrived; 0 = never. */
     val positionAtMs: Long,
+    /** The phone's shuffle mode (iAP2 PlaybackShuffleMode: 0 off, 1 songs, 2 albums); null until it says. */
+    val shuffleMode: Int? = null,
+    /** The phone's repeat mode (iAP2 PlaybackRepeatMode: 0 off, 1 one, 2 all); null until it says. */
+    val repeatMode: Int? = null,
 ) {
+    /** Shuffle is on, by songs or by albums. */
+    val shuffling: Boolean get() = (shuffleMode ?: 0) != 0
+
+    /** Repeating, the one song or the whole queue: null off or unknown, else [REPEAT_ONE] or [REPEAT_ALL]. */
+    val repeating: Int? get() = repeatMode?.takeIf { it == REPEAT_ONE || it == REPEAT_ALL }
+
     /** A track worth a card: iOS has named it. */
     val hasTrack: Boolean get() = !info.title.isNullOrBlank()
 
@@ -28,6 +38,9 @@ data class NowPlayingState(
     }
 
     companion object {
+        const val REPEAT_ONE = 1
+        const val REPEAT_ALL = 2
+
         val NONE = NowPlayingState(NowPlayingInfo(title = null, artist = null, album = null, appName = null), playing = false, positionMs = 0L, positionAtMs = 0L)
 
         private const val MS_PER_SECOND = 1_000L
