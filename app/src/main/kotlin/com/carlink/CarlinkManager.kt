@@ -44,7 +44,6 @@ import com.carlink.media.CarlinkMediaBrowserService
 import com.carlink.media.ConnectPlay
 import com.carlink.media.MediaControl
 import com.carlink.media.MediaSessionManager
-import com.carlink.media.ModeTaps
 import com.carlink.media.NowPlayingInfo
 import com.carlink.media.NowPlayingState
 import com.carlink.media.PlayStatus
@@ -57,7 +56,6 @@ import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.CarPlayDock
-import com.carlink.ocbm.CarPlayUrls
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
@@ -101,13 +99,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
 
@@ -713,10 +709,6 @@ class CarlinkManager(
     private var lastMediaComposer: String? = null
     private var lastTrackNumber: Int = 0
     private var lastTrackCount: Int = 0
-
-    /** The phone's shuffle and repeat modes (iAP2 PlaybackAttributes 5 and 6, parsed box-side); null until it says. */
-    private var lastShuffleMode: Int? = null
-    private var lastRepeatMode: Int? = null
     private var lastAlbumCover: ByteArray? = null
     private var lastDuration: Long = 0L
     private var lastPosition: Long = 0L
@@ -807,8 +799,6 @@ class CarlinkManager(
         lastTrackNumber = 0
         lastTrackCount = 0
         lastAlbumCover = null
-        lastShuffleMode = null
-        lastRepeatMode = null
         lastDuration = 0L
         lastPosition = 0L
         lastPositionAtMs = 0L
@@ -1558,37 +1548,7 @@ class CarlinkManager(
     /** A transport button from the pane's media card: the same HID tap the steering wheel and the media session send. */
     fun mediaControl(control: MediaControl) {
         logInfo("[UI_ACTION] pane media ${control.name}", tag = Logger.Tags.MEDIA_SESSION)
-        when (control) {
-            MediaControl.SHUFFLE -> tapMode(control) { it.shuffleMode }
-            MediaControl.REPEAT -> tapMode(control) { it.repeatMode }
-            else -> sendMediaButton(control.button)
-        }
-    }
-
-    /**
-     * Shuffle or repeat from the pane ([ModeTaps]): the media remote's key, with CarPlay's Now Playing
-     * brought up instead for Spotify, for a mode the phone never reported, and for a key that has not
-     * moved the mode within [ModeTaps.WAIT_MS], so a tap never just does nothing.
-     */
-    private fun tapMode(
-        control: MediaControl,
-        mode: (NowPlayingState) -> Int?,
-    ) {
-        val state = nowPlayingState.value
-        val before = mode(state)
-        if (ModeTaps.route(state.info.appName, before) == ModeTaps.Route.NOW_PLAYING) {
-            logInfo("[MEDIA] ${control.name} for ${state.info.appName} (mode $before): opening Now Playing", tag = Logger.Tags.MEDIA_SESSION)
-            openCarPlayApp(CarPlayUrls.NOW_PLAYING)
-            return
-        }
         sendMediaButton(control.button)
-        scope.launch {
-            val moved = withTimeoutOrNull(ModeTaps.WAIT_MS) { nowPlayingState.first { mode(it) != before } } != null
-            if (!moved) {
-                logInfo("[MEDIA] ${control.name} left the mode at $before for ${ModeTaps.WAIT_MS}ms: opening Now Playing", tag = Logger.Tags.MEDIA_SESSION)
-                openCarPlayApp(CarPlayUrls.NOW_PLAYING)
-            }
-        }
     }
 
     /**
@@ -3253,7 +3213,7 @@ class CarlinkManager(
      */
     private fun pushPlaybackState() {
         mediaSessionManager?.updatePlaybackState(playing = lastIsPlaying, position = lastPosition)
-        nowPlayingState.value = NowPlayingState(nowPlayingInfo(), lastIsPlaying, lastPosition, lastPositionAtMs, lastShuffleMode, lastRepeatMode)
+        nowPlayingState.value = NowPlayingState(nowPlayingInfo(), lastIsPlaying, lastPosition, lastPositionAtMs)
     }
 
     /** The cached track to the media session and the pane's media card together. Main thread. */
@@ -3302,7 +3262,6 @@ class CarlinkManager(
 
         newSongName?.let { lastMediaSongName = it }
         val textChanged = mergeTextFields(obj, previousArtist, previousAlbum, previousAppName) or mergeTrackFields(obj)
-        mergeModes(obj)
         val albumCover = mergeArtwork(obj)
         val elapsed = if (obj.has("elapsedMs")) obj.optLong("elapsedMs") else null
         val duration =
@@ -3402,21 +3361,6 @@ class CarlinkManager(
             if (it != previousAppName) changed = true
         }
         return changed
-    }
-
-    /**
-     * The phone's shuffle and repeat modes, for the pane's buttons. Delta-merged like the rest, and
-     * published on a change by themselves: they are playback state, not track metadata, so the media
-     * session never sees them.
-     */
-    private fun mergeModes(obj: JSONObject) {
-        val shuffle = if (obj.has("shuffleMode")) obj.optInt("shuffleMode") else lastShuffleMode
-        val repeat = if (obj.has("repeatMode")) obj.optInt("repeatMode") else lastRepeatMode
-        if (shuffle == lastShuffleMode && repeat == lastRepeatMode) return
-        lastShuffleMode = shuffle
-        lastRepeatMode = repeat
-        logInfo("[MEDIA] phone shuffle=$shuffle repeat=$repeat", tag = Logger.Tags.MEDIA_SESSION)
-        nowPlayingState.value = nowPlayingState.value.copy(shuffleMode = shuffle, repeatMode = repeat)
     }
 
     /** Genre / composer / track position — the rest of what the macOS host renders. Delta-merged like the text. */

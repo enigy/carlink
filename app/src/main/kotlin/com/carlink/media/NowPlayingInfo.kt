@@ -8,9 +8,8 @@ package com.carlink.media
  * player. `appName` is what iOS reports for PlaybackAttributes id 7 ("Music", "Spotify", …) — carried
  * here so AAOS surfaces can show the source the way a native CarPlay head unit does.
  *
- * Queue index/count and the disc numbers are parsed box-side too but have no MediaMetadata slot
- * worth filling; they stay in the JSON until a consumer appears. Shuffle and repeat are playback
- * state, and ride [NowPlayingState].
+ * Queue index/count, shuffle/repeat and the disc numbers are parsed box-side too but have no
+ * MediaMetadata slot worth filling; they stay in the JSON until a consumer appears.
  */
 data class NowPlayingInfo(
     val title: String?,
