@@ -135,4 +135,27 @@ class TurnAlertTest {
         val t = drive(60.0, fromM = 500.0, fromS = 0, toS = 3, type = 49) // slight left still flashes
         assertEquals(Phase.FLASH, TurnAlert.phase(on, t))
     }
+
+    @Test
+    fun `the truck's speed times the alert when the iPhone's distance stands still`() {
+        TurnAlert.observe(state(150), 0L)
+        assertEquals("no countdown yet, no truck speed", Phase.NORMAL, TurnAlert.phase(on, 0L))
+        TurnAlert.onCarSpeed(30 * TurnAlert.MPS_PER_MPH, 0L)
+        assertEquals("150 m out at 30 mph, inside 500 ft", Phase.FLASH, TurnAlert.phase(on, 0L))
+    }
+
+    @Test
+    fun `the truck's speed picks the band over the countdown's`() {
+        val t = drive(30.0, fromM = 400.0, fromS = 0, toS = 3)
+        assertEquals("360 m out at 30 mph: past 500 ft", Phase.NORMAL, TurnAlert.phase(on, t))
+        TurnAlert.onCarSpeed(60 * TurnAlert.MPS_PER_MPH, t)
+        assertEquals("the truck says 60 mph: inside 1,500 ft", Phase.FLASH, TurnAlert.phase(on, t))
+    }
+
+    @Test
+    fun `a stale truck speed gives way to the countdown`() {
+        TurnAlert.onCarSpeed(60 * TurnAlert.MPS_PER_MPH, 0L)
+        val t = drive(30.0, fromM = 400.0, fromS = 0, toS = 5)
+        assertEquals("the truck's reading is 5 s old: 30 mph by the countdown, past 500 ft", Phase.NORMAL, TurnAlert.phase(on, t))
+    }
 }

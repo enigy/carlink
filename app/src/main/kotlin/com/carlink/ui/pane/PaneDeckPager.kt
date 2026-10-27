@@ -1,9 +1,13 @@
 package com.carlink.ui.pane
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.ScrollableDefaults
 import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.LocalContentColor
@@ -31,6 +36,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import com.carlink.logging.logInfo
+import kotlinx.coroutines.flow.merge
 
 /**
  * The deck's cards side by side, one in view, a swipe away from the next ([PaneDeck] says which
@@ -62,9 +68,14 @@ internal fun PaneDeckPager(
         if (pagerState.currentPage == target) return@LaunchedEffect
         if (changed) pagerState.animateScrollToPage(target) else pagerState.scrollToPage(target)
     }
+    // Only a settle that follows the driver's drag is a swipe. A deck reshuffle moves the settled page
+    // too, and reporting that overrode the card the deck chose (owner's log 10-26: "swiped to CLOCK"
+    // 85 ms after the first track came, with no finger on the pane).
+    val drags = remember { MutableInteractionSource() }
+    val watch = rememberDragWatch(pagerState, drags)
     LaunchedEffect(pagerState.settledPage) {
         val settled = pages.getOrNull(pagerState.settledPage) ?: return@LaunchedEffect
-        if (settled != shown) {
+        if (settled != shown && watch.justDragged(SystemClock.uptimeMillis())) {
             logInfo("[UI_ACTION] Pane: swiped to $settled", tag = "UI")
             onShown(settled)
         }
@@ -82,12 +93,15 @@ internal fun PaneDeckPager(
     val swipePx = with(LocalDensity.current) { SWIPE_DISTANCE.toPx() }
     val threshold = if (pageSizePx > 0) (swipePx / pageSizePx).coerceIn(MIN_THRESHOLD, MAX_THRESHOLD) else GUESS_THRESHOLD
     val fling = key(threshold) { PagerDefaults.flingBehavior(state = pagerState, snapPositionalThreshold = threshold) }
-    val swipesToo = Modifier.scrollable(pagerState, Orientation.Horizontal, reverseDirection = reverse, flingBehavior = fling)
+    val swipesToo = Modifier.scrollable(pagerState, Orientation.Horizontal, reverseDirection = reverse, flingBehavior = fling, interactionSource = drags)
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().then(swipesToo)) { header() }
+        // No page keys: a keyed pager keeps the card in view when one is added before it (the first
+        // track's music card before the clock), moving the page under the effect above that has just
+        // found it already on the deck's card. By index, a reshuffle changes what the page holds and
+        // the effect scrolls to the deck's card.
         HorizontalPager(
             state = pagerState,
-            key = { pages[it] },
             pageSpacing = 24.dp,
             flingBehavior = fling,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp),
@@ -97,6 +111,36 @@ internal fun PaneDeckPager(
         }
         if (pages.size > 1) PageDots(count = pages.size, current = pagerState.currentPage, modifier = swipesToo)
     }
+}
+
+/** When the driver last had a finger on the deck: the pager's own drags, and the header's and dots' ([PaneDeckPager]'s `drags`). */
+private class DragWatch {
+    @Volatile var open = false
+
+    @Volatile var endedAt = -1L
+
+    /** A settle now follows the driver's drag: one is under way, or ended under [SWIPE_SETTLE_MS] ago. */
+    fun justDragged(nowMs: Long): Boolean = open || (endedAt >= 0 && nowMs - endedAt < SWIPE_SETTLE_MS)
+}
+
+@Composable
+private fun rememberDragWatch(
+    pagerState: PagerState,
+    drags: InteractionSource,
+): DragWatch {
+    val watch = remember { DragWatch() }
+    LaunchedEffect(pagerState, drags) {
+        merge(pagerState.interactionSource.interactions, drags.interactions).collect {
+            when (it) {
+                is DragInteraction.Start -> watch.open = true
+                is DragInteraction.Stop, is DragInteraction.Cancel -> {
+                    watch.open = false
+                    watch.endedAt = SystemClock.uptimeMillis()
+                }
+            }
+        }
+    }
+    return watch
 }
 
 @Composable
@@ -134,3 +178,6 @@ private val SWIPE_DISTANCE = 40.dp
 private const val GUESS_THRESHOLD = 0.08f
 private const val MIN_THRESHOLD = 0.02f
 private const val MAX_THRESHOLD = 0.5f
+
+/** How long after a drag ends its fling may take to settle and still count as the swipe. */
+private const val SWIPE_SETTLE_MS = 1_500L

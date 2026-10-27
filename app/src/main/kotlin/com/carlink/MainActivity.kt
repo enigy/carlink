@@ -41,7 +41,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
-import com.carlink.car.VehicleProbe
+import com.carlink.car.VehicleData
 import com.carlink.cluster.ClusterBindingState
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.logging.DriveLogging
@@ -187,15 +187,14 @@ class MainActivity : ComponentActivity() {
             requestSpeedPermission()
         }
 
-    // TEST BUILD: the vehicle probe and its speed prompt. Asked after the microphone's answer, because
-    // Android shows one permission request at a time and drops a second made while one is up.
-    private val vehicleProbe by lazy { VehicleProbe(applicationContext) }
+    // The truck's speed prompt ([VehicleData]). Asked after the microphone's answer, because Android
+    // shows one permission request at a time and drops a second made while one is up.
     private val speedPermissionLauncher =
         registerForActivityResult(
             ActivityResultContracts.RequestPermission(),
         ) { isGranted ->
             logInfo("Vehicle speed permission ${if (isGranted) "granted" else "denied"}", tag = "MAIN")
-            vehicleProbe.start()
+            VehicleData.start(applicationContext)
         }
 
     /**
@@ -423,7 +422,7 @@ class MainActivity : ComponentActivity() {
         // on its own onDestroy. Just drop the local reference here.
         carlinkManager?.release()
         mediaSessionManager = null
-        vehicleProbe.stop()
+        VehicleData.stop()
 
         logInfo("MainActivity destroyed", tag = "MAIN")
     }
@@ -767,14 +766,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** TEST BUILD: [VehicleProbe]'s one runtime permission, then the probe either way. Off automotive there is no car to ask. */
+    /**
+     * [VehicleData]'s one runtime permission, then the readings either way: the outside temperature
+     * needs no prompt. Off automotive there is no car to ask.
+     */
     private fun requestSpeedPermission() {
         if (!packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) return
-        if (ContextCompat.checkSelfPermission(this, VehicleProbe.SPEED) == PackageManager.PERMISSION_GRANTED) {
-            vehicleProbe.start()
+        if (ContextCompat.checkSelfPermission(this, VehicleData.SPEED_PERMISSION) == PackageManager.PERMISSION_GRANTED) {
+            VehicleData.start(applicationContext)
         } else {
             logInfo("Requesting vehicle speed permission", tag = "MAIN")
-            speedPermissionLauncher.launch(VehicleProbe.SPEED)
+            speedPermissionLauncher.launch(VehicleData.SPEED_PERMISSION)
         }
     }
 

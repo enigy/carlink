@@ -3,6 +3,7 @@ package com.carlink.ui.pane
 import com.carlink.ui.pane.PaneCard.CLOCK
 import com.carlink.ui.pane.PaneCard.DIRECTIONS
 import com.carlink.ui.pane.PaneCard.MEDIA
+import com.carlink.ui.pane.PaneCard.VEHICLE
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -12,6 +13,15 @@ class PaneDeckTest {
         assertEquals(listOf(CLOCK), PaneDeck.pages(navigating = false, hasTrack = false))
         assertEquals(listOf(MEDIA, CLOCK), PaneDeck.pages(navigating = false, hasTrack = true))
         assertEquals(listOf(DIRECTIONS, MEDIA, CLOCK), PaneDeck.pages(navigating = true, hasTrack = true))
+    }
+
+    @Test
+    fun `the truck's card comes after the clock, so stepping aside still lands on the clock`() {
+        assertEquals(listOf(MEDIA, CLOCK, VEHICLE), PaneDeck.pages(navigating = false, hasTrack = true, hasVehicle = true))
+        assertEquals(listOf(CLOCK, VEHICLE), PaneDeck.pages(navigating = false, hasTrack = false, hasVehicle = true))
+        assertEquals(CLOCK, PaneDeck.beside(MEDIA, listOf(MEDIA, CLOCK, VEHICLE)))
+        assertEquals(CLOCK, PaneDeck.default(listOf(CLOCK, VEHICLE)))
+        assertEquals("the driver swiped to the truck", VEHICLE, PaneDeck.onMusicStart(listOf(MEDIA, CLOCK, VEHICLE), shown = VEHICLE))
     }
 
     @Test
