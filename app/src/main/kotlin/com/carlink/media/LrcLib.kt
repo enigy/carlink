@@ -44,8 +44,8 @@ data class LyricsKey(
  * search by title and first artist, taking the timed hit whose length is closest within
  * [MATCH_SECONDS]: Spotify names live cuts and remasters by album, and a search finds the recording
  * whose length matches (owner's drive 10-26: "Dirty Paws", LIVE FROM VATNAGARÐAR, 300 s). Answers,
- * found or not, are kept for the process ([CACHE_SIZE] songs); a failed connection is not, so the song
- * is tried again next time it plays. Blocking: call off the main thread.
+ * found or not, are kept for the process ([CACHE_SIZE] songs); a failed connection is not an answer
+ * ([find] returns null) and the caller asks again. Blocking: call off the main thread.
  */
 object LrcLib {
     /** A finished lookup: [lyrics] null when LRCLIB has none for the song. */
@@ -61,9 +61,12 @@ object LrcLib {
     /** The answer already in hand for [key], or null when it has not been looked up. */
     fun cached(key: LyricsKey): Answer? = synchronized(cache) { cache[key] }
 
-    /** The song's timed lyrics, or null: none found, or LRCLIB could not be reached. */
-    fun find(key: LyricsKey): SyncedLyrics? {
-        cached(key)?.let { return it.lyrics }
+    /**
+     * LRCLIB's answer for the song: its timed lyrics, or none ([Answer.lyrics] null). Null when LRCLIB
+     * could not be reached or answered unreadably, which is not an answer: the caller asks again.
+     */
+    fun find(key: LyricsKey): Answer? {
+        cached(key)?.let { return it }
         val lrc =
             try {
                 lookUp(key)
@@ -74,10 +77,10 @@ object LrcLib {
                 logWarn("[LYRICS] LRCLIB answer unreadable for \"${key.title}\": ${e.message}", tag = Logger.Tags.MEDIA)
                 return null
             }
-        val lyrics = lrc?.let(SyncedLyrics::parse)
-        logInfo("[LYRICS] \"${key.title}\" (${key.durationSec}s): ${lyrics?.let { "${it.lines.size} timed lines" } ?: "none"}", tag = Logger.Tags.MEDIA)
-        synchronized(cache) { cache[key] = Answer(lyrics) }
-        return lyrics
+        val answer = Answer(lrc?.let(SyncedLyrics::parse))
+        logInfo("[LYRICS] \"${key.title}\" (${key.durationSec}s): ${answer.lyrics?.let { "${it.lines.size} timed lines" } ?: "none"}", tag = Logger.Tags.MEDIA)
+        synchronized(cache) { cache[key] = answer }
+        return answer
     }
 
     /** The LRC text: the exact match's, else the closest search hit's. Null when neither has timed lyrics. */

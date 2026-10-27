@@ -7,12 +7,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.carlink.media.LyricLine
@@ -74,8 +76,26 @@ class LyricsLinesTest {
         compose.onNodeWithTag(LYRICS).performTouchInput { swipeDown() }
         compose.waitForIdle()
         assertEquals("down to the sung line alone", MusicStore.MIN_LYRIC_LINES, music.lyricLinesFlow.value)
+        // The lines that left dissolve before they go.
+        compose.mainClock.advanceTimeBy(SETTLE_MS)
+        compose.waitForIdle()
         compose.onNodeWithText("line 3").assertExists()
         compose.onNodeWithText("line 4").assertDoesNotExist()
+    }
+
+    @Test
+    fun a_line_that_wraps_when_sung_is_already_wrapped_as_the_next_line() {
+        // Owner, 10-28: a long line reflowing from one line to two as it took the sung place was rough.
+        val long = "Every mile a little slower than the one before"
+        val wrapping = SyncedLyrics((0..5).map { LyricLine(it * 1_000L, if (it == 4) long else "line $it") })
+        compose.setContent {
+            MaterialTheme { Box(modifier = Modifier.size(480.dp, 600.dp)) { LyricsLines(wrapping, paused, modifier = Modifier.fillMaxWidth()) } }
+        }
+        compose.waitForIdle()
+        val layouts = mutableListOf<TextLayoutResult>()
+        val node = compose.onNodeWithText(long).fetchSemanticsNode()
+        node.config[SemanticsActions.GetTextLayoutResult].action?.invoke(layouts)
+        assertEquals("laid out as when sung, though line 3 is sung", 2, layouts.first().lineCount)
     }
 
     @Test

@@ -5,158 +5,137 @@ import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onPlaced
-import androidx.compose.ui.layout.positionInParent
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.carlink.media.SyncedLyrics
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-// The music card's lyric motion ([LyricsLines], owner 10-27 "Drift", 10-28 "smoother, no jumps"), kept
-// apart from the layout it animates. Each line is its own element, keyed by its place in the song, and
-// carries its own motion: it glides from where it stood to where it stands now ([glidePlacement]), eases
-// between the sung size and the others ([rememberRoleScale]), condenses in when it first shows
-// ([rememberEntrance]) and mists away when it falls off the top ([rememberMist]). So nothing jumps,
-// whatever moved it: the next line, a long line wrapping onto two or unwrapping to one, or a drag that
-// changes how many lines show.
+// The music card's lyric motion ([LyricsLines]; owner 10-27 "Drift", 10-28 "smoother, no jumps").
+// Every line is laid out at the sung line's size and shown smaller by scale when it is not the sung
+// one, so a line that wraps when sung wraps the same way before and after it (owner, 10-28): no line
+// ever reflows. Each line's space follows its look ([lyricBox]): it grows and shrinks with its scale,
+// opens from nothing as the line arrives ([rememberOpen]) and closes as it leaves, misting away
+// ([rememberMist]). The lines are plain layout, so whatever moves (the next line, a long line taking
+// the sung place, a drag to more or fewer lines) everything around it moves with it, smoothly.
 
-/** The lines the column is laid out around: [at] the sung one, [leaving] the one dissolving off the top after a step, if any. */
+/**
+ * The lines shown around the sung one: [at] the sung line, [shown] the window, and [leaving] the lines
+ * that just left it and are still dissolving (with the frame time they started).
+ */
 internal class LyricsDrift(
     val at: Int,
-    val leaving: Int?,
+    val shown: IntRange,
+    val leaving: Map<Int, Long>,
 )
 
 /**
- * Follows [index]. A step to the very next line keeps the old top line ([behind] places above the old
- * sung one) as [LyricsDrift.leaving] for the mist's length; anything else (a seek, a new song)
- * moves without one.
+ * Follows [index] and the window [behind] and [ahead] of it. A step to the next line, or a new count,
+ * lets the lines that left dissolve for [MIST_MS]; a jump (a seek, a new song) drops them at once.
  */
 @Composable
 internal fun rememberDrift(
     lyrics: SyncedLyrics,
     index: Int,
     behind: Int,
+    ahead: Int,
 ): LyricsDrift {
     var at by remember(lyrics) { mutableIntStateOf(index) }
-    var leaving by remember(lyrics) { mutableStateOf<Int?>(null) }
-    LaunchedEffect(lyrics, index) {
-        if (index == at) return@LaunchedEffect
-        val stepped = index == at + 1
-        leaving = if (stepped) at - behind else null
+    var shown by remember(lyrics) { mutableStateOf((index - behind)..(index + ahead)) }
+    var leaving by remember(lyrics) { mutableStateOf(emptyMap<Int, Long>()) }
+    LaunchedEffect(lyrics, index, behind, ahead) {
+        val next = (index - behind)..(index + ahead)
+        if (next == shown && index == at) return@LaunchedEffect
+        val dissolve = index == at || index == at + 1
+        val now = withFrameMillis { it }
+        val gone = if (dissolve) shown.filter { it !in next }.associateWith { now } else emptyMap()
+        leaving = if (dissolve) (leaving + gone).filterKeys { it !in next } else emptyMap()
+        shown = next
         at = index
-        if (stepped) {
-            delay(MIST_MS.toLong())
-            leaving = null
-        }
     }
-    return LyricsDrift(at, leaving)
+    LaunchedEffect(leaving) {
+        val oldest = leaving.values.minOrNull() ?: return@LaunchedEffect
+        delay((oldest + MIST_MS - withFrameMillis { it }).coerceAtLeast(0L))
+        val now = withFrameMillis { it }
+        leaving = leaving.filterValues { now - it < MIST_MS }
+    }
+    return LyricsDrift(at, shown, leaving)
 }
 
-/**
- * Glides the element from where it last stood in its parent to where it stands now, over [GLIDE_MS],
- * whatever moved it. The first placement lands as it is. Compose's own placement-animation pattern:
- * the offset holds the element at its old place on the frame the layout moves, then runs to zero.
- */
+/** 0 to 1 as a line arrives (its space opens and it condenses in), back to 0 as it leaves. */
 @Composable
-internal fun Modifier.glidePlacement(): Modifier {
-    val scope = rememberCoroutineScope()
-    var target by remember { mutableStateOf<Float?>(null) }
-    val glide = remember { arrayOfNulls<Animatable<Float, AnimationVector1D>>(1) }
-    return this
-        .onPlaced { target = it.positionInParent().y }
-        .offset {
-            val to = target ?: return@offset IntOffset.Zero
-            val anim = glide[0] ?: Animatable(to).also { glide[0] = it }
-            if (anim.targetValue != to) scope.launch { anim.animateTo(to, tween(GLIDE_MS, easing = FastOutSlowInEasing)) }
-            IntOffset(0, (anim.value - to).roundToInt())
-        }
+internal fun rememberOpen(leaving: Boolean): Animatable<Float, AnimationVector1D> {
+    val open = remember { Animatable(0f) }
+    LaunchedEffect(leaving) { open.animateTo(if (leaving) 0f else 1f, tween(GLIDE_MS, easing = FastOutSlowInEasing)) }
+    return open
 }
 
-/**
- * The line's scale while it changes between the sung style and the others: on the change it starts at
- * the size it had (the sung style is [ratio] times larger) and eases to 1, so it grows or shrinks
- * rather than snapping. A line's first showing starts at 1.
- */
-@Composable
-internal fun rememberRoleScale(
-    sung: Boolean,
-    ratio: Float,
-): Animatable<Float, AnimationVector1D> {
-    val shown = remember { BooleanArray(1) }
-    val from =
-        when {
-            !shown[0] -> 1f
-            sung -> 1f / ratio
-            else -> ratio
-        }
-    val scale = remember(sung) { Animatable(from) }
-    shown[0] = true
-    LaunchedEffect(sung) { scale.animateTo(1f, tween(GLIDE_MS, easing = FastOutSlowInEasing)) }
-    return scale
-}
-
-/** 0 to 1 as a line first shows: it condenses out of a soft blur. */
-@Composable
-internal fun rememberEntrance(): Animatable<Float, AnimationVector1D> {
-    val enter = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { enter.animateTo(1f, tween(GLIDE_MS, easing = FastOutSlowInEasing)) }
-    return enter
-}
-
-/** 0 to 1 while the line falls off the top: it rises, spreads and blurs away, as the loading screen's old words do. */
+/** 0 to 1 while the line leaves: it rises, spreads and blurs away, as the loading screen's old words do. */
 @Composable
 internal fun rememberMist(leaving: Boolean): Animatable<Float, AnimationVector1D> {
     val mist = remember { Animatable(0f) }
-    LaunchedEffect(leaving) { if (leaving) mist.animateTo(1f, tween(MIST_MS, easing = LinearOutSlowInEasing)) else mist.snapTo(0f) }
+    LaunchedEffect(leaving) { if (leaving) mist.animateTo(1f, tween(MIST_MS.toInt(), easing = LinearOutSlowInEasing)) }
     return mist
 }
 
-/** A lyric line's look at this frame: its dimness, its role scale, its entrance and its mist. */
+/**
+ * A lyric line's space: its laid-out height at [scale] (the text is laid out at the sung size and drawn
+ * scaled from its top-left), plus [gapPx], times [open]. A line leaving upward ([rise]) keeps its foot
+ * on the line below as its space closes, so it slides up out of the block; any other line opens and
+ * closes downward from its top.
+ */
+internal fun Modifier.lyricBox(
+    scale: () -> Float,
+    open: () -> Float,
+    gapPx: Int,
+    rise: Boolean,
+): Modifier =
+    layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        val full = placeable.height * scale() + gapPx
+        val height = (full * open()).roundToInt().coerceAtLeast(0)
+        layout(placeable.width, height) { placeable.place(0, if (rise) (height - full).roundToInt() else 0) }
+    }
+
+/**
+ * A lyric line's look at this frame: [dim], drawn at [scale] from the text's top-left (inset [roomPx]
+ * in its layer), condensing in as it [open]s and misting away with [mist].
+ */
 internal fun GraphicsLayerScope.lyricMotion(
     dim: Float,
-    role: Float,
-    enter: Float,
+    scale: Float,
+    open: Float,
     mist: Float,
+    roomPx: Float,
 ) {
-    alpha = dim * enter * (1f - mist)
-    val scale = role * (1f + MIST_SPREAD * mist)
-    scaleX = scale
-    scaleY = scale
-    transformOrigin = TransformOrigin(0f, 0.5f)
+    alpha = dim * open * (1f - mist)
+    val s = scale * (1f + MIST_SPREAD * mist)
+    scaleX = s
+    scaleY = s
+    if (size.width > 0f && size.height > 0f) transformOrigin = TransformOrigin(roomPx / size.width, roomPx / size.height)
     translationY = -MIST_RISE.toPx() * mist
-    val radius = MIST_BLUR.toPx() * mist + EMERGE_BLUR.toPx() * (1f - enter)
+    val radius = MIST_BLUR.toPx() * mist + EMERGE_BLUR.toPx() * (1f - open)
     renderEffect = if (radius >= MIN_BLUR_PX) BlurEffect(radius, radius, TileMode.Decal) else null
 }
 
-/** Lays the line out with no height and draws it one slot above, so the leaving line takes no room. */
-internal fun Modifier.above(): Modifier =
-    layout { measurable, constraints ->
-        val placeable = measurable.measure(constraints)
-        layout(placeable.width, 0) { placeable.place(0, -placeable.height) }
-    }
-
-/** How long a line takes to glide, change size or show; [MIST_MS] for the top line's dissolve. */
+/** How long a line takes to change size, or to open and close. */
 internal const val GLIDE_MS = 650
 
-// The top line's dissolve: EtherealStatus's MIST_MS, rise, blur and spread, so the two read as one family.
-private const val MIST_MS = 900
+// A leaving line's dissolve: EtherealStatus's MIST_MS, rise, blur and spread, so the two read as one family.
+private const val MIST_MS = 900L
 private val MIST_RISE = 22.dp
 private val MIST_BLUR = 14.dp
 private const val MIST_SPREAD = 0.08f

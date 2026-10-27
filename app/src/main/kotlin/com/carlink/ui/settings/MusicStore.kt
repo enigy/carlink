@@ -13,9 +13,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * 1.01. App-wide, not per iPhone.
  *
  * Lyrics: the music card's own switch in the pane's header ([com.carlink.ui.pane.LyricsToggle]), kept
- * here. On (the default): the pane looks the song up on LRCLIB ([com.carlink.media.LrcLib]) and shows
- * its words in time with it. Off: nothing leaves the car. How many lines it shows is dragged on the
- * card itself ([com.carlink.ui.pane.LyricsLines]), kept here too.
+ * here. On (the default): the pane shows the song's words from LRCLIB ([com.carlink.media.LrcLib]) in
+ * time with it. Off: the words are hidden, though still looked up (owner, 10-28). How many lines it
+ * shows is dragged on the card itself ([com.carlink.ui.pane.LyricsLines]), kept here too.
  */
 class MusicStore private constructor(
     context: Context,
