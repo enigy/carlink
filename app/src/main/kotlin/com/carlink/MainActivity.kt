@@ -422,7 +422,8 @@ class MainActivity : ComponentActivity() {
         // on its own onDestroy. Just drop the local reference here.
         carlinkManager?.release()
         mediaSessionManager = null
-        VehicleData.stop()
+        // VehicleData touches android.car, which only a head unit has.
+        if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) VehicleData.stop()
 
         logInfo("MainActivity destroyed", tag = "MAIN")
     }

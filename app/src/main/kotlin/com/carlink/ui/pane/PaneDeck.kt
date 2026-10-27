@@ -1,11 +1,7 @@
 package com.carlink.ui.pane
 
-/**
- * The cards the pane shows in turn, in swipe order: the route first, the music, the clock, and the
- * truck's speed and outside temperature last, a swipe past the clock so the rules that fall back to
- * the clock are unchanged.
- */
-enum class PaneCard { DIRECTIONS, MEDIA, CLOCK, VEHICLE }
+/** The cards the pane shows in turn, in swipe order: the route first, the music, the clock (with the truck's speed and outside temperature) last. */
+enum class PaneCard { DIRECTIONS, MEDIA, CLOCK }
 
 /** CarPlay showing [app] full on its side, put in front by the pane's title, and the card the pane stepped [to] beside it. */
 data class Aside(
@@ -26,13 +22,11 @@ object PaneDeck {
     fun pages(
         navigating: Boolean,
         hasTrack: Boolean,
-        hasVehicle: Boolean = false,
     ): List<PaneCard> =
         buildList {
             if (navigating) add(PaneCard.DIRECTIONS)
             if (hasTrack) add(PaneCard.MEDIA)
             add(PaneCard.CLOCK)
-            if (hasVehicle) add(PaneCard.VEHICLE)
         }
 
     /** A fresh pane's card: the music, else the route, else the clock. */

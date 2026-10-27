@@ -32,11 +32,4 @@ class VehicleStateTest {
         assertEquals(17, VehicleState(outsideC = 16.5f).outside(imperial = false))
         assertNull(VehicleState(speedMps = 1f).outside(imperial = true))
     }
-
-    @Test
-    fun `the card is dealt once any reading has come`() {
-        assertFalse(VehicleState(speedUnit = VehicleState.MPH).available)
-        assertTrue(VehicleState(outsideC = 0f).available)
-        assertTrue(VehicleState(speedMps = 0f).available)
-    }
 }

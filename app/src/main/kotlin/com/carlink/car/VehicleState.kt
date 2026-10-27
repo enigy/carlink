@@ -1,9 +1,29 @@
 package com.carlink.car
 
 import com.carlink.navigation.GuidanceText
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+/**
+ * The truck's latest readings, for the clock card. Plain Kotlin on purpose: [VehicleData], which
+ * writes them, touches `android.car`, which exists only on a head unit, so anything that just shows
+ * them (the clock card, its tests) reads them here and never loads that code.
+ */
+object VehicleReadings {
+    private val flow = MutableStateFlow(VehicleState())
+    val state: StateFlow<VehicleState> = flow.asStateFlow()
+
+    internal fun update(change: (VehicleState) -> VehicleState) = flow.update(change)
+
+    internal fun clear() {
+        flow.value = VehicleState()
+    }
+}
 
 /**
  * The truck's readings ([VehicleData]): null where none has come or the car refused. [displayMps] is
@@ -16,8 +36,6 @@ data class VehicleState(
     val outsideC: Float? = null,
     val speedUnit: Int? = null,
 ) {
-    val available: Boolean get() = speedMps != null || displayMps != null || outsideC != null
-
     /** Miles and °F, or kilometres and °C: the truck's own speed unit, else the locale's. */
     fun imperial(locale: Locale): Boolean =
         when (speedUnit) {

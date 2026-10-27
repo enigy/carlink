@@ -11,14 +11,11 @@ import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.navigation.TurnAlert
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 
 /**
- * The truck's own speed and outside temperature, from the car's property service: the pane's Vehicle
- * card shows them, and the cluster's turn alert times its flashing on the speed ([TurnAlert.onCarSpeed]).
+ * The truck's own speed and outside temperature, from the car's property service: the pane's clock
+ * card shows them ([VehicleReadings]), and the cluster's turn alert times its flashing on the speed
+ * ([TurnAlert.onCarSpeed]). Touches `android.car`: use it only behind a FEATURE_AUTOMOTIVE check.
  *
  * Permissions (AOSP car service manifest, android12L-release): `CAR_SPEED` is dangerous, in the
  * Location group, asked for at start-up by MainActivity; `CAR_EXTERIOR_ENVIRONMENT` and
@@ -30,13 +27,6 @@ import kotlinx.coroutines.flow.update
 object VehicleData {
     /** The one runtime permission: `CAR_SPEED` is dangerous. */
     const val SPEED_PERMISSION = "android.car.permission.CAR_SPEED"
-
-    private val stateFlow = MutableStateFlow(VehicleState())
-    val state: StateFlow<VehicleState> = stateFlow.asStateFlow()
-
-    /** Whether any reading has come; changes far less often than [state], so the pane's deck follows this. */
-    private val availableFlow = MutableStateFlow(false)
-    val available: StateFlow<Boolean> = availableFlow.asStateFlow()
 
     private var car: Car? = null
     private var props: CarPropertyManager? = null
@@ -80,8 +70,7 @@ object VehicleData {
         subscribed.clear()
         runCatching { car?.disconnect() }
         car = null
-        stateFlow.value = VehicleState()
-        availableFlow.value = false
+        VehicleReadings.clear()
     }
 
     private fun connect(
@@ -107,7 +96,7 @@ object VehicleData {
             val ok = runCatching { mgr.registerCallback(callback, id, rate) }.getOrDefault(false)
             if (ok) subscribed += id else logWarn("[VEHICLE] could not watch ${VehiclePropertyIds.toString(id)}", tag = Logger.Tags.ADAPTR)
         }
-        logInfo("[VEHICLE] ${stateFlow.value}", tag = Logger.Tags.ADAPTR)
+        logInfo("[VEHICLE] ${VehicleReadings.state.value}", tag = Logger.Tags.ADAPTR)
     }
 
     /** One reading, on the main thread. A reading the car marks unavailable or in error clears the field. */
@@ -116,14 +105,13 @@ object VehicleData {
         val f = (v.value as? Float)?.takeIf { ok }
         when (v.propertyId) {
             VehiclePropertyIds.PERF_VEHICLE_SPEED -> {
-                stateFlow.update { it.copy(speedMps = f) }
+                VehicleReadings.update { it.copy(speedMps = f) }
                 if (f != null) TurnAlert.onCarSpeed(f.toDouble(), SystemClock.elapsedRealtime())
             }
-            VehiclePropertyIds.PERF_VEHICLE_SPEED_DISPLAY -> stateFlow.update { it.copy(displayMps = f) }
-            VehiclePropertyIds.ENV_OUTSIDE_TEMPERATURE -> stateFlow.update { it.copy(outsideC = f) }
-            VehiclePropertyIds.VEHICLE_SPEED_DISPLAY_UNITS -> stateFlow.update { it.copy(speedUnit = (v.value as? Int)?.takeIf { ok }) }
+            VehiclePropertyIds.PERF_VEHICLE_SPEED_DISPLAY -> VehicleReadings.update { it.copy(displayMps = f) }
+            VehiclePropertyIds.ENV_OUTSIDE_TEMPERATURE -> VehicleReadings.update { it.copy(outsideC = f) }
+            VehiclePropertyIds.VEHICLE_SPEED_DISPLAY_UNITS -> VehicleReadings.update { it.copy(speedUnit = (v.value as? Int)?.takeIf { ok }) }
         }
-        availableFlow.value = stateFlow.value.available
     }
 
     /**

@@ -43,7 +43,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
-import com.carlink.car.VehicleData
 import com.carlink.logging.logInfo
 import com.carlink.media.NowPlayingState
 import com.carlink.media.SyncedLyrics
@@ -59,7 +58,7 @@ import kotlinx.coroutines.delay
  * frame but a split is declared, a small tab at the pane's edge brings the split back.
  *
  * The card: a call while the iPhone reports one; otherwise one of the deck ([PaneDeck]) — the route,
- * the music, the clock, the truck — swiped between ([PaneDeckPager]), the music up by default. Music puts its
+ * the music, the clock — swiped between ([PaneDeckPager]), the music up by default. Music puts its
  * album art behind the whole pane and sets the words and buttons light or dark to suit it.
  *
  * Sits ABOVE the SurfaceView and takes its own touches, so CarPlay — which still normalises touch over
@@ -128,8 +127,7 @@ private fun rememberDeck(
     session: Boolean,
 ): Deck {
     val nav by NavigationStateManager.state.collectAsState()
-    val vehicle by VehicleData.available.collectAsState()
-    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack, hasVehicle = vehicle)
+    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack)
     var shown by remember { mutableStateOf(PaneDeck.default(pages)) }
     var dealt by remember { mutableStateOf(pages) }
     // Now Playing put in front by the pane's title, and the card the pane stepped to; null when it is
@@ -239,7 +237,6 @@ private fun PaneHost(
                                 PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
                                 PaneCard.MEDIA -> MediaCard(state = media, onControl = carlinkManager::mediaControl, modifier = m, lyrics = lyrics, onWordsTop = { wordsTop = it })
                                 PaneCard.CLOCK -> ClockCard(modifier = m)
-                                PaneCard.VEHICLE -> VehicleCard(modifier = m)
                             }
                         }
                     }
@@ -301,7 +298,7 @@ private fun titleTap(
     }
 }
 
-/** The header's word for the card: the phone during a call (null card), the app playing (its own name), the route, this app, or the truck. */
+/** The header's word for the card: the phone during a call (null card), the app playing (its own name), the route, or this app. */
 private fun paneTitle(
     card: PaneCard?,
     appName: String?,
@@ -311,7 +308,6 @@ private fun paneTitle(
         PaneCard.MEDIA -> appName?.takeIf { it.isNotBlank() } ?: "Music"
         PaneCard.DIRECTIONS -> "Directions"
         PaneCard.CLOCK -> "Carlink3"
-        PaneCard.VEHICLE -> "Vehicle"
     }
 
 /** The card's name (tappable where [onTitle] is set), the lyrics switch on the music card ([lyricsButton]), and CarPlay full screen. */
