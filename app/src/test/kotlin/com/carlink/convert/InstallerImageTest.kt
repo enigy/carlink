@@ -64,7 +64,7 @@ class InstallerImageTest {
 
     @Test
     fun `a pinned image already downloaded is used from the cache once it checks out`() {
-        val pinned = PinnedImage("https://invalid.example/A15W_Update.img", image.size.toLong(), hash, "1.0.0")
+        val pinned = PinnedImage("v1.0.0", "https://invalid.example/A15W_Update.img", image.size.toLong(), hash)
         File(context.cacheDir, "ocbm").mkdirs()
         File(context.cacheDir, "ocbm/$hash.img").writeBytes(image)
         val store = InstallerImageStore(context, pinned = pinned, bench = false)

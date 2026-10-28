@@ -14,10 +14,11 @@ import java.security.MessageDigest
 
 /** The installer image an app release converts with: pinned, so a download is checked before a byte goes to the adapter. */
 data class PinnedImage(
+    /** The enigy/ocbm release tag it was published under. */
+    val tag: String,
     val url: String,
     val sizeBytes: Long,
     val sha256: String,
-    val version: String,
 )
 
 /**
@@ -28,7 +29,12 @@ data class PinnedImage(
  * `A15W_Update.img.sha256` beside it, checked the same way.
  */
 object InstallerImage {
-    /** The published image this release converts with; null until it is published (M7 needs the owner's OK). */
+    /**
+     * The published image this release converts with; null until it is published (M7, which needs the owner's OK).
+     * Publishing, as agreed with the Mac bench (10-28): turn on release immutability on enigy/ocbm before the first
+     * release; create the release as a draft, attach the image and its SHA-256, then publish; then pin its tag,
+     * asset URL, size and SHA-256 here, in a commit and an app release.
+     */
     val PINNED: PinnedImage? = null
 
     /** Where the one-page stick guide is, once it is published with the image (M7); a build with the switch off points at it. */
@@ -121,7 +127,7 @@ class InstallerImageStore(
             InstallerImage.checked(cached.readBytes(), p.sha256, p.sizeBytes).onSuccess { return Result.success(it) }
             cached.delete()
         }
-        logInfo("[CONVERT] downloading installer ${p.version} from ${p.url}", tag = Logger.Tags.ADAPTR)
+        logInfo("[CONVERT] downloading installer ${p.tag} from ${p.url}", tag = Logger.Tags.ADAPTR)
         val bytes = download(p, progress)
         return InstallerImage.checked(bytes, p.sha256, p.sizeBytes).onSuccess {
             cached.parentFile?.mkdirs()
