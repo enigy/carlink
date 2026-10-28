@@ -1450,7 +1450,7 @@ class CarlinkManager(
     /**
      * Settings → Adapter → Save Logs: pull the box's `/tmp/box.log` over the live link (it lives in
      * RAM on the box and is gone at power-off, so this is the only way to keep it after a drive) and
-     * save it next to this process's own logcat under Downloads/Carlink3. Returns where they went.
+     * save it next to this process's own logcat under Downloads/Carlink. Returns where they went.
      */
     suspend fun saveLogs(): Result<String> =
         withContext(Dispatchers.IO) {

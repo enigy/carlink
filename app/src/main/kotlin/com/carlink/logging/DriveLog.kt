@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Drive logging (Carlink2's file logging, extended to the box): while on, every INFO+ app line and
- * every line the box streams over CH_LOG is appended to ONE file in `Downloads/Carlink3/`, in
+ * every line the box streams over CH_LOG is appended to ONE file in `Downloads/Carlink/`, in
  * arrival order, each with its time. Written once a second and synced to storage every few
  * seconds, so a drive's log survives the truck being switched off without anyone pressing Save Logs.
  *
@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * moment called out on the road ("about 6:42, the cluster went blank") can be found afterwards.
  */
 object DriveLog {
-    private const val SUBDIR = "Carlink3"
+    private const val SUBDIR = "Carlink"
     private const val PREFIX = "carlink3-drive-"
     private const val MAX_FILE_BYTES = 20L * 1024 * 1024
     private const val RETENTION_DAYS = 7L
@@ -43,7 +43,7 @@ object DriveLog {
     @Volatile var recording = false
         private set
 
-    /** Where the current file is, for the settings row ("Downloads/Carlink3/…"). */
+    /** Where the current file is, for the settings row ("Downloads/Carlink/…"). */
     @Volatile var currentFile: String? = null
         private set
 
@@ -206,7 +206,7 @@ object DriveLog {
         runCatching { s.pfd?.close() }
     }
 
-    /** Remove this app's drive logs older than [RETENTION_DAYS] from Downloads/Carlink3. */
+    /** Remove this app's drive logs older than [RETENTION_DAYS], matched by name, so also those left in Downloads/Carlink3 before 1.12. */
     private fun pruneOld() {
         val ctx = appContext ?: return
         val cutoff = System.currentTimeMillis() / 1000 - RETENTION_DAYS * SECONDS_PER_DAY

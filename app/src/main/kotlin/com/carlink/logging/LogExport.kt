@@ -9,13 +9,13 @@ import java.io.File
 /**
  * Writes diagnostic files where the driver can get at them without adb.
  *
- * First choice is the shared Downloads collection (`Downloads/Carlink3/`), visible in the head
+ * First choice is the shared Downloads collection (`Downloads/Carlink/`), visible in the head
  * unit's Files app and to a USB stick copy; no permission is needed on API 29+. If the platform's
  * media provider refuses (some AAOS builds have no Downloads UI), the file goes to this app's own
  * external files directory instead, which `adb pull` can still reach.
  */
 object LogExport {
-    private const val SUBDIR = "Carlink3"
+    private const val SUBDIR = "Carlink"
 
     /** @return a short human-readable location of the saved file. */
     fun save(

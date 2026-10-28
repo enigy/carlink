@@ -5,7 +5,7 @@ import com.carlink.BuildConfig
 /**
  * Takes personal data out of log text before it is written to shared storage (security review M4).
  *
- * Drive logs and Save logs land in `Downloads/Carlink3`, which outlives the app and is readable by
+ * Drive logs and Save logs land in `Downloads/Carlink`, which outlives the app and is readable by
  * any app with all-files access, so every persisted line goes through [line]: app lines, the box's
  * CH_LOG stream and the pulled box files alike. Logcat is left alone. What goes:
  * - Bluetooth/Wi-Fi MACs keep their last two octets (`..25:10`), enough to tell phones apart.

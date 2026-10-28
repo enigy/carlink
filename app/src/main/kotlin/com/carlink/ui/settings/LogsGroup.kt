@@ -49,9 +49,9 @@ internal fun LogsGroup(
             title = "Record drive logs",
             subtitle =
                 if (live.driveLog) {
-                    "Recording to ${live.driveLogFile ?: "Downloads/Carlink3"}"
+                    "Recording to ${live.driveLogFile ?: "Downloads/Carlink"}"
                 } else {
-                    "Writes app and adapter logs to Downloads/Carlink3 as you drive, kept 7 days"
+                    "Writes app and adapter logs to Downloads/Carlink as you drive, kept 7 days"
                 },
             checked = live.driveLog,
             icon = Icons.Default.FiberManualRecord,
@@ -68,7 +68,7 @@ internal fun LogsGroup(
 }
 
 /**
- * Opens the head unit's Files app on Downloads/Carlink3, where Save logs and drive logs land, so
+ * Opens the head unit's Files app on Downloads/Carlink, where Save logs and drive logs land, so
  * the driver can select them and Copy to a USB drive without adb. Files has no way back to
  * Carlink3, so the same return notification as the bridge install is posted.
  */
@@ -82,7 +82,7 @@ private fun CopyToUsbRow() {
             if (failed) {
                 "This head unit's Files app couldn't be opened"
             } else {
-                "Opens Files at Downloads/Carlink3. Select the logs, then Copy to your USB drive. Parked only."
+                "Opens Files at Downloads/Carlink. Select the logs, then Copy to your USB drive. Parked only."
             },
         icon = Icons.Default.Usb,
     ) {
@@ -90,7 +90,7 @@ private fun CopyToUsbRow() {
             label = "Open Files",
             onClick = {
                 logWarn("[UI_ACTION] Copy logs to USB: open Files", tag = "UI")
-                val opened = FilesLauncher.openFolder(context, subdir = "Carlink3", logTag = "[LOGS]")
+                val opened = FilesLauncher.openFolder(context, subdir = "Carlink", logTag = "[LOGS]")
                 if (opened) BridgeSetupNotification.showCopyingLogs(context)
                 failed = !opened
             },
