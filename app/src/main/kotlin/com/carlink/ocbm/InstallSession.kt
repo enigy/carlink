@@ -52,6 +52,12 @@ class InstallSession(
         confirmTried = false
     }
 
+    /** A stock adapter is on USB: a go-back in flight has landed (or this is another adapter), so stop saying it is restarting. */
+    fun onStockAdapter() {
+        installState.value = null
+        goBackState.value = null
+    }
+
     /** A screen showing "Go back to stock CarPlay" is up: confirm the trial if [mayConfirmInstall] allows. */
     fun wayBackShown() {
         val mode = installState.value?.mode

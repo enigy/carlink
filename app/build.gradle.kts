@@ -77,8 +77,18 @@ android {
         }
     }
 
+    // Converting a stock adapter from the app (OCBM one-file install M5 part 3, decisions of 10-28): one
+    // build, behind a switch that is on in debug builds and off in release builds (Play and the release
+    // APK), which point a stock adapter at the stick guide instead. -Pcarlink.stockConversion=true|false
+    // overrides it for either; turning it on for Play is a commit here and a normal tagged release.
+    val stockConversion = (findProperty("carlink.stockConversion") as String?)?.toBoolean()
+
     buildTypes {
+        debug {
+            buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: true).toString())
+        }
         release {
+            buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: false).toString())
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true

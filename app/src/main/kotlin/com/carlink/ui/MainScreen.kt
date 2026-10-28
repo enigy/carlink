@@ -72,6 +72,7 @@ import com.carlink.ui.components.BoxStatusLine
 import com.carlink.ui.components.BridgeNotStartingPanel
 import com.carlink.ui.components.BridgeSetupPanel
 import com.carlink.ui.components.CarlinkDialog
+import com.carlink.ui.components.ConversionPanelOr
 import com.carlink.ui.components.ForestFogEffect
 import com.carlink.ui.components.InstallPanelOr
 import com.carlink.ui.components.LoadingStatusView
@@ -464,16 +465,18 @@ private fun LoadingOverlay(
                 // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
                 !bridge.installed -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
                 statusText.startsWith(BRIDGE_TROUBLE_PREFIX) -> BridgeNotStartingPanel(onOpenAppInfo = { CarlinkBridge.openAppInfo(context) })
-                // The adapter's one-file install (its trial and way back) before the words; the
-                // adapter's own projection mode starts the last step: it flips to WIRELESS_CP/WIRED_CP
-                // when CarPlay really begins, ahead of "Phone connected".
+                // A stock adapter's conversion, then the adapter's one-file install (its trial and way back),
+                // before the words; the adapter's own projection mode starts the last step: it flips to
+                // WIRELESS_CP/WIRED_CP when CarPlay really begins, ahead of "Phone connected".
                 else ->
-                    InstallPanelOr(carlinkManager) {
-                        LoadingStatusView(
-                            statusText = statusText,
-                            phoneConnected = LoadingSteps.projectionStarting(projectionMode),
-                            androidAuto = LoadingSteps.isAndroidAuto(projectionMode),
-                        )
+                    ConversionPanelOr(carlinkManager) {
+                        InstallPanelOr(carlinkManager) {
+                            LoadingStatusView(
+                                statusText = statusText,
+                                phoneConnected = LoadingSteps.projectionStarting(projectionMode),
+                                androidAuto = LoadingSteps.isAndroidAuto(projectionMode),
+                            )
+                        }
                     }
             }
         }

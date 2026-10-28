@@ -1,22 +1,8 @@
 package com.carlink.ui.components
 
 import android.content.Context
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.SettingsBackupRestore
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -24,22 +10,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.logging.logInfo
 import com.carlink.ocbm.GoBackResult
 import com.carlink.ocbm.InstallMode
 import com.carlink.ocbm.OneFileInstall
-import com.carlink.ui.theme.AutomotiveDimens
 
 // The OCBM one-file install on the connecting screen (handoff 10-28, plan page's mockup): the trial
 // with its way back to stock CarPlay, the restart after going back, and the finish, said once.
-
-private val PanelText = Color(0xFFDDE4E5) // the overlay's fixed light text colour
-private val WarnText = Color(0xFFF0A63A)
 
 /**
  * The connecting screen's panel for the adapter's one-file install, or [otherwise] when there is
@@ -134,33 +113,12 @@ private fun InstallPanel(
     primary: Pair<String, () -> Unit>? = null,
     wayBack: (() -> Unit)? = null,
 ) {
-    Column(
-        modifier =
-            Modifier
-                .widthIn(max = 960.dp)
-                .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(24.dp))
-                .padding(32.dp),
-    ) {
-        Text(text = title, style = MaterialTheme.typography.headlineMedium, color = PanelText)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(text = body, style = MaterialTheme.typography.bodyLarge, color = PanelText)
-        if (primary != null || wayBack != null) {
-            Spacer(modifier = Modifier.height(24.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                val padding = PaddingValues(horizontal = AutomotiveDimens.ButtonPaddingHorizontal, vertical = AutomotiveDimens.ButtonPaddingVertical)
-                primary?.let { (label, onClick) ->
-                    FilledTonalButton(onClick = onClick, modifier = Modifier.height(AutomotiveDimens.ButtonMinHeight), contentPadding = padding) {
-                        Text(text = label, style = MaterialTheme.typography.titleLarge)
-                    }
-                }
-                wayBack?.let { onClick ->
-                    OutlinedButton(onClick = onClick, modifier = Modifier.height(AutomotiveDimens.ButtonMinHeight), contentPadding = padding) {
-                        Text(text = "Go back to stock CarPlay", style = MaterialTheme.typography.titleLarge, color = WarnText)
-                    }
-                }
-            }
-        }
-    }
+    val actions =
+        listOfNotNull(
+            primary?.let { (label, onClick) -> PanelAction(label, onClick = onClick) },
+            wayBack?.let { PanelAction("Go back to stock CarPlay", PanelActionLook.DANGER, it) },
+        )
+    OverlayPanel(PanelContent(title, body, actions = actions))
 }
 
 /** Whether "Conversion finished" was acknowledged on this adapter ([serial]), so it is said once. */

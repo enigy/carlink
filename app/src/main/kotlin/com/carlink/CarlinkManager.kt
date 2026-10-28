@@ -24,6 +24,9 @@ import com.carlink.callui.CallState
 import com.carlink.car.AppFocusClaimer
 import com.carlink.car.DriveStateMonitor
 import com.carlink.cluster.ClusterNavigation
+import com.carlink.convert.InstallerImageStore
+import com.carlink.convert.StockAdapters
+import com.carlink.convert.StockConversion
 import com.carlink.device.KnownDevice
 import com.carlink.device.KnownDeviceSnapshot
 import com.carlink.device.KnownDeviceStore
@@ -194,6 +197,9 @@ class CarlinkManager(
 
         /** Without the bridge Carlink can't reach the adapter (it has no USB access of its own). */
         private const val INSTALL_BRIDGE_STATUS = "Install the Carlink USB bridge"
+
+        /** Under the conversion's panels, and on its own once the driver has dismissed them. */
+        private const val STOCK_ADAPTER_STATUS = "Adapter runs Carlinkit firmware — Carlink needs an OCBM adapter"
 
         /** How long a bridge permission prompt may stay unanswered before the start gives up. */
         private const val BRIDGE_PROMPT_WAIT_MS = 30_000L
@@ -512,6 +518,15 @@ class CarlinkManager(
 
     /** The adapter's OCBM one-file install: its trial state, the gated confirm and the way back to stock. */
     val oneFileInstall = InstallSession({ client }, scope, confirmAllowed = BuildConfig.INSTALL_CONFIRM)
+
+    /** A stock adapter (Carlinkit firmware) found instead: its conversion to OCBM, or the stick guide when the build's switch is off. */
+    val stockConversion =
+        StockConversion(
+            images = InstallerImageStore(context.applicationContext),
+            conversionOn = BuildConfig.STOCK_CONVERSION,
+            scope = scope,
+            searchAgain = { scope.launch { startIfDisconnected("looking for the adapter the conversion restarted") } },
+        )
 
     private val ocbmLog = ProbeLog.sub("ocbm")
     private val usbLog = ProbeLog.sub("usb")
@@ -1131,24 +1146,52 @@ class CarlinkManager(
             return null
         }
         if (released) return null
+        if (StockAdapters.isStock(dev.vendorId, dev.productId)) {
+            takeStockAdapter(dev)
+            return null
+        }
+        stockConversion.reset() // an OCBM adapter: a converted one back in its trial, or another
+        return openThroughBridge(dev.deviceName)
+    }
+
+    /** Bind the bridge, hold USB permission for [name] and open it; null (reported) on any failure. */
+    private suspend fun openThroughBridge(name: String): RawBulkTransport? {
         val bridge = bindRawStreamBridge() ?: return null
-        if (!awaitBridgePermission(bridge, dev.deviceName)) {
+        if (!awaitBridgePermission(bridge, name)) {
             // The bridge asks once per attach and a denial sticks until the adapter re-enumerates.
             handleFailedStart("USB permission denied — unplug and replug the adapter")
             return null
         }
-        return openViaBridge(bridge, dev.deviceName)
+        return openViaBridge(bridge, name)
     }
 
-    /** The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s. */
+    /**
+     * The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s: the OCBM
+     * adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the conversion.
+     */
     private suspend fun awaitAdapterListed(): android.hardware.usb.UsbDevice? {
         var attempts = 0
         while (attempts < USB_FIND_ATTEMPTS) {
-            BridgeBulkTransport.findAdapter(context)?.let { return it }
+            (BridgeBulkTransport.findAdapter(context) ?: StockAdapters.find(context))?.let { return it }
             attempts++
             delay(USB_WAIT_PERIOD_MS)
         }
         return null
+    }
+
+    /**
+     * A stock adapter instead of an OCBM one. Carlink can't run a session on Carlinkit firmware, so no
+     * reconnects follow; the adapter goes to [stockConversion], which opens it (through the bridge, like
+     * the OCBM adapter) only when it converts it, and the connecting screen shows its panel.
+     */
+    private suspend fun takeStockAdapter(dev: android.hardware.usb.UsbDevice) {
+        val id = StockAdapters.usbId(dev.vendorId, dev.productId)
+        logInfo("[CONVERT] $id is a stock adapter (Carlinkit firmware)", tag = Logger.Tags.USB)
+        cancelReconnect()
+        oneFileInstall.onStockAdapter()
+        if (stockConversion.claim(id)) stockConversion.attach(openThroughBridge(dev.deviceName) ?: return, id)
+        setState(State.DISCONNECTED)
+        setStatusText(STOCK_ADAPTER_STATUS)
     }
 
     /** Bind the bridge and require the raw-stream API; reports the failure and returns null otherwise. */
@@ -2063,6 +2106,7 @@ class CarlinkManager(
         scope.cancel()
 
         stop()
+        stockConversion.reset()
 
         releaseAudio()
 
