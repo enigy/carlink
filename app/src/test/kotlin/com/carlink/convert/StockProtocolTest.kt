@@ -91,6 +91,16 @@ class StockProtocolTest {
         assertEquals("1314:2d00", StockAdapters.usbId(0x1314, 0x2d00))
     }
 
+    @Test
+    fun `the SendFile name is a bare basename, so the stock updater's tmp prefix finds it`() {
+        // update_box_ota.sh tests /tmp/$1; an absolute path became /tmp//tmp/... and the install never
+        // started (bench, 28 Oct). Keep it a basename whose name holds "Update.img".
+        assertFalse("must not be an absolute path", InstallerImage.SEND_PATH.startsWith("/"))
+        assertFalse("must be a bare name, not a path", InstallerImage.SEND_PATH.contains("/"))
+        assertTrue("ARMadb-driver triggers on \"Update.img\"", InstallerImage.SEND_PATH.contains("Update.img"))
+        assertEquals("A15W_Update.img", InstallerImage.SEND_PATH)
+    }
+
     private fun frame(
         type: Int,
         payload: String,

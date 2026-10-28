@@ -45,11 +45,16 @@ object InstallerImage {
     const val FILE_NAME = "A15W_Update.img"
 
     /**
-     * Where SendFile puts it on the adapter. ARMadb-driver runs `/script/update_box_ota.sh <path>` for a
-     * SendFile whose name holds "Update.img" (Carlink2's analysis of the firmware, firmware_update.md);
-     * the bench is still to confirm it on 2025.10.15.1127.
+     * The SendFile name that starts the stock updater — a bare basename, not an absolute path.
+     *
+     * ARMadb-driver stages every SendFile upload in `/tmp` and, when the name holds "Update.img", runs
+     * `/script/update_box_ota.sh <that name> &`. `update_box_ota.sh` tests `/tmp/$1`, so it prepends
+     * `/tmp/` to the name it is given (lvalen's firmware_update.md). On the bench (28 Oct) an absolute
+     * `/tmp/A15W_Update.img` landed in `/tmp` but the updater then looked for `/tmp//tmp/A15W_Update.img`
+     * and stopped, changing nothing. The bare name makes both the staged file and the updater's `/tmp/$1`
+     * resolve to `/tmp/A15W_Update.img`. The bench is still to confirm the install starts with it.
      */
-    const val SEND_PATH = "/tmp/A15W_Update.img"
+    const val SEND_PATH = FILE_NAME
 
     /** The first 64-hex-digit word of a `.sha256` file, lower-cased; null when there is none. */
     fun hashIn(sidecar: String): String? =
