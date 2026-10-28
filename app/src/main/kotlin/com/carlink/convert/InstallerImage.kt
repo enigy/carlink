@@ -33,7 +33,9 @@ object InstallerImage {
      * The published image this release converts with; null until it is published (M7, which needs the owner's OK).
      * Publishing, as agreed with the Mac bench (10-28): turn on release immutability on enigy/ocbm before the first
      * release; create the release as a draft, attach the image and its SHA-256, then publish; then pin its tag,
-     * asset URL, size and SHA-256 here, in a commit and an app release.
+     * asset URL, size and SHA-256 here, in a commit and an app release. Pin an image built from enigy/ocbm
+     * 8d772cb or newer: from there a version undone with Go back installs again over USB with no OCBM_RETRY,
+     * so Convert works again with the same image.
      */
     val PINNED: PinnedImage? = null
 

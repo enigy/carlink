@@ -26,7 +26,7 @@ class StockConversionTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val images = FakeImages("an OCBM installer".toByteArray())
     private val searches = AtomicInteger()
-    private val timing = StockConversion.Timing(readMs = 400, heartbeatMs = 50, installMs = 600, restartMs = 700, searchMs = 200)
+    private val timing = StockConversion.Timing(readMs = 400, heartbeatMs = 50, deadlineMs = 700, searchMs = 200)
     private val conversion = StockConversion(images, conversionOn = true, scope = scope, searchAgain = { searches.incrementAndGet() }, timing = timing)
     private val adapter = FakeTransport()
 
@@ -127,21 +127,32 @@ class StockConversionTest {
         back.feed(frame(0xCC, "2025.10.15.1127CAY") + frame(0x19, """{"productType":"A15W"}"""))
         val failed = awaitPhase<ConversionPhase.Failed>()
         assertEquals("The adapter didn't convert", failed.title)
+        assertTrue("the adapter is let go", quietAfter(back))
         conversion.dismiss()
-        assertEquals("the link is still held", ConversionPhase.Declined, conversion.phase.value)
+        assertEquals(ConversionPhase.Declined, conversion.phase.value)
+        assertFalse("no conversion is offered again", conversion.claim("1314:1520"))
     }
 
     @Test
-    fun `an adapter that never restarts after the installer is reported`() {
+    fun `a refusal is an adapter that never restarts, so the deadline says nothing changed and lets it go`() {
         attachAndAnswer()
         awaitPhase<ConversionPhase.Offered>()
         conversion.convert()
         awaitPhase<ConversionPhase.Installing>()
-        assertEquals("The adapter didn't convert", awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000).title)
+        val failed = awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000)
+        assertEquals("The conversion didn't happen", failed.title)
+        assertEquals("Nothing on the adapter changed. Unplug it and plug it back in to use stock CarPlay.", failed.body)
+        assertTrue("the adapter is let go", quietAfter(adapter))
+        assertEquals("nothing searched while it stayed", 0, searches.get())
+        conversion.dismiss()
+        assertEquals(ConversionPhase.Declined, conversion.phase.value)
+        assertFalse("replugged: no conversion is offered again", conversion.claim("1314:1520"))
+        conversion.reset() // an OCBM adapter connected
+        assertTrue("until an OCBM adapter has connected", conversion.claim("1314:1520"))
     }
 
     @Test
-    fun `an adapter that never comes back is reported, and OK looks for it again`() {
+    fun `an adapter that never comes back is reported, and nothing is offered again`() {
         attachAndAnswer()
         awaitPhase<ConversionPhase.Offered>()
         conversion.convert()
@@ -151,8 +162,24 @@ class StockConversionTest {
         assertTrue("searched while waiting", searches.get() >= 2)
         val before = searches.get()
         conversion.dismiss()
-        assertEquals(ConversionPhase.Idle, conversion.phase.value)
-        assertEquals(before + 1, searches.get())
+        assertEquals(ConversionPhase.Declined, conversion.phase.value)
+        assertEquals("no search after OK", before, searches.get())
+        assertFalse(conversion.claim("1314:1520"))
+    }
+
+    @Test
+    fun `the deadline runs from the send through the restart, not anew when the adapter leaves`() {
+        attachAndAnswer()
+        awaitPhase<ConversionPhase.Offered>()
+        conversion.convert()
+        awaitPhase<ConversionPhase.Installing>()
+        Thread.sleep(500)
+        val leftAt = System.currentTimeMillis()
+        adapter.killLink()
+        val failed = awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000)
+        val after = System.currentTimeMillis() - leftAt
+        assertEquals("The adapter hasn't come back", failed.title)
+        assertTrue("failed $after ms after it left, inside the 700 ms from the send", after < 600)
     }
 
     @Test
@@ -202,6 +229,14 @@ class StockConversionTest {
         attach()
         adapter.feed(frame(0xCC, version + "\u0000"))
         adapter.feed(frame(0x19, """{"uuid":"651e","productType":"A15W"}"""))
+    }
+
+    /** True once nothing more is written to [t]: its heartbeat stopped, so the link was let go. */
+    private fun quietAfter(t: FakeTransport): Boolean {
+        Thread.sleep(150) // the close runs on another thread
+        t.written.clear()
+        Thread.sleep(250) // five heartbeats' time
+        return t.written.isEmpty()
     }
 
     private inline fun <reified T : ConversionPhase> awaitPhase(timeoutMs: Long = 1_000): T {
