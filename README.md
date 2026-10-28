@@ -4,7 +4,7 @@ The Carlink app makes the Apple Carplay experience on a 2024+ Chevy Silverado or
 
 It also has a Media side pane that is much more functional and appealing than the Carplay NowPlaying Widget.  This media side pane also includes the ability to display lyrics, for those trips that your passengers need assistance with! ;)
 
-**NOTE**: this Carlink is the successor to [Carlink-legacy](https://github.com/enigy/Carlink-legacy) app, which stays on stock/v5 Carlinkit adapter firmware and is unchanged by this project.
+**NOTE**: this Carlink is the successor to [Carlink-legacy](https://github.com/enigy/Carlink-legacy) (formerly Carlink2) app, which stays on stock/v5 Carlinkit adapter firmware and is unchanged by this project.
 
 **Media Pane Enabled:**
 
