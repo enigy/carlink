@@ -202,16 +202,16 @@ jobs:
           code=$(sed -n 's/^ *val appVersionCode = \([0-9][0-9]*\)$/\1/p' app/build.gradle.kts)
           bridge=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' bridge/build.gradle.kts)
           mkdir -p dist sideload
-          cp "$BUILD_ROOT/app/outputs/bundle/sideloadRelease/app-sideload-release.aab" "dist/carlink3-v$code.aab"
+          cp "$BUILD_ROOT/app/outputs/bundle/sideloadRelease/app-sideload-release.aab" "dist/carlink-v$code.aab"
           if [ "$BUILD_BRIDGE" = "true" ]; then
-            cp "$BUILD_ROOT/bridge/outputs/apk/release/bridge-release.apk" "dist/carlink3_bridge-$bridge.apk"
-            echo "::warning title=USB bridge rebuilt::Commit dist/carlink3_bridge-$bridge.apk as app/carlink3_bridge.apk and update its version and SHA-256 in README.md, so later releases reuse it."
+            cp "$BUILD_ROOT/bridge/outputs/apk/release/bridge-release.apk" "dist/carlink_bridge-$bridge.apk"
+            echo "::warning title=USB bridge rebuilt::Commit dist/carlink_bridge-$bridge.apk as app/carlink3_bridge.apk and update its version and SHA-256 in README.md, so later releases reuse it."
           else
-            cp app/carlink3_bridge.apk "dist/carlink3_bridge-$bridge.apk"
+            cp app/carlink3_bridge.apk "dist/carlink_bridge-$bridge.apk"
           fi
-          cp "$BUILD_ROOT/app/outputs/apk/sideload/release/app-sideload-release.apk" "sideload/carlink3-v$code.apk"
+          cp "$BUILD_ROOT/app/outputs/apk/sideload/release/app-sideload-release.apk" "sideload/carlink-v$code.apk"
           cp "$BUILD_ROOT/app/outputs/mapping/sideloadRelease/mapping.txt" "dist/mapping-v$code.txt"
-          echo "aab=dist/carlink3-v$code.aab" >> "$GITHUB_OUTPUT"
+          echo "aab=dist/carlink-v$code.aab" >> "$GITHUB_OUTPUT"
           echo "mapping=dist/mapping-v$code.txt" >> "$GITHUB_OUTPUT"
           echo "code=$code" >> "$GITHUB_OUTPUT"
           sha256sum dist/*.aab dist/*.apk sideload/*.apk
@@ -219,7 +219,7 @@ jobs:
       - name: Keep the files as a workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: carlink3-v${{ steps.out.outputs.code }}
+          name: carlink-v${{ steps.out.outputs.code }}
           path: |
             dist/
             sideload/
@@ -238,16 +238,16 @@ jobs:
           track: ${{ inputs.track || 'internal' }}
           status: completed
 
-      # The release is titled from the annotated tag: `git tag -a v3 -m "Carlink3 v3: what changed"`
-      # gives "Carlink3 v3: what changed" as the title and any further tag-message lines as the
-      # body, above the generated commit list. A lightweight tag falls back to "Carlink3 vNNN".
+      # The release is titled from the annotated tag: `git tag -a v3 -m "Carlink v3: what changed"`
+      # gives "Carlink v3: what changed" as the title and any further tag-message lines as the
+      # body, above the generated commit list. A lightweight tag falls back to "Carlink vNNN".
       - name: Title the release from the tag message
         if: github.ref_type == 'tag'
         id: tagmeta
         run: |
           subject=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")
           body=$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME")
-          [ -n "$subject" ] || subject="Carlink3 $GITHUB_REF_NAME"
+          [ -n "$subject" ] || subject="Carlink $GITHUB_REF_NAME"
           echo "title=$subject" >> "$GITHUB_OUTPUT"
           { echo 'body<<EOF'; printf '%s\n' "$body"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
 
