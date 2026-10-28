@@ -19,8 +19,8 @@ enum class PaneLayout(
     val summary: String,
 ) : Labelled {
     FULL("full", "Full screen", "CarPlay uses the whole panel"),
-    MEDIA_RIGHT("right", "Media on right", "CarPlay left, Carlink3 pane right"),
-    MEDIA_LEFT("left", "Media on left", "Carlink3 pane left, CarPlay right"),
+    MEDIA_RIGHT("right", "Media on right", "CarPlay left, Carlink pane right"),
+    MEDIA_LEFT("left", "Media on left", "Carlink pane left, CarPlay right"),
     ;
 
     val split: Boolean get() = this != FULL

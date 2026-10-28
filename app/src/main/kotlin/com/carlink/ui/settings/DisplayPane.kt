@@ -148,7 +148,7 @@ private fun LayoutChoice(onApply: (LayoutConfig) -> Unit) {
             SettingsGroup(modifier = Modifier.widthIn(max = 760.dp)) {
                 ChoiceSetting(
                     title = "Pane width",
-                    subtitle = "How much of the panel Carlink3's pane takes. CarPlay keeps the rest.",
+                    subtitle = "How much of the panel Carlink's pane takes. CarPlay keeps the rest.",
                     options = PaneWidth.entries,
                     selected = config.width,
                     onSelect = {
