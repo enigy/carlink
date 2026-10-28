@@ -147,7 +147,7 @@ The app version, the adapter's name and mode, and its health: Bluetooth, Wi-Fi, 
 
 First, the adapter needs lvalen91's OCBM userspace, installed per his documentation (`ocbm/docs/ops/`). Then:
 
-1. Install Carlink from Google Play.
+1. Install Carlink3 from Google Play.
 2. Copy [`app/carlink_bridge.apk`](app/carlink_bridge.apk) (Carlink USB Bridge 1.0.5) to a USB drive. SHA-256: `d5a4f48cd2dc668caa1e97cee0fe63334a574c6c7e3b0e11695aa45e930f1e79`
 3. While parked, open Carlink. It shows **USB bridge not installed** with an **Open Files** button that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK. If asked, allow Files to install apps.
 4. When the install finishes, tap the Carlink notification (or press Home and open Carlink).
