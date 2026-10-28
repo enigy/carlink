@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" role="img" aria-label="CarPlay reaches the head unit, cluster and HUD through one USB bridge" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="path-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#8c959f"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="759" height="339" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="24" y="34" font-size="15" font-weight="600" fill="#1f2328">CarPlay reaches the head unit, cluster and HUD through one USB bridge</text>
+  <g fill="none" stroke="#8c959f" stroke-width="1.25">
+    <path d="M176 128H210" marker-start="url(#path-arrow)" marker-end="url(#path-arrow)"/>
+    <path d="M362 128H396" marker-start="url(#path-arrow)" marker-end="url(#path-arrow)"/>
+    <path d="M548 128H582" marker-start="url(#path-arrow)" marker-end="url(#path-arrow)"/>
+    <path d="M658 164V196H132V228" marker-end="url(#path-arrow)"/>
+    <path d="M380 196V228" marker-end="url(#path-arrow)"/>
+    <path d="M628 196V228" marker-end="url(#path-arrow)"/>
+  </g>
+  <g font-size="11.5" fill="#59636e" text-anchor="middle">
+    <text x="193" y="80">wireless</text>
+    <text x="379" y="80">USB</text>
+    <text x="565" y="80">socket</text>
+  </g>
+  <g fill="none" stroke="#8c959f" stroke-width="1.25">
+    <rect x="24" y="92" width="152" height="72" rx="8"/>
+    <rect x="210" y="92" width="152" height="72" rx="8"/>
+    <rect x="396" y="92" width="152" height="72" rx="8"/>
+    <rect x="582" y="92" width="152" height="72" rx="8"/>
+    <rect x="24" y="228" width="216" height="88" rx="8"/>
+    <rect x="272" y="228" width="216" height="88" rx="8"/>
+  </g>
+  <rect x="520" y="228" width="216" height="88" rx="8" fill="#0969da" fill-opacity="0.12" stroke="#0969da" stroke-width="2"/>
+  <g text-anchor="middle">
+    <text x="100" y="116" font-weight="600" fill="#1f2328">iPhone</text>
+    <text x="100" y="132" font-size="11.5" fill="#59636e">Wireless CarPlay</text>
+    <text x="100" y="148" font-size="11.5" fill="#59636e">with route guidance</text>
+    <text x="286" y="116" font-weight="600" fill="#1f2328">Carlinkit adapter</text>
+    <text x="286" y="132" font-size="11.5" fill="#59636e">CPC200-CCPA</text>
+    <text x="286" y="148" font-size="11.5" fill="#59636e">on lvalen91’s OCBM</text>
+    <text x="472" y="116" font-weight="600" fill="#1f2328">USB bridge</text>
+    <text x="472" y="132" font-size="11.5" fill="#59636e">Holds USB permission</text>
+    <text x="472" y="148" font-size="11.5" fill="#59636e">relays raw stream</text>
+    <text x="658" y="116" font-weight="600" fill="#1f2328">Carlink app</text>
+    <text x="658" y="132" font-size="11.5" fill="#59636e">Decodes HEVC video;</text>
+    <text x="658" y="148" font-size="11.5" fill="#59636e">runs touch, audio, mic</text>
+    <text x="132" y="252" font-weight="600" fill="#1f2328">Head unit screen</text>
+    <text x="132" y="268" font-size="11.5" fill="#59636e">CarPlay video and touch</text>
+    <text x="132" y="284" font-size="11.5" fill="#59636e">Settings, light or dark</text>
+    <text x="380" y="252" font-weight="600" fill="#1f2328">Media card and wheel</text>
+    <text x="380" y="268" font-size="11.5" fill="#59636e">AAOS media card with</text>
+    <text x="380" y="284" font-size="11.5" fill="#59636e">album art, plus Next and</text>
+    <text x="380" y="300" font-size="11.5" fill="#59636e">Back on the steering wheel</text>
+    <text x="628" y="252" font-weight="600" fill="#1f2328">Cluster and HUD</text>
+    <text x="628" y="268" font-size="11.5" fill="#1f2328">Next turn, distance, road,</text>
+    <text x="628" y="284" font-size="11.5" fill="#1f2328">lanes and the turn alert,</text>
+    <text x="628" y="300" font-size="11.5" fill="#1f2328">drawn by GM’s Templates Host</text>
+  </g>
+</svg>
