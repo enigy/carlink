@@ -233,7 +233,7 @@ internal fun AutoConnectRow(
             title = "Connect automatically",
             subtitle =
                 if (checked) {
-                    "The adapter calls the phones above, in order, when the truck starts"
+                    "The adapter calls the phones above, in order, when the vehicle starts"
                 } else {
                     "The adapter waits for a phone to connect on its own"
                 },

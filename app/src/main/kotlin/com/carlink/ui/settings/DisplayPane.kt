@@ -270,7 +270,7 @@ private fun DriveSideChoice() {
                 subtitle =
                     forWhom +
                         if (limit) {
-                            "CarPlay hides its keyboard and shortens lists while the truck moves."
+                            "CarPlay hides its keyboard and shortens lists while the vehicle moves."
                         } else {
                             "Off: CarPlay keeps its keyboard and full lists on the move, for a passenger. The driver should not use them."
                         },
