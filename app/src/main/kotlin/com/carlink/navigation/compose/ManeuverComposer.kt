@@ -5,7 +5,6 @@ import android.graphics.Path
 import com.carlink.navigation.Iap2ManeuverData
 import kotlin.math.abs
 import kotlin.math.cos
-import kotlin.math.max
 import kotlin.math.sin
 
 /**
@@ -136,53 +135,39 @@ internal object ManeuverComposer {
     private const val SPOKE_HALFWIDTH = 3.3f
 
     /**
-     * Compose a roundabout icon. The white exit **arrow** is a pre-baked MapKit core-primitive
-     * render at the nearest 10° (36-way) — see [AppleManeuverPaths.roundaboutPaths]; finer than
-     * Apple's own 8-way CarPlay-card snap. The grey **ring + spokes** is built here at runtime
-     * from the REAL junction arms in `entryAngles`, so it reflects this specific roundabout
-     * instead of a generic schematic.
+     * Compose a roundabout icon with every arm where CarPlay's own card draws it ([RoundaboutSlots]:
+     * the nearest of eight 45° slots; owner 10-28). The white exit **arrow** is MapKit's own path
+     * for that slot ([AppleManeuverPaths.roundaboutPaths]); the grey **ring + spokes** is built
+     * here from the junction arms in `entryAngles`, each in its slot.
      *
      * Wire conventions (live-verified 2026-05-29, 3-agent):
      * - `exitAngle` (0x000b) = driver-relative degrees: 0°=straight, +90°=right, −90°=left,
-     *   ±180°=back. Fed straight to [AppleManeuverPaths.roundaboutPaths] (no rotation).
+     *   ±180°=back. At a roundabout it is the map's raw angle (76° for a square right exit).
      * - `entryAngles` (0x000a, multi) = the OTHER arms in the same driver-relative frame. We
      *   draw a grey spoke at each. We do NOT draw a spoke at the entry (180°, shown by the
-     *   arrow's stem) or the exit (shown by the arrow head) — so there is no grey stub to
-     *   diverge from the fine arrow. Note iAP2 often omits arms (incomplete list), so spokes
-     *   show only the arms actually reported.
-     * - `exitOrdinal` = cpType−27 (28→1st, 29→2nd, …); 6/7 default to 2.
+     *   arrow's stem) or the exit (shown by the arrow head). Note iAP2 often omits arms
+     *   (incomplete list), so spokes show only the arms actually reported.
+     * - The exit number (cpType−27) does not change the drawing: the arrow follows the angle.
      *
      * Lookup miss for the arrow → [NoSuchElementException]; ComposedIconStore catches it and
      * ManeuverMapper falls through to the static AVD safety net.
      */
     private fun roundabout(data: Iap2ManeuverData): ComposedIcon {
-        val exitOrdinal = when (data.cpManeuverType) {
-            in 28..46 -> data.cpManeuverType - 27
-            else -> 2
-        }
-        val nArms = max(data.entryAngles.size + 1, exitOrdinal + 1)
-        val clampedExitOrdinal = exitOrdinal.coerceIn(1, (nArms - 1).coerceAtLeast(1))
+        // Straight through when the maneuver carries no exit angle.
+        val exitSlot = RoundaboutSlots.snap(data.exitAngle ?: 0)
+        val arrow = RoundaboutSlots.arrow(exitSlot)
+            ?: throw NoSuchElementException("no roundabout arrow for exit=${data.exitAngle} slot=$exitSlot cp=${data.cpManeuverType}")
 
-        val relExitDeg: Double = data.exitAngle?.let { exit ->
-            // Apple's exitAngle is already driver-relative. Normalize to (-180, +180].
-            ((exit.toDouble() % 360.0) + 540.0) % 360.0 - 180.0
-        } ?: 0.0  // straight-through default if no exit angle
-
-        val paths = AppleManeuverPaths.roundaboutPaths(nArms, clampedExitOrdinal, relExitDeg)
-            ?: throw NoSuchElementException(
-                "no roundaboutPaths for nArms=$nArms ord=$clampedExitOrdinal exitDeg=$relExitDeg cp=${data.cpManeuverType}"
-            )
-
-        val foreground = SvgPathParser.parse(paths.arrow).apply {
+        val foreground = SvgPathParser.parse(arrow).apply {
             fillType = Path.FillType.WINDING
         }
-        val background = buildRingAndSpokes(data.entryAngles)
+        val background = buildRingAndSpokes(RoundaboutSlots.arms(data.entryAngles, exitSlot))
         return ComposedIcon(background = background, foreground = foreground)
     }
 
     /**
-     * Build the grey ring + per-arm spokes from the real junction arm angles (driver-relative
-     * degrees). App icon frame: center (28,28), y-DOWN so 0°=up, +90°=right (+x), −90°=left.
+     * Build the grey ring + per-arm spokes at the arms' slots (driver-relative degrees). App icon
+     * frame: center (28,28), y-DOWN so 0°=up, +90°=right (+x), −90°=left.
      *
      * The ring donut and the spoke quads overlap (spokes start inside the ring band so they
      * connect cleanly). They MUST be merged into a single outline via [Path.op] UNION before
@@ -191,13 +176,13 @@ internal object ManeuverComposer {
      * crosses each spoke (visible as a notch/clip at the ring radius). Unioning removes all
      * internal edges so AA only runs on the true boundary.
      */
-    private fun buildRingAndSpokes(entryAngles: List<Int>): Path {
+    private fun buildRingAndSpokes(armSlots: List<Int>): Path {
         val result = Path().apply {
             fillType = Path.FillType.EVEN_ODD
             addCircle(RING_CX, RING_CX, RING_OUTER, Path.Direction.CW)
             addCircle(RING_CX, RING_CX, RING_INNER, Path.Direction.CW) // EVEN_ODD → donut hole
         }
-        for (deg in entryAngles) {
+        for (deg in armSlots) {
             val a = Math.toRadians(deg.toDouble())
             val ux = sin(a).toFloat(); val uy = (-cos(a)).toFloat()   // radial (up = −y)
             val px = cos(a).toFloat(); val py = sin(a).toFloat()      // perpendicular
