@@ -285,6 +285,9 @@ object Ocbm {
     const val CAP_PHONE_POLICY: Int = 0x0000_0040
     const val CAP_PAIR_WINDOW: Int = 0x0000_0080
 
+    /** The box takes [MGMT_INSTALL_CONFIRM] and [MGMT_GO_STOCK] and reports `"install"` in MGMT_INFO. */
+    const val CAP_INSTALL: Int = 0x0000_0100
+
     fun capsString(caps: Int): String {
         val bits = ArrayList<String>()
         if (caps and CAP_CONSOLE != 0) bits.add("CONSOLE")
@@ -295,6 +298,7 @@ object Ocbm {
         if (caps and CAP_ETH != 0) bits.add("ETH")
         if (caps and CAP_PHONE_POLICY != 0) bits.add("PHONE_POLICY")
         if (caps and CAP_PAIR_WINDOW != 0) bits.add("PAIR_WINDOW")
+        if (caps and CAP_INSTALL != 0) bits.add("INSTALL")
         return if (bits.isEmpty()) "none" else bits.joinToString("|")
     }
 
@@ -308,6 +312,20 @@ object Ocbm {
     const val MGMT_SET_POLICY: Byte = 0x07
     const val MGMT_CONNECT_DEVICE: Byte = 0x08
     const val MGMT_PAIR_WINDOW: Byte = 0x09
+
+    /**
+     * The one-file install's trial becomes `confirmed`; when this session ends the box removes the
+     * Carlinkit stack (`final`). Send only while the app shows the way back ([MGMT_GO_STOCK]) for the
+     * rest of the session. MGMT_ACK status 0 = confirmed (or already `confirmed`/`final`), 1 = no
+     * one-file install on this box.
+     */
+    const val MGMT_INSTALL_CONFIRM: Byte = 0x0A
+
+    /**
+     * While stock is still on the box (`trial` or `confirmed`): ACK status 0, then the box goes back to
+     * stock Carlinkit firmware and restarts (it returns as 1314:1520). Status 1 = nothing to go back to.
+     */
+    const val MGMT_GO_STOCK: Byte = 0x0B
     const val MGMT_INFO: Byte = 0x81.toByte()
     const val MGMT_ACK: Byte = 0x82.toByte()
 

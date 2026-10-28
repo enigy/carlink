@@ -48,6 +48,7 @@ internal fun AdapterPane(
                         Text(rememberAppVersion(), style = SettingsStyle.RowTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+                InstallGroup(carlinkManager)
             }
         }
     }

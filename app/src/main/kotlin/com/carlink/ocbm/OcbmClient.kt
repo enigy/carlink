@@ -80,6 +80,9 @@ class OcbmClient(
     /** The box gates new Bluetooth pairing behind MGMT_PAIR_WINDOW (security plan 2026-10-21 §3). */
     val supportsPairWindow: Boolean get() = (caps and Ocbm.CAP_PAIR_WINDOW) != 0
 
+    /** The box is a one-file install that takes MGMT_INSTALL_CONFIRM / MGMT_GO_STOCK (enigy/ocbm 153df7f). */
+    val supportsInstall: Boolean get() = (caps and Ocbm.CAP_INSTALL) != 0
+
     /** Config blob last sent with CT_SUBSCRIBE; re-sent verbatim if the box drops us. */
     @Volatile private var configBlob: ByteArray = ByteArray(0)
 

@@ -57,6 +57,7 @@ import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.CarPlayDock
 import com.carlink.ocbm.HostInstanceNonce
+import com.carlink.ocbm.InstallSession
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
 import com.carlink.ocbm.OcbmClient
@@ -508,6 +509,9 @@ class CarlinkManager(
     // cheap — neither holds a Context or native resources beyond the bridge's socket.
     private var transport: RawBulkTransport? = null
     private var client: OcbmClient? = null
+
+    /** The adapter's OCBM one-file install: its trial state, the gated confirm and the way back to stock. */
+    val oneFileInstall = InstallSession({ client }, scope, confirmAllowed = BuildConfig.INSTALL_CONFIRM)
 
     private val ocbmLog = ProbeLog.sub("ocbm")
     private val usbLog = ProbeLog.sub("usb")
@@ -1298,6 +1302,7 @@ class CarlinkManager(
         c.startHeartbeat()
         armBoxLogStream(c)
         syncPhonePolicyAfterSubscribe()
+        oneFileInstall.onSubscribed()
 
         setStatusText("Waiting for phone...")
     }
@@ -1394,6 +1399,7 @@ class CarlinkManager(
         cancelDelayedKeyframe()
         cancelReconnect()
         OcbmNavigationFeed.clear() // Carlink: drop the route so the cluster does not show a stale trip
+        oneFileInstall.reset()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
