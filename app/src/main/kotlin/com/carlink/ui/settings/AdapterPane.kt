@@ -93,7 +93,7 @@ private fun rememberAppVersion(): String {
     return remember {
         try {
             val pi = context.packageManager.getPackageInfo(context.packageName, 0)
-            "${pi.versionName}+${pi.longVersionCode}"
+            pi.versionName ?: "- - -" // "2.00": the build number stays out of About (logs keep it)
         } catch (e: PackageManager.NameNotFoundException) {
             logWarn("[Settings] Failed to get package info: ${e.message}", tag = "UI")
             "- - -"
