@@ -90,7 +90,7 @@ class CallNotificationHost(
         nm.createNotificationChannel(ch)
         nm.createNotificationChannel(
             NotificationChannel(ONGOING_CHANNEL_ID, "Ongoing calls", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "A call in progress while Carlink3 is in the background"
+                description = "A call in progress while Carlink is in the background"
                 setShowBadge(false)
                 setSound(null, null)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC

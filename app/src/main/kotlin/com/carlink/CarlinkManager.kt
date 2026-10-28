@@ -192,7 +192,7 @@ class CarlinkManager(
         private const val USB_FIND_ATTEMPTS = 10 // × USB_WAIT_PERIOD_MS: ~30 s to find the adapter
 
         /** Without the bridge Carlink3 can't reach the adapter (it has no USB access of its own). */
-        private const val INSTALL_BRIDGE_STATUS = "Install the Carlink3 USB bridge"
+        private const val INSTALL_BRIDGE_STATUS = "Install the Carlink USB bridge"
 
         /** How long a bridge permission prompt may stay unanswered before the start gives up. */
         private const val BRIDGE_PROMPT_WAIT_MS = 30_000L
@@ -1096,7 +1096,7 @@ class CarlinkManager(
      *
      * The bridge is required: Carlink3 has no USB access of its own (removed 2026-10-21, the way
      * Carlink2 did in [204]), so it never holds a USB permission or shows a USB dialog. Without the
-     * bridge there is nothing to retry: the start stops at "Install the Carlink3 USB bridge" (the
+     * bridge there is nothing to retry: the start stops at "Install the Carlink USB bridge" (the
      * connecting screen shows its setup panel) and MainActivity starts again once it is installed.
      *
      * The [released] re-checks in [acquireBridgeTransport] matter: finding the adapter can take

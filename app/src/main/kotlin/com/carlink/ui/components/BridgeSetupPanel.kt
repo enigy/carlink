@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.dp
 import com.carlink.ui.theme.AutomotiveDimens
 
 /** Where the bridge APK is published; shown so a new user can put it on a USB drive. */
-private const val BRIDGE_APK_LOCATION = "github.com/enigy/carlink3 → app/carlink3_bridge.apk, or Releases"
+private const val BRIDGE_APK_LOCATION = "github.com/enigy/carlink → app/carlink_bridge.apk, or Releases"
 
 private val TextColor = Color(0xFFDDE4E5) // the overlay's fixed light text colour
 
@@ -46,12 +46,12 @@ fun BridgeSetupPanel(onOpenFiles: () -> Boolean) {
         SetupPanelSpec(
             title = "USB bridge not installed",
             body =
-                "Carlink3 needs its USB bridge to reach the adapter, and to show turn icons on the cluster. " +
+                "Carlink needs its USB bridge to reach the adapter, and to show turn icons on the cluster. " +
                     "To install it while parked:\n" +
                     "1. Copy the bridge APK to a USB drive ($BRIDGE_APK_LOCATION).\n" +
                     "2. Plug the drive into a free USB port.\n" +
                     "3. Tap Open Files, open the drive, and tap the APK. If asked, allow Files to install apps.\n" +
-                    "4. When it's installed, tap the Carlink3 notification to come back (or press Home and open Carlink3).",
+                    "4. When it's installed, tap the Carlink notification to come back (or press Home and open Carlink).",
             buttonLabel = "Open Files",
             buttonIcon = Icons.Default.FolderOpen,
             failureText = "This head unit's Files app couldn't be opened. Install the bridge with adb instead.",
@@ -70,7 +70,7 @@ fun BridgeNotStartingPanel(onOpenAppInfo: () -> Boolean) {
         SetupPanelSpec(
             title = "USB bridge isn't starting",
             body =
-                "The USB bridge is installed but isn't answering Carlink3, which keeps retrying.\n" +
+                "The USB bridge is installed but isn't answering Carlink, which keeps retrying.\n" +
                     "Tap Open App info, then Force stop, and come back here. If the bridge is older than this app, " +
                     "install the bridge APK from the same release.\n" +
                     "If it still doesn't connect, restart the head unit.",

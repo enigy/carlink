@@ -135,7 +135,7 @@ object LrcLib {
             conn.connectTimeout = TIMEOUT_MS
             conn.readTimeout = TIMEOUT_MS
             // LRCLIB asks every client to name itself.
-            conn.setRequestProperty("User-Agent", "Carlink3/${BuildConfig.VERSION_NAME} (https://github.com/enigy/carlink3)")
+            conn.setRequestProperty("User-Agent", "Carlink/${BuildConfig.VERSION_NAME} (https://github.com/enigy/carlink)")
             return when (val code = conn.responseCode) {
                 HttpURLConnection.HTTP_OK -> conn.inputStream.bufferedReader().use { it.readText() }
                 HttpURLConnection.HTTP_NOT_FOUND -> null

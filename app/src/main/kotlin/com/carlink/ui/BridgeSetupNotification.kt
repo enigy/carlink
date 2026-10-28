@@ -34,7 +34,7 @@ object BridgeSetupNotification {
             NotificationCompat
                 .Builder(context, WAITING_CHANNEL_ID)
                 .setContentTitle("Installing the USB bridge")
-                .setContentText("Tap to return to Carlink3")
+                .setContentText("Tap to return to Carlink")
                 .setPriority(NotificationCompat.PRIORITY_LOW),
         )
 
@@ -45,7 +45,7 @@ object BridgeSetupNotification {
             NotificationCompat
                 .Builder(context, LOGS_CHANNEL_ID)
                 .setContentTitle("Copying logs")
-                .setContentText("Tap to return to Carlink3")
+                .setContentText("Tap to return to Carlink")
                 .setPriority(NotificationCompat.PRIORITY_LOW),
         )
 
@@ -55,7 +55,7 @@ object BridgeSetupNotification {
             NotificationCompat
                 .Builder(context, INSTALLED_CHANNEL_ID)
                 .setContentTitle("USB bridge installed")
-                .setContentText("Tap to return to Carlink3 and connect")
+                .setContentText("Tap to return to Carlink and connect")
                 .setPriority(NotificationCompat.PRIORITY_HIGH),
         )
 

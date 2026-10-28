@@ -308,7 +308,7 @@ private fun paneTitle(
         null -> "Phone"
         PaneCard.MEDIA -> appName?.takeIf { it.isNotBlank() } ?: "Music"
         PaneCard.DIRECTIONS -> "Directions"
-        PaneCard.CLOCK -> "Carlink3"
+        PaneCard.CLOCK -> "Carlink"
     }
 
 /** The music card wired to the truck: its buttons go to the phone through [CarlinkManager.mediaControl] ([MediaCard]). */
@@ -375,7 +375,7 @@ private fun SplitTab(
         shape = MaterialTheme.shapes.medium,
     ) {
         IconButton(onClick = onClick, modifier = Modifier.fillMaxSize()) {
-            Icon(Icons.Default.VerticalSplit, contentDescription = "Show the Carlink3 pane", modifier = Modifier.size(28.dp), tint = colors.onSurface)
+            Icon(Icons.Default.VerticalSplit, contentDescription = "Show the Carlink pane", modifier = Modifier.size(28.dp), tint = colors.onSurface)
         }
     }
 }
