@@ -7,7 +7,8 @@ import com.carlink.ui.settings.LayoutConfig
 /**
  * What the Settings screen can ask of its host (MainActivity via [CarlinkApp]).
  *
- * @property onNavigateBack close the overlay and return to the projection.
+ * @property onNavigateBack close the overlay and return to the projection, first asking about a
+ *   reset when a setting only a new connection applies changed ([SettingsExit]).
  * @property onDisplayModeSelected persist a new [DisplayMode] and rebuild the session for it — or,
  *   while a phone session owns the box, only persist it ([DisplayModeOutcome.DEFERRED]).
  * @property onLayoutSelected the same for Settings › Display › Layout ([LayoutConfig]): the split's

@@ -75,12 +75,14 @@ import com.carlink.protocol.PhoneType
 import com.carlink.ui.settings.AutoCallPath
 import com.carlink.ui.settings.CallAudioStore
 import com.carlink.ui.settings.CarPlayLimitStore
+import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DriveSide
 import com.carlink.ui.settings.DriveSideStore
 import com.carlink.ui.settings.DriverProfiles
 import com.carlink.ui.settings.LaneGuidanceStore
 import com.carlink.ui.settings.LayoutStore
 import com.carlink.ui.settings.MusicStore
+import com.carlink.ui.settings.SessionSettings
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
@@ -159,6 +161,8 @@ class CarlinkManager(
      * [config] then supplies the legacy width/height/fps.
      */
     val displayProfile: DisplayProfile? = null,
+    /** The display mode the window was set to for [displayProfile]: part of what each session is built with. */
+    private val displayMode: DisplayMode = DisplayMode.DEFAULT,
 ) {
     private var config: AdapterConfig = initialConfig
 
@@ -402,6 +406,12 @@ class CarlinkManager(
 
     /** The last pushed config put CarPlay's Dock on the right (`rightHandDrive`); the drive side applies per connection. */
     @Volatile private var dockOnRight = false
+
+    /** The saved settings the last pushed config was built from ([vehicleConfigSpec]). */
+    @Volatile private var pushedSettings: SessionSettings? = null
+
+    /** The settings the session in use was built with; null with no adapter session. Settings' exit prompt reads it. */
+    val builtSettings: SessionSettings? get() = pushedSettings.takeIf { state != State.DISCONNECTED }
 
     /**
      * Taps on CarPlay's Dock ([CarPlayDock]), counted: the pane reads a new count as the driver leaving
@@ -1313,6 +1323,7 @@ class CarlinkManager(
         val layout = LayoutStore.get(context).current
         val split = layout.carPlayArea(g.width, g.height)
         declaredSplitArea = split
+        val driveSide = DriveSideStore.get(context).current
         if (layout.split) {
             val area = split?.let { "${it.width}x${it.height}@${it.x},${it.y}" } ?: "NONE (illegal for this panel; full screen)"
             logInfo("[VIEW_AREA] layout ${layout.layout.name} ${layout.width.percent}%: CarPlay area $area", tag = Logger.Tags.VIDEO)
@@ -1342,13 +1353,14 @@ class CarlinkManager(
                 // it is three PNG encodes, and this runs on the connect path.
                 oemIconImages = oemIconImages,
                 oemIconLabel = context.getString(R.string.app_name),
-                rightHandDrive = DriveSideStore.get(context).current == DriveSide.RIGHT,
+                rightHandDrive = driveSide == DriveSide.RIGHT,
                 viewArea2 = split,
                 viewAreaAnimMs = if (split != null) SplitViewArea.TRANSITION_MS else null,
                 metadataTier = if (askLanes) "extended" else "proven",
                 metadataSkip = if (askLanes) VehicleConfigSpec.LANES_ONLY_SKIP else emptyList(),
             )
         dockOnRight = spec.rightHandDrive
+        pushedSettings = SessionSettings(displayMode, layout, driveSide, askLanes)
         LaneActivity.noteAsked(askLanes)
         if (askLanes) logWarn("[LANES] asking the iPhone for lane guidance: tier extended, skip ${VehicleConfigSpec.LANES_ONLY_SKIP}", tag = Logger.Tags.NAVI)
         logInfo("[CONFIG] ${g.describe()}", tag = Logger.Tags.ADAPTR)
@@ -1726,8 +1738,28 @@ class CarlinkManager(
         }
     }
 
-    /** True while [cleanSlateReset] is in flight — the UI keeps its spinner on this. */
-    val resetInFlight: Boolean get() = cleanSlate.isInFlight
+    /**
+     * Ends the session for a rebuild with new settings (Settings' "Reset now", owner 10-28): the
+     * clean-slate reset's stop and box settle, without its reconnect, because a new manager connects
+     * next with a new instance nonce. [resetInFlight] stays true from here on, so the deferred
+     * display-mode apply does not rebuild while the box is still ending the phone session.
+     */
+    suspend fun endForRebuild() {
+        if (released) return
+        endingForRebuild = true
+        lifecycleMutex.withLock {
+            withContext(Dispatchers.IO) {
+                stopImpl(preserveEscalation = true)
+                setStatusText("Applying settings...")
+            }
+            delay(CleanSlateReset.BOX_TEARDOWN_SETTLE_MS)
+        }
+    }
+
+    @Volatile private var endingForRebuild = false
+
+    /** True while [cleanSlateReset] or [endForRebuild] is in flight — the UI keeps its spinner on this. */
+    val resetInFlight: Boolean get() = cleanSlate.isInFlight || endingForRebuild
 
     private val cleanSlate =
         CleanSlateReset(

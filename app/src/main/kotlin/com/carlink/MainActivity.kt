@@ -58,13 +58,16 @@ import com.carlink.ui.BridgeSetupNotification
 import com.carlink.ui.DisplayModeOutcome
 import com.carlink.ui.MainScreen
 import com.carlink.ui.SettingsActions
+import com.carlink.ui.SettingsExitPrompt
 import com.carlink.ui.SettingsScreen
 import com.carlink.ui.components.LocalSettingsArrival
 import com.carlink.ui.components.SettingsSlideIn
+import com.carlink.ui.rememberSettingsExit
 import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.settings.LayoutConfig
 import com.carlink.ui.settings.LayoutStore
+import com.carlink.ui.settings.SessionSettings
 import com.carlink.ui.theme.CarlinkTheme
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
@@ -307,8 +310,13 @@ class MainActivity : ComponentActivity() {
                     if (manager != null) {
                         CarlinkApp(
                             carlinkManager = manager,
-                            onDisplayModeSelected = { onDisplayModeSelected(it) },
-                            onLayoutSelected = { onLayoutSelected(it) },
+                            session =
+                                SessionHooks(
+                                    onDisplayModeSelected = { onDisplayModeSelected(it) },
+                                    onLayoutSelected = { onLayoutSelected(it) },
+                                    built = { manager.builtSettings },
+                                    onResetToApply = ::resetToApplySettings,
+                                ),
                             cluster = ClusterHooks(onPhoneConnected = ::onPhoneConnectedRefreshCluster, onResetCluster = ::restartClusterBinding),
                             bridge = BridgeSetup(installed = bridgeInstalledState.value, onOpenFiles = ::openFilesForBridge),
                         )
@@ -505,7 +513,7 @@ class MainActivity : ComponentActivity() {
         applyAudioTransferModeToMediaSession(false)
 
         carlinkManager =
-            CarlinkManager(this, config, mediaSessionManager, profile).also {
+            CarlinkManager(this, config, mediaSessionManager, profile, appliedDisplayMode).also {
                 it.addBoxStatusListener(displayModeApplier)
             }
         carlinkManagerState.value = carlinkManager
@@ -578,6 +586,22 @@ class MainActivity : ComponentActivity() {
         }
         reinitialize()
         return DisplayModeOutcome.APPLIED
+    }
+
+    /**
+     * Settings' "Reset now" (owner, 10-28): a new connection built from every saved setting. The
+     * session ends the clean-slate way ([CarlinkManager.endForRebuild]: CT_STOP, then the box's own
+     * teardown settle) and a new manager is built, which re-detects the window for a display mode
+     * and pushes the layout, driver's seat and lanes; its new instance nonce shows the box a
+     * replacement host, as the clean-slate reset's rotation does.
+     */
+    private fun resetToApplySettings() {
+        val m = carlinkManager ?: return
+        logWarn("[SETTINGS] reset to apply ${m.builtSettings?.differences(SessionSettings.saved(this))}", tag = "MAIN")
+        lifecycleScope.launch {
+            m.endForRebuild()
+            if (carlinkManager === m && !isDestroyed && !isFinishing) reinitialize()
+        }
     }
 
     /** A phone session owns the box right now (the box's own word, not the app's state machine). */
@@ -1017,14 +1041,14 @@ class MainActivity : ComponentActivity() {
  * Root composable. [MainScreen] stays composed the whole time (its SurfaceView / HWC plane must
  * survive), and [SettingsScreen] slides in ON TOP of it — opened from the loading overlay's
  * Settings button or, mid-session, from CarPlay's OEM "Exit" icon (`requestUI`). Back closes the
- * overlay; closing over a live session also asks the manager to recover the video (a keyframe,
- * then a decoder rebuild only if frames still do not flow).
+ * overlay, first asking whether to reset the connection when a setting only a new connection
+ * applies changed ([com.carlink.ui.SettingsExit]); closing over a live session also asks the
+ * manager to recover the video (a keyframe, then a decoder rebuild only if frames still do not flow).
  */
 @Composable
 fun CarlinkApp(
     carlinkManager: CarlinkManager,
-    onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
-    onLayoutSelected: (LayoutConfig) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
+    session: SessionHooks = SessionHooks(),
     cluster: ClusterHooks = ClusterHooks(),
     /** Carlink2 [210]: whether the USB bridge is installed, and the connecting screen's Open Files button. */
     bridge: BridgeSetup = BridgeSetup(),
@@ -1032,6 +1056,7 @@ fun CarlinkApp(
     var showSettings by remember(carlinkManager) { mutableStateOf(false) }
     var connectionState by remember(carlinkManager) { mutableStateOf(CarlinkManager.State.DISCONNECTED) }
     var connectNotified by remember(carlinkManager) { mutableStateOf(false) }
+    val exit = rememberSettingsExit(session.built)
 
     val closeSettings = {
         logInfo(
@@ -1042,7 +1067,13 @@ fun CarlinkApp(
         // Same return path as carlink_native (flush + one keyframe request); see recoverVideoFromOverlay.
         carlinkManager.recoverVideoFromOverlay()
     }
-    BackHandler(enabled = showSettings) { closeSettings() }
+    // A setting only a new connection applies, changed on this visit, asks before Settings closes.
+    val requestClose = { if (!exit.holdForAnswer()) closeSettings() }
+    val resetAndClose = {
+        showSettings = false
+        session.onResetToApply()
+    }
+    BackHandler(enabled = showSettings) { requestClose() }
 
     Box(modifier = Modifier.fillMaxSize()) {
         MainScreen(
@@ -1052,6 +1083,7 @@ fun CarlinkApp(
                     "[UI_NAV] Opening SettingsScreen overlay (state=${carlinkManager.state}, frames=${carlinkManager.videoFramesRendered()})",
                     tag = "UI",
                 )
+                exit.opened()
                 showSettings = true
             },
             onStateChanged = {
@@ -1072,14 +1104,27 @@ fun CarlinkApp(
             connectionState = connectionState,
             actions =
                 SettingsActions(
-                    onNavigateBack = closeSettings,
-                    onDisplayModeSelected = onDisplayModeSelected,
-                    onLayoutSelected = onLayoutSelected,
+                    onNavigateBack = requestClose,
+                    onDisplayModeSelected = session.onDisplayModeSelected,
+                    onLayoutSelected = session.onLayoutSelected,
                     onResetCluster = cluster.onResetCluster,
                 ),
         )
+        SettingsExitPrompt(exit, onReset = resetAndClose, onLater = closeSettings)
     }
 }
+
+/**
+ * The settings that shape a session, for [CarlinkApp]: a display mode or layout chosen in Settings
+ * ([onDisplayModeSelected], [onLayoutSelected]), the settings the session in use was [built] with,
+ * and [onResetToApply], a new connection built from everything saved (Settings' exit prompt).
+ */
+data class SessionHooks(
+    val onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
+    val onLayoutSelected: (LayoutConfig) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
+    val built: () -> SessionSettings? = { null },
+    val onResetToApply: () -> Unit = {},
+)
 
 /**
  * Carlink3's cluster/HUD navigation hooks for [CarlinkApp]: [onPhoneConnected] fires once per phone
