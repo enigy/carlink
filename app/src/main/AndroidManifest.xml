@@ -22,7 +22,7 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Carlink3 cluster/HUD navigation (from Carlink2): the Templates Host route. Both are normal
+    <!-- Carlink cluster/HUD navigation (from Carlink2): the Templates Host route. Both are normal
          permissions. NAVIGATION_TEMPLATES lets the CarAppService publish a navigation Trip;
          ACCESS_SURFACE lets it draw into the host-provided cluster render surface. -->
     <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />

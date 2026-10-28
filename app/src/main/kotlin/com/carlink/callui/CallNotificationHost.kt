@@ -45,7 +45,7 @@ import com.carlink.ocbm.Ocbm
  *
  * When it is shown (2026-10-20): on AAOS a CATEGORY_CALL heads-up stays over the screen until it is
  * acted on, and it blocked the projection mid-call while CarPlay's own call screen sat underneath.
- * So nothing is posted while Carlink3 is on screen ([setAppVisible]). With Carlink3 in the
+ * So nothing is posted while Carlink is on screen ([setAppVisible]). With Carlink in the
  * background an incoming call still pops up to be answered, and an ongoing call sits in the
  * notification list on a quiet channel ([ONGOING_CHANNEL_ID]) that never pops up.
  */
@@ -57,7 +57,7 @@ class CallNotificationHost(
     private val roster = CallRoster()
     private var shown: CallRoster.Presentation = CallRoster.Presentation.None
 
-    /** Which card is posted now; differs from [shown] while Carlink3 is on screen. */
+    /** Which card is posted now; differs from [shown] while Carlink is on screen. */
     private var posted = Card.NONE
     private var appVisible = true
     private var registered = false
@@ -149,7 +149,7 @@ class CallNotificationHost(
     }
 
     /**
-     * Post, update or withdraw the card for [p], given whether Carlink3 is on screen. [force] re-applies
+     * Post, update or withdraw the card for [p], given whether Carlink is on screen. [force] re-applies
      * an unchanged call when only the visibility changed.
      */
     private fun render(
@@ -162,7 +162,7 @@ class CallNotificationHost(
         if (want == Card.NONE) {
             if (posted != Card.NONE) {
                 nm.cancel(NOTIFICATION_ID)
-                logInfo("[CALL_UI] cleared${if (appVisible) " (Carlink3 on screen)" else ""}", tag = TAG)
+                logInfo("[CALL_UI] cleared${if (appVisible) " (Carlink on screen)" else ""}", tag = TAG)
             }
             posted = Card.NONE
             return
@@ -273,7 +273,7 @@ class CallNotificationHost(
         private const val TAG = "CALL_UI"
         const val CHANNEL_ID = "carlink_calls"
 
-        /** Ongoing calls while Carlink3 is in the background: low importance, so never heads-up. */
+        /** Ongoing calls while Carlink is in the background: low importance, so never heads-up. */
         const val ONGOING_CHANNEL_ID = "carlink_calls_ongoing"
 
         /** Distinct from the media FGS slot (1001) so the two never replace each other. */
@@ -286,10 +286,10 @@ class CallNotificationHost(
     }
 }
 
-/** Which card is posted; differs from the call's presentation while Carlink3 is on screen. */
+/** Which card is posted; differs from the call's presentation while Carlink is on screen. */
 private enum class Card { NONE, INCOMING, ONGOING }
 
-/** Nothing while Carlink3 is on screen (CarPlay's call screen is up); otherwise the call's own card. */
+/** Nothing while Carlink is on screen (CarPlay's call screen is up); otherwise the call's own card. */
 private fun cardFor(
     p: CallRoster.Presentation,
     appVisible: Boolean,

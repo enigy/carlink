@@ -18,9 +18,9 @@ import kotlin.math.min
  * Parked echo test (Settings → Calls → Echo test, ported from Carlink2 [223]): how much of the call
  * audio each mic path picks back up, and how late, without a phone call.
  *
- * Plays test sweeps on a track set up like Carlink3's call track (16 kHz mono,
+ * Plays test sweeps on a track set up like Carlink's call track (16 kHz mono,
  * USAGE_VOICE_COMMUNICATION, sized by Settings → Call buffer like [com.carlink.av.VoiceRouter]'s) and
- * records them back on every path in [callPathsToCompare]: Carlink3's two Call microphone choices,
+ * records them back on every path in [callPathsToCompare]: Carlink's two Call microphone choices,
  * Carlink2's equivalents (Android AEC/NS/AGC and call mode), and the raw mic as the baseline.
  *
  * Each run plays a 2 s up-sweep, then a 1 s down-sweep. The two barely correlate, so the first

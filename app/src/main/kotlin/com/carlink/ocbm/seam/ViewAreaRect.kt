@@ -6,7 +6,7 @@ import kotlin.math.roundToInt
  * The view area iOS is drawing CarPlay into, read from the 128-byte `AirPlayScreenHeader` of each
  * opcode-1 (codec config) record on the video seam. During a Dock resize iOS sends one of these per
  * animation step (255 in one 3 s switch, box log 2026-09-05), with the coded size constant and the
- * crop moving — so this is the one truth for where CarPlay's picture ends and Carlink3's pane begins,
+ * crop moving — so this is the one truth for where CarPlay's picture ends and Carlink's pane begins,
  * whoever asked for the switch. `docs/carplay/06_AV_PIPELINE.md` §3 has the layout, read out of
  * `CarPlaySDK.framework` (`_AirPlayReceiverSessionScreen_ProcessFrames`).
  *

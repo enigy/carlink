@@ -35,7 +35,7 @@ private val TextColor = Color(0xFFDDE4E5) // the overlay's fixed light text colo
 
 /**
  * Shown on the connecting screen in place of the status words while the USB bridge
- * (android.car.usb.handler) isn't installed (Carlink2 [210]). Carlink3 has no USB access of its own,
+ * (android.car.usb.handler) isn't installed (Carlink2 [210]). Carlink has no USB access of its own,
  * so without the bridge it can't reach the adapter at all; this says so and offers the head unit's
  * built-in Files app to install it from a USB drive. MainActivity re-checks on resume, so the panel goes away once
  * the user comes back.
@@ -62,7 +62,7 @@ fun BridgeSetupPanel(onOpenFiles: () -> Boolean) {
 
 /**
  * Shown instead while the bridge is installed but isn't answering (Carlink2 [211]): bind failed,
- * out of date, or it couldn't open the adapter. Carlink3 keeps retrying underneath.
+ * out of date, or it couldn't open the adapter. Carlink keeps retrying underneath.
  */
 @Composable
 fun BridgeNotStartingPanel(onOpenAppInfo: () -> Boolean) {

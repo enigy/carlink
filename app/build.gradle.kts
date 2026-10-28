@@ -154,10 +154,10 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 ktlint {
     android.set(true)
     outputToConsole.set(true)
-    // Carlink3: files ported verbatim from Carlink2 (whose ktlint ran with ignoreFailures=true and
+    // Carlink: files ported verbatim from Carlink2 (whose ktlint ran with ignoreFailures=true and
     // never shaped them) are excluded in .editorconfig with `ktlint = disabled` per glob — this
     // plugin version does not apply `filter { exclude }` to Android source-set tasks. Files written
-    // for Carlink3 in the same packages stay gated.
+    // for Carlink in the same packages stay gated.
     ignoreFailures.set(false)
 }
 
@@ -172,7 +172,7 @@ detekt {
 
 dependencies {
     implementation(project(":bridge-api")) // AIDL stub + BridgeContract for the USB bridge transport
-    // Cluster/HUD turn-by-turn through the AAOS Templates Host (Carlink3, from Carlink2). Public
+    // Cluster/HUD turn-by-turn through the AAOS Templates Host (Carlink, from Carlink2). Public
     // library + two normal permissions — the route an unprivileged app CAN use for the cluster.
     implementation("androidx.car.app:app:1.7.0")
     implementation("androidx.car.app:app-automotive:1.7.0")

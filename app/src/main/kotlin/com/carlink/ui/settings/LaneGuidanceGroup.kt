@@ -28,7 +28,7 @@ import android.text.format.DateFormat as AndroidDateFormat
  * Settings › Cluster › Lane guidance: the lanes for the next turn on GM's cluster and HUD, in the
  * turn icon, in GM's own lane area, or both, with the lanes to be in in a color of the driver's
  * choosing. All off by default. Only "Ask iPhone for lanes" reaches the adapter; the rest change what
- * Carlink3 draws ([com.carlink.navigation.ClusterStep]).
+ * Carlink draws ([com.carlink.navigation.ClusterStep]).
  */
 @Composable
 internal fun LaneGuidanceGroup(modifier: Modifier = Modifier) {

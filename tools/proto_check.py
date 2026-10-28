@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check the Kotlin OCBM client against the canonical constant table.
 
-Carlink3 port of lvalen91/ocbm tools/proto_check.py (same parsing and rules). The canonical table is
+Carlink port of lvalen91/ocbm tools/proto_check.py (same parsing and rules). The canonical table is
 the reference copy at proto/ocbm-proto.lib.rs (see proto/README.md); the one client is
 app/src/main/kotlin/com/carlink/ocbm/OcbmProto.kt, a hand-maintained restatement of it.
 
@@ -16,7 +16,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 CANON = REPO / "proto/ocbm-proto.lib.rs"
 CLIENTS = {
-    "kotlin (Carlink3 app)": REPO / "app/src/main/kotlin/com/carlink/ocbm/OcbmProto.kt",
+    "kotlin (Carlink app)": REPO / "app/src/main/kotlin/com/carlink/ocbm/OcbmProto.kt",
 }
 
 # Prefixes every client must be able to name: the channel map, the control opcodes, the frame flags.

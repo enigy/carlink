@@ -161,7 +161,7 @@ object ComposedIconStore {
     }
 
     /**
-     * Carlink3: the same compose pipeline fed with an already-decoded route ([OcbmNavigationFeed]
+     * Carlink: the same compose pipeline fed with an already-decoded route ([OcbmNavigationFeed]
      * builds it from the OCBM box's per-maneuver JSON). Returns the maneuver count, 0 when the
      * route is unchanged, null when empty.
      */

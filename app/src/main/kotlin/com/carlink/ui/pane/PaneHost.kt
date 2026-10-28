@@ -52,7 +52,7 @@ import com.carlink.ocbm.CarPlayUrls
 import kotlinx.coroutines.delay
 
 /**
- * Carlink3's side of the split layout (Settings › Display › Layout), laid over the part of the video
+ * Carlink's side of the split layout (Settings › Display › Layout), laid over the part of the video
  * frame CarPlay is not drawing into. The frame's own header says where that is
  * ([CarlinkManager.viewArea]), so the pane follows every step of a Dock resize, whoever asked for it:
  * Settings, the pane's own full-screen button, or CarPlay's Dock button. While CarPlay has the whole

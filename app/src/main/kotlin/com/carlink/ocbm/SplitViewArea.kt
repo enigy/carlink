@@ -2,7 +2,7 @@ package com.carlink.ocbm
 
 /**
  * The CarPlay view area of the split layout (Settings › Display › Layout): CarPlay keeps one side of
- * the panel, full height, and Carlink3's own pane takes the rest. Declared as the main stream's
+ * the panel, full height, and Carlink's own pane takes the rest. Declared as the main stream's
  * `viewAreas[1]` with `initial: true`, so the session starts split; CarPlay's Dock button (and the
  * pane's own) switch between it and the full panel ([Ocbm.CMD_VIEW_AREA]).
  *

@@ -120,7 +120,7 @@ internal fun DisplayPane(
 }
 
 /**
- * Layout: CarPlay on the whole panel, or on one side with Carlink3's pane on the other, and the
+ * Layout: CarPlay on the whole panel, or on one side with Carlink's pane on the other, and the
  * pane's width. The split's view areas go to the box in the session config ([LayoutConfig]), so a
  * tap applies now with no phone connected and at the next connection otherwise.
  */

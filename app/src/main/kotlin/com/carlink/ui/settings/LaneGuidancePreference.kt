@@ -26,8 +26,8 @@ enum class LaneIconMode(
  * since 2026-10-22). Kept per driver ([DriverProfiles]); factory defaults ask the iPhone for lanes
  * and show the lane strip, white, with no lanes in the turn icon.
  *
- * [ask] is the only one that reaches the adapter: it widens the metadata Carlink3 pushes on the next
- * `CT_SUBSCRIBE` so the iPhone is asked for iAP2 lane guidance. The rest change only what Carlink3
+ * [ask] is the only one that reaches the adapter: it widens the metadata Carlink pushes on the next
+ * `CT_SUBSCRIBE` so the iPhone is asked for iAP2 lane guidance. The rest change only what Carlink
  * draws for GM's cluster and HUD. [laneColor] is the color of the lanes to be in, from the turn
  * alert's palette (null = white). [refusedAtMs] is when [ask] last turned itself off because the
  * iPhone rejected the identification that carried it (0 = never).

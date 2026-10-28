@@ -70,7 +70,7 @@ internal fun LogsGroup(
 /**
  * Opens the head unit's Files app on Downloads/Carlink, where Save logs and drive logs land, so
  * the driver can select them and Copy to a USB drive without adb. Files has no way back to
- * Carlink3, so the same return notification as the bridge install is posted.
+ * Carlink, so the same return notification as the bridge install is posted.
  */
 @Composable
 private fun CopyToUsbRow() {

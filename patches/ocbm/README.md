@@ -1,6 +1,6 @@
 # OCBM box-side patches
 
-Changes Carlink3 needs in the adapter firmware ([lvalen91/ocbm](https://github.com/lvalen91/ocbm))
+Changes Carlink needs in the adapter firmware ([lvalen91/ocbm](https://github.com/lvalen91/ocbm))
 that are not yet upstream. Each file is a `git format-patch` against OCBM `main`
 at the base commit named below.
 
@@ -13,10 +13,10 @@ Apply:
 ```sh
 git clone https://github.com/lvalen91/ocbm && cd ocbm
 git checkout -b route-guidance-exitinfo-angles c9a718d
-git am ../Carlink3/patches/ocbm/0001-*.patch
+git am ../carlink/patches/ocbm/0001-*.patch
 cargo test --locked --manifest-path crates/vendor/iap2-core/Cargo.toml   # crate is excluded from the workspace
 ```
 
 Without `0001`, the box still sends `routeGuidance`/`maneuver` JSON and the cluster
-works; exit numbers and junction geometry are simply absent and Carlink3 falls back
+works; exit numbers and junction geometry are simply absent and Carlink falls back
 to the maneuver type alone.

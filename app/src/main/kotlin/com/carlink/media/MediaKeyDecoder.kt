@@ -137,8 +137,8 @@ class MediaKeyDecoder {
 }
 
 /**
- * One skip per press of GM's steering-wheel buttons. A press reaches Carlink3 one of two ways: as a
- * skip command from GM's media service when GM has Carlink3 selected, or as a raw F7/F8 key when it
+ * One skip per press of GM's steering-wheel buttons. A press reaches Carlink one of two ways: as a
+ * skip command from GM's media service when GM has Carlink selected, or as a raw F7/F8 key when it
  * has not (2026-10-23). Should one press ever arrive both ways, the second, within [windowMs] of the
  * first, is dropped. Skips arriving the same way are never dropped, so a quick double press still
  * skips twice. Main thread only, like the session callbacks that feed it.

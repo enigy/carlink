@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Whether a system USB permission dialog Carlink3 asked for may be on screen: from the moment the
+ * Whether a system USB permission dialog Carlink asked for may be on screen: from the moment the
  * bridge requests permission for it until it is granted, denied or the wait ends.
  *
  * MainActivity holds its cluster steps while this is true. Launching the hidden CarAppActivity, or

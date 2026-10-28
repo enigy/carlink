@@ -35,9 +35,9 @@ indent_size = 4
 [*.md]
 trim_trailing_whitespace = false
 
-# Carlink3: verbatim ports from Carlink2 (kept byte-identical to stay diffable against it; Carlink2's
+# Carlink: verbatim ports from Carlink2 (kept byte-identical to stay diffable against it; Carlink2's
 # ktlint ran with ignoreFailures=true, so these files were never shaped by it). Excluded here rather
-# than reformatted. Files written for Carlink3 in these packages are NOT listed and stay gated.
+# than reformatted. Files written for Carlink in these packages are NOT listed and stay gated.
 [**/navigation/compose/*.kt]
 ktlint = disabled
 

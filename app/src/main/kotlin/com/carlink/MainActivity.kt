@@ -81,7 +81,7 @@ import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-// Carlink3 cluster binding (from Carlink2 [214]): the Car App Library activity that triggers the
+// Carlink cluster binding (from Carlink2 [214]): the Car App Library activity that triggers the
 // Templates Host binding, and the pacing of launch / bring-back / retry / relaunch.
 private const val CAR_APP_ACTIVITY = "androidx.car.app.activity.CarAppActivity"
 private const val CLUSTER_LAUNCH_DELAY_MS = 1_500L
@@ -255,7 +255,7 @@ class MainActivity : ComponentActivity() {
         // Initialize logging
         initializeLogging()
 
-        // Carlink3 cluster/HUD navigation (from Carlink2): mirror the switch onto the CarAppService
+        // Carlink cluster/HUD navigation (from Carlink2): mirror the switch onto the CarAppService
         // component before the Templates Host can discover it, then start the binding chain.
         ClusterNavigation.applyComponentState(this)
         checkBridgeInstalled()
@@ -336,7 +336,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Carlink2 [210]: is the USB bridge installed? Checked at start and on every resume, so coming
-     * back from installing it in Files hides the setup panel. The bridge is Carlink3's only way to the
+     * back from installing it in Files hides the setup panel. The bridge is Carlink's only way to the
      * adapter, so a fresh install also starts the connection.
      */
     private fun checkBridgeInstalled() {
@@ -348,8 +348,8 @@ class MainActivity : ComponentActivity() {
         if (!installed) {
             logWarn("[BRIDGE_SETUP] USB bridge not installed — showing the setup panel", tag = "MAIN")
         } else if (previous == false) {
-            // The bridge is Carlink3's only way to the adapter, so a start that stopped at "Install
-            // the Carlink3 USB bridge" is waiting for exactly this: connect now.
+            // The bridge is Carlink's only way to the adapter, so a start that stopped at "Install
+            // the Carlink USB bridge" is waiting for exactly this: connect now.
             logInfo("[BRIDGE_SETUP] USB bridge installed — connecting", tag = "MAIN")
             carlinkManager?.let { manager ->
                 lifecycleScope.launch(Dispatchers.IO) { manager.startIfDisconnected("USB bridge installed") }
@@ -359,7 +359,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Carlink2 [212]: open Files from the bridge setup panel, and post the notification that leads
-     * back here (Files has no way back to Carlink3 of its own).
+     * back here (Files has no way back to Carlink of its own).
      */
     private fun openFilesForBridge(): Boolean {
         val opened = FilesLauncher.open(this)
@@ -839,7 +839,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun registerUsbDetachReceiver() {
         // ATTACHED too: with the bridge installed the platform gives the attach INTENT to the bridge,
-        // so this broadcast is the only way Carlink3 learns the adapter is back after a reboot or replug.
+        // so this broadcast is the only way Carlink learns the adapter is back after a reboot or replug.
         val filter =
             IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED).apply {
                 addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
@@ -866,7 +866,7 @@ class MainActivity : ComponentActivity() {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Carlink3 cluster/HUD navigation — the Templates Host binding chain, ported from Carlink2.
+    // Carlink cluster/HUD navigation — the Templates Host binding chain, ported from Carlink2.
     // CarAppActivity (hidden, own task) is what makes the host bind our navigation CarAppService; the
     // service then publishes the Trip the cluster and HUD render. The host rebinds per session, so
     // the chain is restarted on every phone connect.
@@ -1127,7 +1127,7 @@ data class SessionHooks(
 )
 
 /**
- * Carlink3's cluster/HUD navigation hooks for [CarlinkApp]: [onPhoneConnected] fires once per phone
+ * Carlink's cluster/HUD navigation hooks for [CarlinkApp]: [onPhoneConnected] fires once per phone
  * connection (re-armed on disconnect) and refreshes the cluster binding; [onResetCluster] restarts it.
  */
 data class ClusterHooks(

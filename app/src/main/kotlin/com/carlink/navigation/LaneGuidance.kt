@@ -32,7 +32,7 @@ data class LaneRecord(
 )
 
 /**
- * Lane guidance for the cluster/HUD. GM's cluster and HUD run GM's own code. Carlink3 can draw lanes
+ * Lane guidance for the cluster/HUD. GM's cluster and HUD run GM's own code. Carlink can draw lanes
  * into the turn icon GM already shows ([LaneIconComposer]), and offer Step lanes plus a lane image
  * for GM to place itself. With Android Auto phones GM shows lanes where the turn icon sits, which
  * is what the turn-icon layouts aim for.

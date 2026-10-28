@@ -15,7 +15,7 @@ import com.carlink.ui.settings.LaneGuidanceStore
  *
  * Lane guidance (Settings › Cluster) acts here, all off by default: the iPhone's lanes drawn into
  * the turn icon ([LaneIconComposer]), and Step lanes plus a lane image for GM to place itself. With
- * it off this is exactly the step Carlink3 always sent.
+ * it off this is exactly the step Carlink always sent.
  */
 object ClusterStep {
     fun primary(

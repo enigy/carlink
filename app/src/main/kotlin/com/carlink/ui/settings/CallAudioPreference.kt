@@ -19,7 +19,7 @@ interface Labelled {
  *   if it carries sound, calls use it, otherwise the system's choice. Each call is guarded: a car
  *   call path that goes silent mid-call falls back for the rest of the call and is remembered.
  * - [SYSTEM]: name no input. VOICE_COMMUNICATION, and the OS/HAL pick the device and processing
- *   (Carlink3's "Automatic" before 2026-10-20). On some GM builds that already lands on the car's
+ *   (Carlink's "Automatic" before 2026-10-20). On some GM builds that already lands on the car's
  *   Voice_Uplink path; on others it is the built-in mic with an echo canceller that barely works.
  * - A device path (`device:<TYPE>:<address>`): pinned to one input the car lists, such as GM's
  *   Voice_Uplink bus ("Car call path"). The driver chose it, so it is used on every call with no
@@ -97,7 +97,7 @@ data class AutoCallPath(
 /**
  * How much caller audio the call track may hold before it plays (Carlink2 [226]). App-only.
  *
- * In Carlink3 this sizes the CALL playback track: [LOW] opens it at [bufferMultiplier] 2x the
+ * In Carlink this sizes the CALL playback track: [LOW] opens it at [bufferMultiplier] 2x the
  * platform minimum, [STANDARD] at the 4x every other voice track uses. Caller audio arrives at the
  * rate it plays, so a backlog never drains on its own; a smaller track caps how late the caller's
  * words can get, at the cost of less protection against a hiccup. Takes effect on the next call.

@@ -57,7 +57,7 @@ import java.util.concurrent.atomic.AtomicLong
  * [MEDIA_STOP_MS] after the frames stop: Carlink2's `AUDIO_MEDIA_START` /
  * `AUDIO_MEDIA_STOP` lifecycle. GM's audio manager (the external focus policy) picks the source the
  * steering-wheel and radio Next/Prev buttons go to, and a fresh request made as the music starts is
- * what made it pick Carlink2. Up to v26 Carlink3 held one resting grant from connect, taken before
+ * what made it pick Carlink2. Up to v26 Carlink held one resting grant from connect, taken before
  * anything played: after an install GM stayed on the radio, sent it every Next press, and the radio
  * took over; repeating that request while holding it changed nothing. After a permanent loss focus is
  * not snatched back by the music still in flight (v26 did, 30–50 ms after each loss, while GM had

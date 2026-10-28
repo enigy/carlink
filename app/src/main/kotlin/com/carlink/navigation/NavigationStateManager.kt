@@ -110,7 +110,7 @@ object NavigationStateManager {
     val state: StateFlow<NavigationState> = _state.asStateFlow()
 
     /**
-     * Carlink3: publish a fully built state from [OcbmNavigationFeed] (the OCBM box already decodes
+     * Carlink: publish a fully built state from [OcbmNavigationFeed] (the OCBM box already decodes
      * iAP2 route guidance to JSON, so [onNaviJson]'s stock-NaviJSON merge is not used there).
      * Stamps [lastNaviJsonElapsedMs] so the health checks see the feed as alive.
      */

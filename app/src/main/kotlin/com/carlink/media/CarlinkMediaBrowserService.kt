@@ -176,7 +176,7 @@ class CarlinkMediaBrowserService : MediaLibraryService() {
         // Ignore removal of the cluster's CarAppActivity task (Carlink2 [186], not carried over).
         // restartClusterBinding() finishes that task on every phone connect, and Android delivers
         // onTaskRemoved for ANY task in the app. Before music started that read as the user closing
-        // Carlink3: stopSelf() released the media session ~15 s into each connection and a new one
+        // Carlink: stopSelf() released the media session ~15 s into each connection and a new one
         // replaced it (trails 2026-10-21). Carlink2 traced its broken steering-wheel skip to the same
         // churn; here it is the likely cause of skip changing the audio source once after an install.
         if (rootIntent?.component?.className == CAR_APP_ACTIVITY_CLASS) {

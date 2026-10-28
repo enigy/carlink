@@ -31,7 +31,7 @@ import kotlinx.coroutines.withContext
 /**
  * Settings → Calls → Call audio tests (ported from Carlink2 [223]/[224]): which call path gives the
  * caller the least echo and the clearest voice on this truck. Both run parked, without a call, and
- * try every path in `callPathsToCompare`: Carlink3's two Call microphone choices, Carlink2's
+ * try every path in `callPathsToCompare`: Carlink's two Call microphone choices, Carlink2's
  * equivalents, and the raw mic as the baseline. Summaries show here; the details go to the log
  * ([ECHO_TEST], [VOICE_TEST]), and during real calls the [ECHO_MON] lines add the in-call view.
  */

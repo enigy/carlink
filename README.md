@@ -1,9 +1,9 @@
-# Carlink3
+# Carlink
 
 Wireless CarPlay on a GM AAOS head unit (2024 Silverado, GM Info 3.7), using a Carlinkit CPC200-CCPA
 adapter running **lvalen91's open OCBM stack** instead of the stock Carlinkit firmware.
 
-Carlink3 is the successor to [Carlink2](https://github.com/enigy/Carlink2). Carlink2 stays on the
+Carlink is the successor to [Carlink2](https://github.com/enigy/Carlink2). Carlink2 stays on the
 stock/v5 adapter firmware and is unchanged by this project.
 
 ## Structure (target)
@@ -20,17 +20,17 @@ grant — superseded by `:bridge`).
 
 ## Install
 
-1. Install Carlink3 from Google Play. <!-- TODO: Play link -->
+1. Install Carlink from Google Play. <!-- TODO: Play link -->
 2. Copy [`app/carlink_bridge.apk`](app/carlink_bridge.apk) (Carlink USB Bridge 1.0.5) to a USB drive.
    SHA-256: `d5a4f48cd2dc668caa1e97cee0fe63334a574c6c7e3b0e11695aa45e930f1e79`
-3. While parked, open Carlink3. It shows **USB bridge not installed** with an **Open Files** button
+3. While parked, open Carlink. It shows **USB bridge not installed** with an **Open Files** button
    that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK.
    If asked, allow Files to install apps.
-4. When the install finishes, tap the Carlink3 notification (or press Home and open Carlink3).
+4. When the install finishes, tap the Carlink notification (or press Home and open Carlink).
 
 The bridge uses the same package name as Carlink2's (`android.car.usb.handler`, the name GM's head
-unit hands USB devices to) and answers only Carlink3, so installing it replaces Carlink2's bridge.
-From 1.0.4 it answers only a Carlink3 signed by this project (the Play app-signing or upload
+unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink2's bridge.
+From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload
 certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store.
 To check the download: `shasum -a 256 carlink_bridge.apk` on macOS, `sha256sum carlink_bridge.apk`
 on Linux, or `Get-FileHash carlink_bridge.apk -Algorithm SHA256` in Windows PowerShell.
@@ -66,7 +66,7 @@ signed APK and update the version and SHA-256 above.
   repo). Refresh `proto/ocbm-proto.lib.rs` whenever the box is rebuilt from a newer OCBM.
 - **Style gates:** files ported byte-identical from Carlink2 are excluded from ktlint in `.editorconfig`
   (`ktlint = disabled` per file) and their detekt findings are baselined — Carlink2 ran ktlint with
-  `ignoreFailures=true`, so it never shaped them. Everything written for Carlink3 is gated.
+  `ignoreFailures=true`, so it never shaped them. Everything written for Carlink is gated.
 
 Next: the first bench session — OCBM hello/heartbeat over the bridge, then a CarPlay session, then a
 route on the cluster. See `NOTICE.md` for provenance and the plan in Carlink2's
@@ -84,7 +84,7 @@ the AAB to Google Play (`com.enigy.carlink3`) and attaches both to a GitHub Rele
   pick the track; untick *Upload* to build only. Runs from other branches never upload.
 - **Naming a release:** the bump commit carries the summary (`[7] Connecting screen, call-audio
   choices`, not `Bump appVersionCode`), since it is the workflow run's title; the annotated tag's
-  message becomes the GitHub Release title and intro (`git tag -a v7 -m "Carlink3 v7: …"`).
+  message becomes the GitHub Release title and intro (`git tag -a v7 -m "Carlink v7: …"`).
 - **Play Console, once:** create the app (`com.enigy.carlink3`), grant the existing service account
   release rights to it, and upload the first AAB from the workflow artifact by hand — the API only
   accepts drafts until an app has been rolled out once (the step then fails with

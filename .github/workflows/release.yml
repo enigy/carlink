@@ -24,7 +24,7 @@ name: Release
 #   CARLINK_KEYSTORE_PASSWORD  keystore (store) password
 #   CARLINK_KEY_ALIAS          key alias inside the keystore
 #   CARLINK_KEY_PASSWORD       password for that key
-#   PLAY_SERVICE_ACCOUNT_JSON  JSON key of a Google Cloud service account allowed to release Carlink3
+#   PLAY_SERVICE_ACCOUNT_JSON  JSON key of a Google Cloud service account allowed to release Carlink
 # Variable (… → Variables), optional
 #   CARLINK3_CALLER_CERTS      replaces the bridge's caller pin, same as -Pcarlink3.callerCerts locally.
 #                              Unset = the pins committed in bridge/build.gradle.kts (Play app signing

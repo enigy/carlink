@@ -10,8 +10,8 @@ import com.carlink.MainActivity
 import com.carlink.R
 
 /**
- * [212] The way back to Carlink3 from the Files app, which can't be given a button of its own and
- * offers no route back (on the truck only Home, then Carlink3, worked).
+ * [212] The way back to Carlink from the Files app, which can't be given a button of its own and
+ * offers no route back (on the truck only Home, then Carlink, worked).
  *
  * - Opening Files from the bridge setup panel posts a quiet notification, there in the
  *   notification list the whole time: tap to return.
@@ -20,7 +20,7 @@ import com.carlink.R
  * - MainActivity cancels it on every resume.
  *
  * A notification tap may start an activity from the background; the app itself mostly may not,
- * so Carlink3 can't simply bring itself back when the install finishes.
+ * so Carlink can't simply bring itself back when the install finishes.
  */
 object BridgeSetupNotification {
     private const val WAITING_CHANNEL_ID = "bridge_setup_waiting"

@@ -34,7 +34,7 @@ plugins {
 // Override with -Pcarlink.buildRoot=/some/path if ~/.cache is not writable.
 val buildRoot =
     (findProperty("carlink.buildRoot") as String?)
-        ?: "${System.getProperty("user.home")}/.cache/gradle-builds/carlink3"
+        ?: "${System.getProperty("user.home")}/.cache/gradle-builds/carlink"
 
 allprojects {
     layout.buildDirectory.set(file("$buildRoot/${project.path.replace(':', '_').trim('_').ifEmpty { "root" }}"))

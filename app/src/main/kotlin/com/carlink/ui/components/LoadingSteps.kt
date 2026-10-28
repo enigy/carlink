@@ -16,7 +16,7 @@ internal data class LoadingStatus(
  * the messages that ask the driver to do something (or explain a long wait) come through,
  * unchanged, as [LoadingStatus.action].
  *
- * The vocabulary is Carlink3's (OCBM box): "Searching for adapter…", "Phone found — linking…",
+ * The vocabulary is Carlink's (OCBM box): "Searching for adapter…", "Phone found — linking…",
  * "Pairing code: 123456", "Phone connected", "Starting projection…". Carlink2's stock-firmware
  * phrases are gone with the firmware.
  */

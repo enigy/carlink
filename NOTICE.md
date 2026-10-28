@@ -1,6 +1,6 @@
 # Provenance
 
-Carlink3 is assembled from two public-domain (Unlicense) parents, each imported **with its git
+Carlink is assembled from two public-domain (Unlicense) parents, each imported **with its git
 history** via `git subtree split`, so every line can be traced to where it came from.
 
 | Path in this repo | Origin | Imported from |

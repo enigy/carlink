@@ -26,13 +26,16 @@ import java.util.concurrent.atomic.AtomicInteger
  * arrival order, each with its time. Written once a second and synced to storage every few
  * seconds, so a drive's log survives the truck being switched off without anyone pressing Save Logs.
  *
- * One file per app start (`carlink3-drive-<start>.log`), a new part past [MAX_FILE_BYTES], and
+ * One file per app start (`carlink-drive-<start>.log`), a new part past [MAX_FILE_BYTES], and
  * files older than [RETENTION_DAYS] removed when recording starts. Lines are timestamped so a
  * moment called out on the road ("about 6:42, the cluster went blank") can be found afterwards.
  */
 object DriveLog {
     private const val SUBDIR = "Carlink"
-    private const val PREFIX = "carlink3-drive-"
+    private const val PREFIX = "carlink-drive-"
+
+    /** The name drive logs had before 1.12, in Downloads/Carlink3; [pruneOld] still ages them out. */
+    private const val OLD_PREFIX = "carlink3-drive-"
     private const val MAX_FILE_BYTES = 20L * 1024 * 1024
     private const val RETENTION_DAYS = 7L
     private const val FLUSH_MS = 1000L
@@ -163,7 +166,7 @@ object DriveLog {
         currentFile = opened?.label
         opened?.let {
             val header =
-                "==== Carlink3 drive log ${it.label} (started $started, part $part) ====\n" +
+                "==== Carlink drive log ${it.label} (started $started, part $part) ====\n" +
                     "==== lines: app (I/W/E) and box ([box/<source>], box clock) ====\n"
             runCatching { it.out.write(header.toByteArray(Charsets.UTF_8)) }
         }
@@ -206,15 +209,20 @@ object DriveLog {
         runCatching { s.pfd?.close() }
     }
 
-    /** Remove this app's drive logs older than [RETENTION_DAYS], matched by name, so also those left in Downloads/Carlink3 before 1.12. */
+    /**
+     * Remove this app's drive logs older than [RETENTION_DAYS], matched by name in any folder, so
+     * also those named [OLD_PREFIX] left in Downloads/Carlink3 before 1.12.
+     */
     private fun pruneOld() {
         val ctx = appContext ?: return
         val cutoff = System.currentTimeMillis() / 1000 - RETENTION_DAYS * SECONDS_PER_DAY
         runCatching {
             val resolver = ctx.contentResolver
             val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
-            val selection = "${MediaStore.Downloads.DISPLAY_NAME} LIKE ? AND ${MediaStore.Downloads.DATE_ADDED} < ?"
-            resolver.query(collection, arrayOf(MediaStore.Downloads._ID), selection, arrayOf("$PREFIX%", cutoff.toString()), null)?.use { c ->
+            val name = MediaStore.Downloads.DISPLAY_NAME
+            val selection = "($name LIKE ? OR $name LIKE ?) AND ${MediaStore.Downloads.DATE_ADDED} < ?"
+            val args = arrayOf("$PREFIX%", "$OLD_PREFIX%", cutoff.toString())
+            resolver.query(collection, arrayOf(MediaStore.Downloads._ID), selection, args, null)?.use { c ->
                 while (c.moveToNext()) resolver.delete(ContentUris.withAppendedId(collection, c.getLong(0)), null, null)
             }
         }

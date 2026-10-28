@@ -363,7 +363,7 @@ object Ocbm {
     // Box b7144f0 (2026-10-27) extends the descriptor to Apple's template plus two: 6 is AC Navigation
     // Guidance (0x029E, no visible effect yet), 7 Random Play (0xB9) and 8 Repeat (0xBC), which reach the
     // playing app's changeShuffleMode / changeRepeatMode. Apple Music cycles both; Spotify ignores them.
-    // Carlink3 sends none of 6 to 8: the owner took the pane's shuffle and repeat out (10-28) because
+    // Carlink sends none of 6 to 8: the owner took the pane's shuffle and repeat out (10-28) because
     // they cannot work for every music app. Kept so this table matches the box's.
     const val MEDIA_BTN_NAV_GUIDANCE: Byte = 6
     const val MEDIA_BTN_RANDOM_PLAY: Byte = 7

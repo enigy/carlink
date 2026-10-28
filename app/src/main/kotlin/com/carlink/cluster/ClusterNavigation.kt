@@ -9,7 +9,7 @@ import com.carlink.logging.logWarn
 import com.carlink.ui.settings.DriverProfiles
 
 /**
- * The Cluster Navigation switch (Carlink3). Carlink2 kept this in its AdapterConfigPreference; OCBM's
+ * The Cluster Navigation switch (Carlink). Carlink2 kept this in its AdapterConfigPreference; OCBM's
  * app has no such store, so it is a one-key SharedPreferences file here, in the style of
  * [com.carlink.ui.settings.DisplayModeStore].
  *
@@ -29,7 +29,7 @@ object ClusterNavigation {
      * (`AppInfo.retrieveMinCarAppApiLevel`) and throws "Min API level not declared in manifest" when
      * it is missing. That throw happens in the host's `getAppInfo` call and is reported only to the
      * host, so the app's own log never shows it: the cluster simply never gets a session. Up to v10
-     * Carlink3 declared it on the service element alone.
+     * Carlink declared it on the service element alone.
      */
     const val MIN_CAR_API_LEVEL_KEY = "androidx.car.app.minCarApiLevel"
 

@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * The bridge owns the adapter: it holds the USB permission the platform grants its package silently
  * on every attach, claims the bulk interface, and relays the OCBM byte stream unchanged over a
- * socket. This class is the display-app end of that socket, and the ONLY way Carlink3 reaches the
+ * socket. This class is the display-app end of that socket, and the ONLY way Carlink reaches the
  * adapter: the app has no USB access of its own (removed 2026-10-21, as Carlink2 did in [204]), so
  * it never holds a USB permission, never shows a USB dialog, and needs the bridge installed. It knows
  * nothing about OCBM framing; [OcbmClient]'s `Reassembler` handles that.

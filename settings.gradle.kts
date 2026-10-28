@@ -17,7 +17,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "carlink3"
+rootProject.name = "carlink"
 include(":app")
 
 // Carlink2's USB bridge (package android.car.usb.handler): holds the adapter's USB permission

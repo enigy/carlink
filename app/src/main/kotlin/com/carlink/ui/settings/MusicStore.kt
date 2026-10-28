@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Settings › Phones › Resume music when the phone connects. On (the default): when the phone
- * connects and reports its music stopped or paused, Carlink3 presses Play for it once
+ * connects and reports its music stopped or paused, Carlink presses Play for it once
  * ([com.carlink.media.ConnectPlay]), which is what a native CarPlay head unit does on source select
  * and what the driver expects from the car's own CarPlay. Off: the music waits for the driver, as in
  * 1.01. App-wide, not per iPhone.

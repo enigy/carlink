@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Settings › Display › Layout: the whole panel for CarPlay, or CarPlay on one side with Carlink3's
+ * Settings › Display › Layout: the whole panel for CarPlay, or CarPlay on one side with Carlink's
  * own pane (music, a call, a clock) on the other — Android Auto's dual view, built on CarPlay's own
  * view areas ([SplitViewArea]). The truck's setting, not an iPhone's: it is about the panel.
  * Persisted by [code], never ordinal.

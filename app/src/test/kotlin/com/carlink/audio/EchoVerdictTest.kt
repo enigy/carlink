@@ -20,17 +20,17 @@ class EchoVerdictTest {
         val lines =
             EchoVerdict.lines(
                 listOf(
-                    EchoVerdict.Path("Automatic (Carlink3)", rawMic = false, found = true, lateDb = -40.8),
-                    EchoVerdict.Path("Car call path (Carlink3)", rawMic = false, found = false, lateDb = -83.5),
+                    EchoVerdict.Path("Automatic (Carlink)", rawMic = false, found = true, lateDb = -40.8),
+                    EchoVerdict.Path("Car call path (Carlink)", rawMic = false, found = false, lateDb = -83.5),
                     EchoVerdict.Path("Car call path, call mode (Carlink2)", rawMic = false, found = false, lateDb = -88.3),
                     EchoVerdict.Path("Raw mic", rawMic = true, found = true, lateDb = -36.2),
                 ),
             )
-        assertEquals("Automatic (Carlink3): 5 dB less echo than the raw mic (not working)", lines[0])
-        assertEquals("Car call path (Carlink3): no echo detected, at least 47 dB less than the raw mic", lines[1])
+        assertEquals("Automatic (Carlink): 5 dB less echo than the raw mic (not working)", lines[0])
+        assertEquals("Car call path (Carlink): no echo detected, at least 47 dB less than the raw mic", lines[1])
         assertTrue(
             lines.last(),
-            lines.last().startsWith("Least echo: none detected on Car call path (Carlink3), Car call path, call mode (Carlink2)."),
+            lines.last().startsWith("Least echo: none detected on Car call path (Carlink), Car call path, call mode (Carlink2)."),
         )
     }
 

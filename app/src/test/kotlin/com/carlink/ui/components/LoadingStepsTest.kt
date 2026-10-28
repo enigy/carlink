@@ -7,7 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The connecting screen's three steps, driven by Carlink3's (OCBM) status vocabulary. */
+/** The connecting screen's three steps, driven by Carlink's (OCBM) status vocabulary. */
 class LoadingStepsTest {
     private fun step(
         text: String,

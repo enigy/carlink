@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Settings › Display › Limit CarPlay while driving. On (the default): when Android says the truck is
- * being driven (UX restrictions, which GM derives from gear and speed), Carlink3 tells CarPlay to
+ * being driven (UX restrictions, which GM derives from gear and speed), Carlink tells CarPlay to
  * limit its UI, and CarPlay hides the keyboard and shortens lists. Off: CarPlay is never told, so it
  * stays as it is when parked, for a passenger using it on the move (asked for 2026-10-23). Apps that
  * limit themselves while driving (Messages) still do.

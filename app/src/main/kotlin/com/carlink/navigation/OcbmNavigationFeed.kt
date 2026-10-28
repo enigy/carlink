@@ -10,7 +10,7 @@ import com.carlink.navigation.compose.ComposedIconStore
 import org.json.JSONObject
 
 /**
- * Carlink3's route-guidance source: the OCBM box decodes the iPhone's iAP2 route guidance and
+ * Carlink's route-guidance source: the OCBM box decodes the iPhone's iAP2 route guidance and
  * forwards it as JSON on `CH_METADATA` (`iap2-core/src/metadata.rs`):
  *
  * - `kind=routeGuidance` (0x5201, ~1/s): routeGuidanceState, distanceToManeuverM,

@@ -78,7 +78,7 @@ class CallNotificationHostTest {
     }
 
     @Test
-    fun `nothing is posted while Carlink3 is on screen, and leaving brings the card back`() {
+    fun `nothing is posted while Carlink is on screen, and leaving brings the card back`() {
         val host = CallNotificationHost(ctx) {}
         host.onCallState(call(CallState.STATUS_ACTIVE))
         assertNull("CarPlay's own call screen is showing", shadowOf(nm).getNotification(CallNotificationHost.NOTIFICATION_ID))

@@ -171,7 +171,7 @@ class CarlinkManager(
 
     init {
         live = this
-        // Carlink3: cluster/HUD navigation (from Carlink2). Resolves the Templates Host icon
+        // Carlink: cluster/HUD navigation (from Carlink2). Resolves the Templates Host icon
         // authority the bridge hosts; the compose icon store renders maneuver bitmaps for it.
         NavigationStateManager.initialize(context.applicationContext)
         ComposedIconStore.setEnabled(true)
@@ -191,7 +191,7 @@ class CarlinkManager(
 
         private const val USB_FIND_ATTEMPTS = 10 // × USB_WAIT_PERIOD_MS: ~30 s to find the adapter
 
-        /** Without the bridge Carlink3 can't reach the adapter (it has no USB access of its own). */
+        /** Without the bridge Carlink can't reach the adapter (it has no USB access of its own). */
         private const val INSTALL_BRIDGE_STATUS = "Install the Carlink USB bridge"
 
         /** How long a bridge permission prompt may stay unanswered before the start gives up. */
@@ -607,7 +607,7 @@ class CarlinkManager(
     @Volatile private var appVisible = true
 
     /**
-     * MainActivity started or stopped. While Carlink3 is on screen CarPlay's own call screen is the
+     * MainActivity started or stopped. While Carlink is on screen CarPlay's own call screen is the
      * call UI, so the Android call card is not posted (on AAOS a call card stays heads-up over the
      * projection until it is acted on). Main thread.
      */
@@ -1094,7 +1094,7 @@ class CarlinkManager(
     /**
      * Find the adapter and open it through the USB bridge, or null if we should abandon the start.
      *
-     * The bridge is required: Carlink3 has no USB access of its own (removed 2026-10-21, the way
+     * The bridge is required: Carlink has no USB access of its own (removed 2026-10-21, the way
      * Carlink2 did in [204]), so it never holds a USB permission or shows a USB dialog. Without the
      * bridge there is nothing to retry: the start stops at "Install the Carlink USB bridge" (the
      * connecting screen shows its setup panel) and MainActivity starts again once it is installed.
@@ -1106,7 +1106,7 @@ class CarlinkManager(
      */
     private suspend fun acquireTransport(): RawBulkTransport? {
         if (CarlinkBridge.isInstalled(context)) return acquireBridgeTransport()
-        logWarn("[BRIDGE] USB bridge not installed — Carlink3 can't reach the adapter without it", tag = Logger.Tags.USB)
+        logWarn("[BRIDGE] USB bridge not installed — Carlink can't reach the adapter without it", tag = Logger.Tags.USB)
         cancelReconnect() // nothing changes by retrying until it is installed
         handleFailedStart(INSTALL_BRIDGE_STATUS)
         return null
@@ -1393,7 +1393,7 @@ class CarlinkManager(
         logDebug("[LIFECYCLE] stop()", tag = Logger.Tags.VIDEO)
         cancelDelayedKeyframe()
         cancelReconnect()
-        OcbmNavigationFeed.clear() // Carlink3: drop the route so the cluster does not show a stale trip
+        OcbmNavigationFeed.clear() // Carlink: drop the route so the cluster does not show a stale trip
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
@@ -1459,11 +1459,11 @@ class CarlinkManager(
             logInfo("[LOGS] pulling $BOX_LOG_PATH", tag = Logger.Tags.ADAPTR)
             val box = c.pullFile(BOX_LOG_PATH).getOrElse { return@withContext Result.failure(it) }
             val saved = ArrayList<String>(6)
-            saved += LogExport.save(context, "carlink3-box-$stamp.log", box).getOrElse { return@withContext Result.failure(it) }
+            saved += LogExport.save(context, "carlink-box-$stamp.log", box).getOrElse { return@withContext Result.failure(it) }
             // The per-daemon logs, best effort: a daemon that never ran has no file, which is fine.
             for ((path, label) in BOX_DAEMON_LOGS) {
                 val pulled = c.pullFile(path, timeoutMs = 10_000)
-                pulled.onSuccess { bytes -> LogExport.save(context, "carlink3-$label-$stamp.log", bytes).onSuccess { saved += it } }
+                pulled.onSuccess { bytes -> LogExport.save(context, "carlink-$label-$stamp.log", bytes).onSuccess { saved += it } }
                 pulled.onFailure { logInfo("[LOGS] $path: ${it.message}", tag = Logger.Tags.ADAPTR) }
             }
             // The app's own INFO+ trail, independent of logcat and its filters (Logger.recordTrail).
@@ -1474,9 +1474,9 @@ class CarlinkManager(
                 tag = Logger.Tags.ADAPTR,
             )
             val trail = LogTrail.snapshot().toByteArray(Charsets.UTF_8)
-            saved += LogExport.save(context, "carlink3-trail-$stamp.log", trail).getOrElse { return@withContext Result.failure(it) }
+            saved += LogExport.save(context, "carlink-trail-$stamp.log", trail).getOrElse { return@withContext Result.failure(it) }
             LogExport.appLogcat()?.let { app ->
-                saved += LogExport.save(context, "carlink3-app-$stamp.log", app).getOrElse { return@withContext Result.failure(it) }
+                saved += LogExport.save(context, "carlink-app-$stamp.log", app).getOrElse { return@withContext Result.failure(it) }
             }
             logInfo("[LOGS] saved ${saved.joinToString(", ")} (box log ${box.size} bytes, trail ${trail.size} bytes)", tag = Logger.Tags.ADAPTR)
             Result.success(saved.joinToString(" and "))
@@ -2001,9 +2001,9 @@ class CarlinkManager(
     /**
      * A known adapter attached (USB_DEVICE_ATTACHED broadcast, MainActivity's USB receiver).
      *
-     * With the USB bridge installed this broadcast is Carlink3's only sign that the adapter is back:
+     * With the USB bridge installed this broadcast is Carlink's only sign that the adapter is back:
      * the platform hands the attach INTENT to the bridge (the fixed USB handler), so MainActivity's
-     * onNewIntent never sees it. Without this, Reboot adapter left Carlink3 DISCONNECTED until the
+     * onNewIntent never sees it. Without this, Reboot adapter left Carlink DISCONNECTED until the
      * app was reopened (emulator, 2026-10-20). Carlink2's receiver had the attach action; the port
      * dropped it. A replug after Disconnect adapter reconnects the same way, as its text promises.
      */
@@ -3088,7 +3088,7 @@ class CarlinkManager(
     }
 
     /**
-     * Carlink3: route guidance (0x5201 summary, with the live maneuver index) and maneuver (0x5202,
+     * Carlink: route guidance (0x5201 summary, with the live maneuver index) and maneuver (0x5202,
      * one per route step) records. The summary also claims/releases NAVIGATION app focus (the 3P way
      * to tell AAOS the phone is now the navigator); both feed the cluster/HUD trip.
      */
@@ -3118,7 +3118,7 @@ class CarlinkManager(
                     "callState" -> CallState.fromJson(obj)?.let { cs -> scope.launch { onCallState(cs) } }
                     // 0 = no route. Claiming NAVIGATION app focus is the 3P way to tell AAOS the
                     // phone is now the navigator; a native maps app mid-route is told it lost it.
-                    // Carlink3: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
+                    // Carlink: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
                     "routeGuidance", "maneuver", "laneGuidance" -> onNavigationJson(obj)
                     else -> Unit
                 }

@@ -19,7 +19,7 @@ class SettingsActions(
     val onNavigateBack: () -> Unit,
     val onDisplayModeSelected: (DisplayMode) -> DisplayModeOutcome,
     val onLayoutSelected: (LayoutConfig) -> DisplayModeOutcome = { DisplayModeOutcome.APPLIED },
-    /** Carlink3: tear down and re-establish the Templates Host cluster binding (MainActivity). */
+    /** Carlink: tear down and re-establish the Templates Host cluster binding (MainActivity). */
     val onResetCluster: () -> Unit = {},
 )
 
