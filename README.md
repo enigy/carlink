@@ -21,8 +21,8 @@ grant — superseded by `:bridge`).
 ## Install
 
 1. Install Carlink3 from Google Play. <!-- TODO: Play link -->
-2. Copy [`app/carlink3_bridge.apk`](app/carlink3_bridge.apk) (Carlink3 USB Bridge 1.0.4) to a USB drive.
-   SHA-256: `def49ea644ff5d24c9f0e62aaa29709e7a4cb291047919949122b59101daea95`
+2. Copy [`app/carlink_bridge.apk`](app/carlink_bridge.apk) (Carlink USB Bridge 1.0.5) to a USB drive.
+   SHA-256: `d5a4f48cd2dc668caa1e97cee0fe63334a574c6c7e3b0e11695aa45e930f1e79`
 3. While parked, open Carlink3. It shows **USB bridge not installed** with an **Open Files** button
    that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK.
    If asked, allow Files to install apps.
@@ -32,14 +32,14 @@ The bridge uses the same package name as Carlink2's (`android.car.usb.handler`, 
 unit hands USB devices to) and answers only Carlink3, so installing it replaces Carlink2's bridge.
 From 1.0.4 it answers only a Carlink3 signed by this project (the Play app-signing or upload
 certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store.
-To check the download: `shasum -a 256 carlink3_bridge.apk` on macOS, `sha256sum carlink3_bridge.apk`
-on Linux, or `Get-FileHash carlink3_bridge.apk -Algorithm SHA256` in Windows PowerShell.
+To check the download: `shasum -a 256 carlink_bridge.apk` on macOS, `sha256sum carlink_bridge.apk`
+on Linux, or `Get-FileHash carlink_bridge.apk -Algorithm SHA256` in Windows PowerShell.
 
-Each [GitHub Release](https://github.com/enigy/carlink3/releases) also attaches the bridge as
-`carlink3_bridge-<version>.apk`. The release workflow rebuilds it only when `bridge/` or
+Each [GitHub Release](https://github.com/enigy/carlink/releases) also attaches the bridge as
+`carlink_bridge-<version>.apk`. The release workflow rebuilds it only when `bridge/` or
 `bridge-api/` changed since this file was last committed, and otherwise attaches this file, so the
-hash above holds until the next bridge change (v16 built 1.0.4; earlier releases' attachments have
-their own hashes). When the bridge changes, replace `app/carlink3_bridge.apk` with the release's
+hash above holds until the next bridge change (v111 built 1.0.5; earlier releases' attachments have
+their own hashes). When the bridge changes, replace `app/carlink_bridge.apk` with the release's
 signed APK and update the version and SHA-256 above.
 
 ## Status

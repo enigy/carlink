@@ -3,7 +3,7 @@ name: Release
 # Builds the Play bundle (AAB) for com.enigy.carlink3, signed with the upload key; uploads it to
 # Google Play; attaches the AAB and the sideloaded USB bridge APK to a GitHub Release. The bridge is
 # rebuilt (and signed) only when its source (bridge/, bridge-api/) changed since the commit that last
-# updated app/carlink3_bridge.apk, or when a manual run ticks "rebuild_bridge"; otherwise that
+# updated app/carlink_bridge.apk, or when a manual run ticks "rebuild_bridge"; otherwise that
 # committed APK is attached as is, so its SHA-256 stays the same from release to release. Mirrors
 # Carlink2's release.yml; the differences are the package name, the `sideload` flavor in the task
 # and output names, the CARLINK3_* names, and the bridge reuse.
@@ -69,7 +69,7 @@ jobs:
       BUILD_ROOT: ${{ github.workspace }}/build-out
     steps:
       # Full history: deciding whether the bridge changed needs the commit that last updated
-      # app/carlink3_bridge.apk.
+      # app/carlink_bridge.apk.
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -84,14 +84,14 @@ jobs:
 
       # The bridge is sideloaded by hand, so a rebuild with unchanged source only produces a new file
       # with a new SHA-256 for users to check against. Reuse the committed, already-signed
-      # app/carlink3_bridge.apk unless the bridge source changed since that APK was committed, or a
+      # app/carlink_bridge.apk unless the bridge source changed since that APK was committed, or a
       # manual run asks for a rebuild (the bridge bakes in CARLINK3_CALLER_CERTS, which git can't see).
       - name: Decide whether to rebuild the USB bridge
         id: bridge
         env:
           FORCE: ${{ inputs.rebuild_bridge }}
         run: |
-          committed=app/carlink3_bridge.apk
+          committed=app/carlink_bridge.apk
           base=$(git log -1 --format=%H -- "$committed")
           if [ "$FORCE" = "true" ]; then
             build=true; why="rebuild requested (rebuild_bridge)"
@@ -205,9 +205,9 @@ jobs:
           cp "$BUILD_ROOT/app/outputs/bundle/sideloadRelease/app-sideload-release.aab" "dist/carlink-v$code.aab"
           if [ "$BUILD_BRIDGE" = "true" ]; then
             cp "$BUILD_ROOT/bridge/outputs/apk/release/bridge-release.apk" "dist/carlink_bridge-$bridge.apk"
-            echo "::warning title=USB bridge rebuilt::Commit dist/carlink_bridge-$bridge.apk as app/carlink3_bridge.apk and update its version and SHA-256 in README.md, so later releases reuse it."
+            echo "::warning title=USB bridge rebuilt::Commit dist/carlink_bridge-$bridge.apk as app/carlink_bridge.apk and update its version and SHA-256 in README.md, so later releases reuse it."
           else
-            cp app/carlink3_bridge.apk "dist/carlink_bridge-$bridge.apk"
+            cp app/carlink_bridge.apk "dist/carlink_bridge-$bridge.apk"
           fi
           cp "$BUILD_ROOT/app/outputs/apk/sideload/release/app-sideload-release.apk" "sideload/carlink-v$code.apk"
           cp "$BUILD_ROOT/app/outputs/mapping/sideloadRelease/mapping.txt" "dist/mapping-v$code.txt"
