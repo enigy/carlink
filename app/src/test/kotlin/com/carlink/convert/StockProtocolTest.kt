@@ -99,6 +99,10 @@ class StockProtocolTest {
         assertTrue(SharedStick.isBenchStick(0x46f4, 0x0001))
         assertFalse(SharedStick.isBenchStick(0x1d6b, 0xa4a5))
         assertEquals("the stock firmware installs from this name", "A15W_Update.img", InstallerImage.FILE_NAME)
+        assertTrue("the adapter's share: bcdDevice 4.09", SharedStick.looksLikeAdapterShare(0x1d6b, 0xa4a5, "4.09"))
+        assertFalse(SharedStick.looksLikeAdapterShare(0x1d6b, 0xa4a5, "6.01"))
+        assertFalse(SharedStick.looksLikeAdapterShare(0x1d6b, 0xa4a5, null))
+        assertFalse(SharedStick.looksLikeAdapterShare(0x46f4, 0x0001, "4.09"))
     }
 
     private fun frame(

@@ -26,7 +26,9 @@ data class PinnedImage(
  * enigy/ocbm release when the driver converts, and checked against [PINNED], so a new image means an
  * app release that pins it. Before the image is published, a debug build reads a copy from the head
  * unit instead: `ocbm/A15W_Update.img` in the app's external files folder, with
- * `A15W_Update.img.sha256` beside it, checked the same way.
+ * `A15W_Update.img.sha256` beside it, checked the same way. A head unit with no adb to put it there
+ * (the truck) takes a debug build that carries the copy itself, packed into its assets at build time
+ * (`-Pcarlink.benchImage`, app/build.gradle.kts) and checked the same way again.
  */
 object InstallerImage {
     /**
@@ -77,13 +79,15 @@ interface ImageSupplier {
 }
 
 /**
- * The installer from the bench copy (debug builds, [bench]) or the pinned download, cached by its hash in
- * the app's cache so a retry does not download it again.
+ * The installer from the bench copy (debug builds, [bench]), else the copy packed into a debug build
+ * ([packed], the APK's assets), else the pinned download, cached by its hash in the app's cache so a
+ * retry does not download it again. A release build reads neither copy.
  */
 class InstallerImageStore(
     private val context: Context,
     private val pinned: PinnedImage? = InstallerImage.PINNED,
     private val bench: Boolean = BuildConfig.DEBUG,
+    private val packed: (path: String) -> InputStream? = { path -> runCatching { context.assets.open(path) }.getOrNull() },
 ) : ImageSupplier {
     // Created on first use, so `adb push` has a folder to land in.
     private val benchDir: File? by lazy {
@@ -94,15 +98,27 @@ class InstallerImageStore(
 
     private fun benchFile(): File? = benchDir?.let { File(it, InstallerImage.FILE_NAME) }?.takeIf { it.isFile }
 
-    override fun available(): Boolean = benchFile() != null || pinned != null
+    override fun available(): Boolean = benchFile() != null || packedSidecar() != null || pinned != null
 
     override fun obtain(progress: (done: Long, total: Long) -> Unit): Result<ByteArray> =
         try {
-            benchFile()?.let { fromBench(it) } ?: pinned?.let { fromRelease(it, progress) }
+            benchFile()?.let { fromBench(it) } ?: fromPacked() ?: pinned?.let { fromRelease(it, progress) }
                 ?: Result.failure(IOException("This build has no installer image."))
         } catch (e: IOException) {
             Result.failure(IOException("Could not get the installer: ${e.message}", e))
         }
+
+    /** The packed copy's SHA-256 file, in a debug build that carries one; null otherwise. */
+    private fun packedSidecar(): String? = if (bench) packed("$PACKED_IMAGE.sha256")?.use { String(it.readBytes(), Charsets.UTF_8) } else null
+
+    /** The copy packed into this debug build, checked against its SHA-256 file; null when the build carries none. */
+    private fun fromPacked(): Result<ByteArray>? {
+        val sidecar = packedSidecar() ?: return null
+        val want = InstallerImage.hashIn(sidecar) ?: return Result.failure(IOException("The packed installer's SHA-256 file has no hash."))
+        val bytes = packed(PACKED_IMAGE)?.use { it.readBytes() } ?: return Result.failure(IOException("The packed installer is missing."))
+        logInfo("[CONVERT] installer packed in this build (assets $PACKED_IMAGE, ${bytes.size} B)", tag = Logger.Tags.ADAPTR)
+        return InstallerImage.checked(bytes, want)
+    }
 
     private fun fromBench(file: File): Result<ByteArray> {
         val sidecar = File(file.path + ".sha256")
@@ -166,6 +182,8 @@ class InstallerImageStore(
     }
 
     private companion object {
+        /** Where -Pcarlink.benchImage packs the copy in a debug APK's assets. */
+        const val PACKED_IMAGE = "ocbm/${InstallerImage.FILE_NAME}"
         const val TIMEOUT_MS = 20_000
         const val READ_BUF = 64 * 1024
     }

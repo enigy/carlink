@@ -179,6 +179,32 @@ class StockConversionTest {
     }
 
     @Test
+    fun `an adapter started with its stick in gets guidance only, and the stick is never opened`() {
+        usb.devices[STICK] = ADAPTER_STICK
+        assertFalse("not the adapter's bcdDevice", conversion.strayStick(0x1d6b, 0xa4a5, "5.10", STICK))
+        assertTrue(conversion.strayStick(0x1d6b, 0xa4a5, "4.09", STICK))
+        assertEquals(ConversionPhase.StickInFirst("1d6b:a4a5"), conversion.phase.value)
+        assertFalse("no write is ever offered to it", conversion.wantsStick(0x1d6b, 0xa4a5, STICK))
+        conversion.stickAttached(0x1d6b, 0xa4a5, STICK)
+        Thread.sleep(3 * timing.pollMs + 50)
+        assertTrue("nothing opened: ${usb.opened}", usb.opened.isEmpty())
+        conversion.dismiss()
+        assertEquals(ConversionPhase.Idle, conversion.phase.value)
+        assertFalse("not shown again for this stick", conversion.strayStick(0x1d6b, 0xa4a5, "4.09", STICK))
+        assertTrue("its stick out, the adapter is offered the conversion", conversion.claim("1314:1520"))
+    }
+
+    @Test
+    fun `no stick guidance while a stock adapter is in hand, or with the switch off`() {
+        attachAndAnswer()
+        awaitPhase<ConversionPhase.Offered>()
+        assertFalse(conversion.strayStick(0x1d6b, 0xa4a5, "4.09", STICK))
+        val off = StockConversion(images, conversionOn = false, scope = scope, usb = usb, timing = timing)
+        assertFalse(off.strayStick(0x1d6b, 0xa4a5, "4.09", STICK))
+        assertEquals(ConversionPhase.Idle, off.phase.value)
+    }
+
+    @Test
     fun `the adapter leaving USB as the stick goes in keeps the conversion waiting`() {
         toWaitingForStick()
         adapter.killLink()

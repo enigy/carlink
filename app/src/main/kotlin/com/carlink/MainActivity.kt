@@ -44,6 +44,7 @@ import androidx.lifecycle.lifecycleScope
 import com.carlink.car.VehicleData
 import com.carlink.cluster.ClusterBindingState
 import com.carlink.cluster.ClusterNavigation
+import com.carlink.convert.SharedStick
 import com.carlink.logging.DriveLogging
 import com.carlink.logging.Logger
 import com.carlink.logging.VerboseLogging
@@ -230,6 +231,9 @@ class MainActivity : ComponentActivity() {
                         // the adapter's connect path, which would open and close the bridge's one session under it.
                         logInfo("[USB_ATTACH] the stick the conversion waits for: path=${device.deviceName}", tag = "MAIN")
                         carlinkManager?.stockConversion?.stickAttached(device.vendorId, device.productId, device.deviceName)
+                    } else if (device != null && SharedStick.isAdapterStick(device.vendorId, device.productId)) {
+                        // A shared stick nobody asked for: at most guidance, when it looks like an adapter started with its stick in.
+                        carlinkManager?.stockConversion?.strayStick(device.vendorId, device.productId, device.version, device.deviceName)
                     }
                 } else if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent.action) {
                     device?.let {

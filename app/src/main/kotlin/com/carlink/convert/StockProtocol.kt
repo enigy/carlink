@@ -53,6 +53,7 @@ object SharedStick {
     private const val GADGET_PRODUCT = 0xa4a5
     private const val QEMU_VENDOR = 0x46f4
     private const val QEMU_PRODUCT = 0x0001
+    private const val ADAPTER_BCD = "4.09"
 
     fun isAdapterStick(
         vendorId: Int,
@@ -63,6 +64,19 @@ object SharedStick {
         vendorId: Int,
         productId: Int,
     ): Boolean = vendorId == QEMU_VENDOR && productId == QEMU_PRODUCT
+
+    /**
+     * A shared stick that looks like a Carlinkit adapter's share: the gadget's ids with the adapter's
+     * bcdDevice, 4.09 (Android's [android.hardware.usb.UsbDevice.getVersion]; truck, 29 Oct). Its serial,
+     * 0123456789FEDCBA there, would say more, but Android shows a serial only to an app with USB
+     * permission, which an attach at power-up doesn't give even the bridge. Enough for guidance, never
+     * for a write.
+     */
+    fun looksLikeAdapterShare(
+        vendorId: Int,
+        productId: Int,
+        version: String?,
+    ): Boolean = isAdapterStick(vendorId, productId) && version?.trim() == ADAPTER_BCD
 }
 
 /**

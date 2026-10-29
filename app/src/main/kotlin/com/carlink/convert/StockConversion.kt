@@ -30,6 +30,15 @@ sealed interface ConversionPhase {
     /** No stock adapter in hand. */
     data object Idle : ConversionPhase
 
+    /**
+     * A shared stick that looks like an adapter's ([SharedStick.looksLikeAdapterShare]), with no stock
+     * adapter in hand: most likely the adapter, started with a stick in it, which then never comes up as
+     * itself. Guidance only: the stick is never opened, let alone written, from here.
+     */
+    data class StickInFirst(
+        val usbId: String,
+    ) : ConversionPhase
+
     /** A stock adapter in a build with the switch off: pointed at the stick guide, never opened. */
     data class StickOnly(
         val usbId: String,
@@ -214,6 +223,10 @@ class StockConversion(
     // A stock adapter showed up while the adapter was away installing.
     private var sawStock = false
 
+    // The shared stick [ConversionPhase.StickInFirst] is about, and those its guidance was dismissed for.
+    private var strayName = ""
+    private val strayDismissed = mutableSetOf<String>()
+
     /**
      * A stock adapter ([usbId], "1314:1520") is on USB: true when the manager should open it and hand the
      * link to [attach]. False while a link is held, past "Convert", while a failure or a "Not now" stands,
@@ -304,6 +317,36 @@ class StockConversion(
         if (wantsStick(vendorId, productId, deviceName)) scope.launch(Dispatchers.IO) { take(deviceName) }
     }
 
+    /**
+     * A shared stick on USB that the conversion didn't ask for ([wantsStick] is false). When it looks like an
+     * adapter's share, with no stock adapter in hand and nothing else on screen, the driver is told to take
+     * the stick out, so the adapter comes up alone first ([ConversionPhase.StickInFirst]). True while that
+     * guidance stands for it, so the manager stops looking. Nothing opens the stick from here, ever.
+     */
+    fun strayStick(
+        vendorId: Int,
+        productId: Int,
+        version: String?,
+        deviceName: String,
+    ): Boolean {
+        val show =
+            synchronized(lock) {
+                val now = phaseState.value
+                val free = now == ConversionPhase.Idle || now == ConversionPhase.Declined || now is ConversionPhase.StickInFirst
+                when {
+                    !conversionOn || !SharedStick.looksLikeAdapterShare(vendorId, productId, version) -> false
+                    link != null || !free || deviceName in strayDismissed -> false
+                    else -> {
+                        strayName = deviceName
+                        phaseState.value = ConversionPhase.StickInFirst(StockAdapters.usbId(vendorId, productId))
+                        true
+                    }
+                }
+            }
+        if (show) logInfo("[CONVERT] $deviceName looks like an adapter's shared stick, with no stock adapter in hand: guidance only", tag = Logger.Tags.ADAPTR)
+        return show
+    }
+
     /** The stick is open through the bridge, or being opened: the bridge's one session is the stick's. */
     val holdsStick: Boolean
         get() =
@@ -357,6 +400,11 @@ class StockConversion(
             synchronized(lock) {
                 val now = phaseState.value
                 if (!dismissable(now)) return
+                if (now is ConversionPhase.StickInFirst) {
+                    strayDismissed += strayName // not shown again for this stick
+                    phaseState.value = ConversionPhase.Idle
+                    return@synchronized false
+                }
                 if (now is ConversionPhase.StickReady && now.returned) gaveUp = true
                 open = stick
                 stick = null
@@ -385,6 +433,7 @@ class StockConversion(
                 returning = false
                 sawStock = false
                 notStick.clear()
+                strayDismissed.clear()
                 phaseState.value = ConversionPhase.Idle
                 wait?.cancel()
                 watch?.cancel()
@@ -633,7 +682,7 @@ class StockConversion(
     /** A panel with a button that ends it: [dismiss] does something there. */
     private fun dismissable(p: ConversionPhase): Boolean =
         when (p) {
-            is ConversionPhase.Offered, is ConversionPhase.StickOnly, is ConversionPhase.Failed -> true
+            is ConversionPhase.Offered, is ConversionPhase.StickOnly, is ConversionPhase.Failed, is ConversionPhase.StickInFirst -> true
             is ConversionPhase.StickProblem, is ConversionPhase.StickReady -> true
             ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter -> true
             else -> false

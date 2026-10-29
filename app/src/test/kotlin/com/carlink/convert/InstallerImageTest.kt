@@ -55,6 +55,33 @@ class InstallerImageTest {
     }
 
     @Test
+    fun `a debug build packed with the installer reads it from its assets, checked like the bench copy`() {
+        val assets = mutableMapOf<String, ByteArray>()
+        val store = InstallerImageStore(context, pinned = null, bench = true) { path -> assets[path]?.inputStream() }
+        File(store.benchFolder!!).listFiles()?.forEach { it.delete() }
+        assertFalse(store.available())
+        assets["ocbm/${InstallerImage.FILE_NAME}"] = image
+        assets["ocbm/${InstallerImage.FILE_NAME}.sha256"] = "$hash  ${InstallerImage.FILE_NAME}\n".toByteArray()
+        assertTrue(store.available())
+        assertArrayEquals(image, store.obtain { _, _ -> }.getOrThrow())
+        assets["ocbm/${InstallerImage.FILE_NAME}.sha256"] = InstallerImage.sha256Hex("other".toByteArray()).toByteArray()
+        assertTrue("wrong hash", store.obtain { _, _ -> }.isFailure)
+        val bench = "a newer bench copy".toByteArray()
+        File(store.benchFolder!!, InstallerImage.FILE_NAME).writeBytes(bench)
+        File(store.benchFolder!!, "${InstallerImage.FILE_NAME}.sha256").writeText(InstallerImage.sha256Hex(bench))
+        assertArrayEquals("the bench copy comes first", bench, store.obtain { _, _ -> }.getOrThrow())
+        File(store.benchFolder!!).listFiles()?.forEach { it.delete() }
+    }
+
+    @Test
+    fun `a release build never reads a packed copy`() {
+        val assets = mapOf("ocbm/${InstallerImage.FILE_NAME}" to image, "ocbm/${InstallerImage.FILE_NAME}.sha256" to hash.toByteArray())
+        val store = InstallerImageStore(context, pinned = null, bench = false) { path -> assets[path]?.inputStream() }
+        assertFalse(store.available())
+        assertTrue(store.obtain { _, _ -> }.isFailure)
+    }
+
+    @Test
     fun `a release build has no bench copy and nothing to send until an image is pinned`() {
         val store = InstallerImageStore(context, pinned = null, bench = false)
         assertNull(store.benchFolder)

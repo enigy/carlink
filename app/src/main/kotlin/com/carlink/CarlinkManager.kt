@@ -29,6 +29,7 @@ import com.carlink.cluster.ClusterNavigation
 import com.carlink.convert.BridgeStickTransport
 import com.carlink.convert.ConversionUsb
 import com.carlink.convert.InstallerImageStore
+import com.carlink.convert.SharedStick
 import com.carlink.convert.StockAdapters
 import com.carlink.convert.StockConversion
 import com.carlink.device.KnownDevice
@@ -204,6 +205,7 @@ class CarlinkManager(
 
         /** Under the conversion's panels, and on its own once the driver has dismissed them. */
         private const val STOCK_ADAPTER_STATUS = "Adapter runs Carlinkit firmware — Carlink needs an OCBM adapter"
+        private const val STICK_IN_ADAPTER_STATUS = "A USB stick in the adapter? Take it out"
 
         /** How long a bridge permission prompt may stay unanswered before the start gives up. */
         private const val BRIDGE_PROMPT_WAIT_MS = 30_000L
@@ -1163,20 +1165,31 @@ class CarlinkManager(
             handleFailedStart("Adapter not found")
             return null
         }
-        if (released) return null
-        if (stockConversion.holdsStick) {
-            // The bridge relays one session and the conversion's stick has it: opening anything would cut the stick off.
-            logInfo("[CONVERT] ${dev.deviceName} left alone: the conversion holds the bridge for its stick", tag = Logger.Tags.USB)
-            setState(State.DISCONNECTED)
-            setStatusText(STOCK_ADAPTER_STATUS)
-            return null
-        }
-        if (StockAdapters.isStock(dev.vendorId, dev.productId)) {
-            takeStockAdapter(dev)
-            return null
-        }
+        if (released || noSessionFor(dev)) return null
         stockConversion.reset() // an OCBM adapter: a converted one back in its trial, or another
         return openThroughBridge(dev.deviceName)
+    }
+
+    /** True when [dev] gets no OCBM session: the conversion holds the bridge, or it is a shared stick or a stock adapter. */
+    private suspend fun noSessionFor(dev: UsbDevice): Boolean {
+        when {
+            stockConversion.holdsStick -> {
+                // The bridge relays one session and the conversion's stick has it: opening anything would cut the stick off.
+                logInfo("[CONVERT] ${dev.deviceName} left alone: the conversion holds the bridge for its stick", tag = Logger.Tags.USB)
+                setState(State.DISCONNECTED)
+                setStatusText(STOCK_ADAPTER_STATUS)
+            }
+            SharedStick.isAdapterStick(dev.vendorId, dev.productId) -> {
+                // Most likely the adapter, started with a stick in it: the conversion shows guidance, nothing opens the stick.
+                logInfo("[CONVERT] ${dev.deviceName}: an adapter's shared stick, no adapter; guidance only", tag = Logger.Tags.USB)
+                cancelReconnect()
+                setState(State.DISCONNECTED)
+                setStatusText(STICK_IN_ADAPTER_STATUS)
+            }
+            StockAdapters.isStock(dev.vendorId, dev.productId) -> takeStockAdapter(dev)
+            else -> return false
+        }
+        return true
     }
 
     /** Bind the bridge, hold USB permission for [name] and open it; null (reported) on any failure. */
@@ -1192,18 +1205,26 @@ class CarlinkManager(
 
     /**
      * The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s: the OCBM
-     * adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the conversion.
-     * A conversion's USB stick never comes this way ([openConversionStick]).
+     * adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the conversion,
+     * or else a shared stick that looks like an adapter's, for which the conversion shows guidance
+     * ([StockConversion.strayStick]). A conversion's USB stick never comes this way ([openConversionStick]).
      */
     private suspend fun awaitAdapterListed(): UsbDevice? {
         var attempts = 0
         while (attempts < USB_FIND_ATTEMPTS) {
-            (BridgeBulkTransport.findAdapter(context) ?: StockAdapters.find(context))?.let { return it }
+            (BridgeBulkTransport.findAdapter(context) ?: StockAdapters.find(context) ?: strayStick())?.let { return it }
             attempts++
             delay(USB_WAIT_PERIOD_MS)
         }
         return null
     }
+
+    /** A shared stick for which the conversion now shows "take the stick out" guidance; it is never opened. */
+    private fun strayStick(): UsbDevice? =
+        usbDevices().firstOrNull {
+            SharedStick.isAdapterStick(it.vendorId, it.productId) &&
+                stockConversion.strayStick(it.vendorId, it.productId, it.version, it.deviceName)
+        }
 
     /**
      * A stock adapter instead of an OCBM one. Carlink can't run a session on Carlinkit firmware, so no

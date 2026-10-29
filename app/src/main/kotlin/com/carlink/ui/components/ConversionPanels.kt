@@ -67,6 +67,13 @@ private fun conversionPanel(
             PanelContent(title = "Carlinkit adapter found", body = "Asking it for its model and firmware version.", meta = phase.usbId, busy = true)
         is ConversionPhase.Offered -> offerPanel(phase, conversion, onConvert)
         is ConversionPhase.Failed -> PanelContent(phase.title, phase.body, actions = listOf(ok))
+        is ConversionPhase.StickInFirst ->
+            PanelContent(
+                meta = "${phase.usbId} · a USB stick",
+                title = "Is there a USB stick in your adapter?",
+                body = "If this is your adapter with a USB stick in it, take the stick out. Carlink checks the adapter first and asks for the stick when it's time.",
+                actions = listOf(ok),
+            )
         is ConversionPhase.Converting -> stickPanel(phase, conversion)
     }
 }
