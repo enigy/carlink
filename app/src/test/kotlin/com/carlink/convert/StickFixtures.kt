@@ -1,6 +1,5 @@
 package com.carlink.convert
 
-import com.carlink.ocbm.RawBulkTransport
 import me.jahnen.libaums.core.driver.BlockDeviceDriver
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -126,91 +125,146 @@ internal object Fat32Format {
 }
 
 /**
- * A USB stick as the bridge relays it: Bulk-Only Transport over [disk]. Each write is part of a command
- * block, or of its data; the answer (data IN, then the status) goes to the read handler at once. [onCommand]
- * may answer for the disk: a status, or null to let the disk answer.
+ * A USB stick as the bridge's on-request session reaches it: Bulk-Only Transport over [disk], as strict as
+ * the emulator bench's QEMU stick. A read where the stick has nothing to send stalls its IN endpoint until
+ * the halt is cleared; a read for the status that asks 16 bytes or more gets QEMU's padded 16. [onCommand]
+ * may answer for the disk (a status, or null to let the disk answer).
  */
 internal class FakeStickTransport(
     private val disk: MemoryStick,
-) : RawBulkTransport {
-    private var handler: ((ByteArray, Int) -> Unit)? = null
-    private var dead: (() -> Unit)? = null
-    private var pending: ByteBuffer? = null
-    private var cbw: ByteBuffer? = null
+) : StickTransport {
+    private enum class Phase { COMMAND, DATA_IN, DATA_OUT, STATUS }
 
-    @Volatile var running = false
+    private var phase = Phase.COMMAND
+    private var tag = 0
+    private var status = 0
+    private var dataIn = ByteArray(0)
+    private var cb = ByteBuffer.allocate(16)
+    private var dataOut: ByteBuffer? = null
+
+    @Volatile var open = true
+
+    /** The IN endpoint is halted: every read fails until [clearHalt]. */
+    @Volatile var halted = false
     val commands = mutableListOf<Int>()
+    val readSizes = mutableListOf<Int>()
+    val clears = mutableListOf<Boolean>()
+    var resets = 0
 
     @Volatile var onCommand: ((op: Int) -> Int?)? = null
 
     @Volatile var badTag = false
 
-    // What the stick still had to send when the bridge took it from the head unit's driver: sent as reading starts.
-    @Volatile var leftover: ByteArray? = null
+    /** The next data IN phase stalls, as a stick's does on an error; the status that follows says failed. */
+    @Volatile var stallDataIn = false
 
-    override fun setReadHandler(handler: (ByteArray, Int) -> Unit) {
-        this.handler = handler
+    /** The head unit's driver was mid-command when the bridge took the stick: [bytes] of an answer still to send. */
+    fun midAnswer(bytes: Int) {
+        phase = Phase.DATA_IN
+        dataIn = ByteArray(bytes)
+        tag = 999
     }
 
-    override fun setDeadHandler(handler: () -> Unit) {
-        dead = handler
-    }
-
-    override fun start() {
-        running = true
-        leftover?.let { deliver(it) }
-    }
-
-    override fun stop() {
-        running = false
-    }
-
-    override fun writeBulk(data: ByteArray): Boolean {
-        if (!running) return false
-        val out = pending
-        if (out != null) {
-            out.put(data)
-            if (!out.hasRemaining()) {
-                pending = null
-                finish(cbw ?: error("data with no command"), out.array())
+    override fun write(
+        data: ByteArray,
+        timeoutMs: Int,
+    ): Boolean {
+        if (!open) return false
+        return when (phase) {
+            Phase.COMMAND -> command(data)
+            Phase.DATA_OUT -> {
+                val out = dataOut ?: return false
+                out.put(data)
+                if (!out.hasRemaining()) finish(out.array())
+                true
             }
-            return true
+            else -> false // not waiting for anything OUT: a stall
         }
+    }
+
+    private fun command(data: ByteArray): Boolean {
         val c = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-        check(data.size == 31 && c.getInt(0) == 0x43425355) { "not a CBW: ${data.size} bytes" }
+        if (data.size != 31 || c.getInt(0) != 0x43425355) return false
+        tag = c.getInt(4)
         val length = c.getInt(8)
-        val dataIn = (c.get(12).toInt() and 0x80) != 0
-        if (length > 0 && !dataIn) {
-            cbw = c
-            pending = ByteBuffer.allocate(length)
+        cb = ByteBuffer.wrap(data.copyOfRange(15, 31)).order(ByteOrder.BIG_ENDIAN)
+        if (length > 0 && (c.get(12).toInt() and 0x80) == 0) {
+            dataOut = ByteBuffer.allocate(length)
+            phase = Phase.DATA_OUT
         } else {
-            finish(c, null)
+            finish(null)
         }
         return true
     }
 
-    private fun finish(
-        c: ByteBuffer,
-        dataOut: ByteArray?,
-    ) {
-        val op = c.get(15).toInt() and 0xFF
+    private fun finish(out: ByteArray?) {
+        val op = cb.get(0).toInt() and 0xFF
         synchronized(commands) { commands += op }
-        val block = ByteArray(16)
-        c.position(15)
-        c.get(block)
-        val cb = ByteBuffer.wrap(block).order(ByteOrder.BIG_ENDIAN)
         val forced = onCommand?.invoke(op)
-        val (data, status) = if (forced != null) ByteArray(0) to forced else answer(op, cb, dataOut)
-        if (data.isNotEmpty()) deliver(data)
-        val csw = ByteBuffer.allocate(13).order(ByteOrder.LITTLE_ENDIAN)
-        csw.putInt(0x53425355).putInt(c.getInt(4) + if (badTag) 1 else 0)
-        csw.putInt(0).put(status.toByte())
-        deliver(csw.array())
+        val (data, s) = if (forced != null) ByteArray(0) to forced else answer(op, out)
+        status = s
+        dataIn = data
+        phase = if (data.isNotEmpty()) Phase.DATA_IN else Phase.STATUS
+    }
+
+    override fun read(
+        length: Int,
+        timeoutMs: Int,
+    ): ByteArray? {
+        if (!open || halted) return null
+        synchronized(readSizes) { readSizes += length }
+        return when (phase) {
+            Phase.DATA_IN -> {
+                if (stallDataIn) {
+                    stallDataIn = false
+                    halted = true
+                    status = 1
+                    phase = Phase.STATUS
+                    return null
+                }
+                val n = minOf(length, dataIn.size) // more asked than there is: a short packet
+                val out = dataIn.copyOf(n)
+                dataIn = dataIn.copyOfRange(n, dataIn.size)
+                if (dataIn.isEmpty()) phase = Phase.STATUS
+                out
+            }
+            Phase.STATUS -> {
+                phase = Phase.COMMAND
+                val csw = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
+                csw.putInt(0x53425355).putInt(tag + if (badTag) 1 else 0)
+                csw.putInt(0).put(status.toByte())
+                csw.array().copyOf(if (length >= 16) 16 else 13)
+            }
+            else -> {
+                halted = true // nothing to send: the stick stalls the IN, as QEMU's does
+                null
+            }
+        }
+    }
+
+    override fun clearHalt(inEndpoint: Boolean): Boolean {
+        synchronized(clears) { clears += inEndpoint }
+        if (inEndpoint) halted = false
+        return open
+    }
+
+    override fun resetBulkOnly(): Boolean {
+        resets++
+        phase = Phase.COMMAND
+        dataIn = ByteArray(0)
+        dataOut = null
+        halted = false
+        return open
+    }
+
+    override fun takeTrace(): String = ""
+
+    override fun close() {
+        open = false
     }
 
     private fun answer(
         op: Int,
-        cb: ByteBuffer,
         dataOut: ByteArray?,
     ): Pair<ByteArray, Int> =
         when (op) {
@@ -235,22 +289,6 @@ internal class FakeStickTransport(
         val b = ByteBuffer.allocate(8)
         b.putInt((disk.blocks - 1).toInt()).putInt(MemoryStick.BLOCK)
         return b.array()
-    }
-
-    /** In pieces of up to 16 KiB, as the bridge's read pump hands them on. */
-    private fun deliver(bytes: ByteArray) {
-        var at = 0
-        while (at < bytes.size) {
-            val n = minOf(16 * 1024, bytes.size - at)
-            handler?.invoke(bytes.copyOfRange(at, at + n), n)
-            at += n
-        }
-    }
-
-    /** The stick pulled out: the bridge's read loop ends. */
-    fun pull() {
-        running = false
-        dead?.invoke()
     }
 }
 

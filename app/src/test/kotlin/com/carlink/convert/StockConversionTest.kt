@@ -192,7 +192,7 @@ class StockConversionTest {
         val stick = MemoryStick.partitioned(64)
         plugStick(stick, STICK)
         awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
-        assertFalse("the stick is let go", bridges.getValue(STICK).running)
+        assertFalse("the stick is let go", bridges.getValue(STICK).open)
         val fs = fat32(stick)
         assertEquals(listOf(StickFiles.IMAGE), names(fs))
         assertEquals(InstallerImage.sha256Hex(images.image!!), InstallerImage.sha256Hex(read(fs, StickFiles.IMAGE)))
@@ -250,7 +250,7 @@ class StockConversionTest {
         assertTrue(conversion.holdsStick)
         conversion.dismiss()
         assertFalse(conversion.holdsStick)
-        assertFalse("the stick is let go", bridges.getValue(STICK).running)
+        assertFalse("the stick is let go", bridges.getValue(STICK).open)
     }
 
     @Test

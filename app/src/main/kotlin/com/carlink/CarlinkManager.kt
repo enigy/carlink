@@ -26,6 +26,7 @@ import com.carlink.callui.CallState
 import com.carlink.car.AppFocusClaimer
 import com.carlink.car.DriveStateMonitor
 import com.carlink.cluster.ClusterNavigation
+import com.carlink.convert.BridgeStickTransport
 import com.carlink.convert.ConversionUsb
 import com.carlink.convert.InstallerImageStore
 import com.carlink.convert.StockAdapters
@@ -1228,12 +1229,19 @@ class CarlinkManager(
     private suspend fun openConversionStick(name: String) {
         if (released) return
         val bridge = bindRawStreamBridge()
-        val t = bridge?.takeIf { awaitBridgePermission(it, name) }?.let { BridgeBulkTransport.open(it, name, usbLog) }
+        val api = bridge?.let { b -> runCatching { b.apiVersion }.getOrDefault(-1) } ?: -1
+        if (bridge != null && api < BridgeContract.ON_REQUEST_API_VERSION) {
+            // A stick needs reads of an exact length, on request; an older bridge only has the adapter's read pump.
+            logWarn("[CONVERT] bridge API $api can't open a stick on request (needs ${BridgeContract.ON_REQUEST_API_VERSION})", tag = Logger.Tags.USB)
+            stockConversion.stickOpened(null, bridgeTooOld = true)
+            return
+        }
+        val t = bridge?.takeIf { awaitBridgePermission(it, name) }?.let { BridgeStickTransport.open(it, name, trace = BuildConfig.DEBUG) }
         if (t == null) {
             val why = bridge?.let { b -> runCatching { b.status }.getOrNull() } ?: "no bridge"
             logWarn("[CONVERT] the stick $name didn't open — $why", tag = Logger.Tags.USB)
         } else {
-            logInfo("[CONVERT] the stick $name is open: ${t.bridgeStatus()}", tag = Logger.Tags.USB)
+            logInfo("[CONVERT] the stick $name is open on request: ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
         }
         stockConversion.stickOpened(t)
     }

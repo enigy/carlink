@@ -1,6 +1,7 @@
 package com.carlink.ocbm
 
 import android.os.ParcelFileDescriptor
+import com.carlink.convert.BridgeStickTransport
 import com.carlink.logging.ProbeLog
 import com.enigy.carlink2.bridge.ICarlinkBridge
 import org.junit.Assert.assertEquals
@@ -31,6 +32,25 @@ class BridgeBulkTransportTest {
         assertEquals(1, bridge.closes)
     }
 
+    @Test
+    fun `a stick opened on request takes the session from the adapter's link, which can't touch it after`() {
+        assumeTrue("a never-ending stream to read", ENDLESS.exists())
+        val bridge = FakeBridge()
+        val adapter = open(bridge, ADAPTER)
+        assertTrue(adapter.writeBulk(ByteArray(16)))
+        val stick = BridgeStickTransport.open(bridge, STICK, trace = true) ?: throw AssertionError("the stick didn't open")
+        assertFalse("the adapter's heartbeat must not reach the stick", adapter.writeBulk(ByteArray(16)))
+        assertTrue(stick.write(ByteArray(31), 1_000))
+        assertEquals(13, stick.read(13, 1_000)?.size)
+        assertTrue(stick.resetBulkOnly())
+        adapter.stop()
+        assertEquals("the adapter's close left the stick's session alone", 0, bridge.closes)
+        assertEquals(listOf(ADAPTER, STICK), bridge.writes)
+        stick.close()
+        assertEquals(1, bridge.closes)
+        assertEquals("closed, the stick reads nothing more", null, stick.read(13, 1_000))
+    }
+
     private fun open(
         bridge: FakeBridge,
         name: String,
@@ -58,6 +78,21 @@ class BridgeBulkTransportTest {
             writes += session ?: "no session"
             return data?.size ?: -1
         }
+
+        override fun openOnRequest(
+            deviceName: String?,
+            trace: Boolean,
+        ): Boolean {
+            session = deviceName
+            return true
+        }
+
+        override fun read(
+            length: Int,
+            timeoutMs: Int,
+        ): ByteArray? = if (session == null) null else ByteArray(length)
+
+        override fun resetBulkOnly(): Boolean = session != null
 
         override fun close() {
             closes++

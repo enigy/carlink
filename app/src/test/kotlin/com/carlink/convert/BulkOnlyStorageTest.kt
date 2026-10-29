@@ -11,7 +11,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.random.Random
 
-/** USB mass storage over the bridge, against a stick in memory: the commands, the byte stream split back up, and its failures. */
+/** USB mass storage over the bridge's on-request session, against a strict stick in memory: each phase, and each way it fails. */
 @RunWith(RobolectricTestRunner::class)
 class BulkOnlyStorageTest {
     @Test
@@ -33,7 +33,32 @@ class BulkOnlyStorageTest {
         assertEquals(InstallerImage.sha256Hex(image), InstallerImage.sha256Hex(back))
         val ops = synchronized(bridge.commands) { bridge.commands.toSet() }
         assertTrue("INQUIRY, TEST UNIT READY, READ CAPACITY, READ, WRITE, SYNCHRONIZE CACHE: $ops", ops.containsAll(listOf(0x12, 0x00, 0x25, 0x28, 0x2A, 0x35)))
-        assertTrue("the bridge is let go", !bridge.running)
+        assertTrue("never a stall, so never a recovery", bridge.clears.isEmpty() && bridge.resets == 0)
+        assertTrue("the stick is let go", !bridge.open)
+    }
+
+    @Test
+    fun `only what a command block announced is read, and the status in exactly 13 bytes`() {
+        val bridge = FakeStickTransport(MemoryStick(4096))
+        val storage = BulkOnlyStorage(bridge, timeoutMs = 2_000)
+        storage.init()
+        bridge.readSizes.clear()
+        storage.read(0, ByteBuffer.allocate(512))
+        assertEquals(listOf(512, 13), bridge.readSizes)
+        assertTrue("no read the stick wasn't expecting: it would have stalled", !bridge.halted && bridge.clears.isEmpty())
+    }
+
+    @Test
+    fun `whatever the head unit's driver left mid-answer is cleared by reset recovery, and the first command asked again`() {
+        val bridge = FakeStickTransport(MemoryStick(4096))
+        bridge.midAnswer(20)
+        val lines = mutableListOf<String>()
+        val storage = BulkOnlyStorage(bridge, timeoutMs = 2_000, trace = { lines += it })
+        storage.init()
+        assertEquals(4096L, storage.blocks)
+        assertEquals(1, bridge.resets)
+        assertTrue(lines.toString(), lines.contains("reset recovery: done"))
+        assertEquals("INQUIRY once it was heard, then on", listOf(0x12, 0x00, 0x25), bridge.commands)
     }
 
     @Test
@@ -45,18 +70,6 @@ class BulkOnlyStorageTest {
         storage.init()
         assertEquals(4096L, storage.blocks)
         assertEquals(listOf(0x12, 0x00, 0x03, 0x00, 0x03, 0x00, 0x25), bridge.commands)
-    }
-
-    @Test
-    fun `the rest of an answer the head unit's driver was getting is dropped before the first command`() {
-        val bridge = FakeStickTransport(MemoryStick(4096))
-        bridge.leftover = ByteArray(16) { 7 } + ByteArray(13) // the end of a data phase, then its status
-        val lines = mutableListOf<String>()
-        val storage = BulkOnlyStorage(bridge, timeoutMs = 2_000, trace = { synchronized(lines) { lines += it } })
-        storage.init()
-        assertEquals(4096L, storage.blocks)
-        assertTrue(lines.toString(), lines.contains("dropped 29 B the stick had left from before the claim"))
-        assertTrue(lines.toString(), lines.any { it.startsWith("CBW tag 1 op 0x12, 36 B in: sent") })
     }
 
     @Test
@@ -74,14 +87,53 @@ class BulkOnlyStorageTest {
     }
 
     @Test
-    fun `a status for another command ends the session`() {
+    fun `a stalled data phase clears the halt and still reads the status`() {
         val bridge = FakeStickTransport(MemoryStick(4096))
+        val storage = BulkOnlyStorage(bridge, timeoutMs = 2_000)
+        storage.init()
+        bridge.stallDataIn = true
+        try {
+            storage.read(0, ByteBuffer.allocate(512))
+            fail("the read failed")
+        } catch (e: IOException) {
+            assertTrue(e.message, e.message.orEmpty().startsWith("SCSI 0x28 failed (status 1"))
+        }
+        assertEquals("the IN halt cleared", listOf(true), bridge.clears)
+        assertEquals("no reset needed", 0, bridge.resets)
+        val again = ByteBuffer.allocate(512)
+        storage.read(0, again)
+        assertEquals("in step again", 512, again.position())
+    }
+
+    @Test
+    fun `a status for another command means reset recovery, and the session says so`() {
+        val bridge = FakeStickTransport(MemoryStick(4096))
+        val storage = BulkOnlyStorage(bridge, timeoutMs = 2_000)
+        storage.init()
         bridge.badTag = true
         try {
-            BulkOnlyStorage(bridge, timeoutMs = 2_000).init()
+            storage.read(0, ByteBuffer.allocate(512))
             fail("out of step")
         } catch (e: IOException) {
             assertEquals("the stick's answer is out of step", e.message)
+        }
+        assertEquals(1, bridge.resets)
+    }
+
+    @Test
+    fun `a stick gone mid-command gives no status`() {
+        val bridge = FakeStickTransport(MemoryStick(4096))
+        val storage = BulkOnlyStorage(bridge, timeoutMs = 2_000)
+        storage.init()
+        bridge.onCommand = { _ ->
+            bridge.open = false
+            null
+        }
+        try {
+            storage.read(0, ByteBuffer.allocate(512))
+            fail("gone")
+        } catch (e: IOException) {
+            assertEquals("the stick gave no status", e.message)
         }
     }
 
@@ -115,27 +167,5 @@ class BulkOnlyStorageTest {
         assertEquals(10, cbw.get(14).toInt())
         assertEquals(0x28, cbw.get(15).toInt())
         assertEquals(0, BulkOnlyStorage.cbw(8, 512, dataIn = false, cb = read10)[12].toInt())
-    }
-
-    @Test
-    fun `the inbox hands back exact lengths across pieces, and fails when the stick goes or goes quiet`() {
-        val inbox = ByteInbox()
-        inbox.put(byteArrayOf(1, 2, 3), 3)
-        inbox.put(byteArrayOf(4, 5, 9, 9), 2)
-        assertEquals(listOf<Byte>(1, 2), inbox.read(2, 100).toList())
-        assertEquals(listOf<Byte>(3, 4, 5), inbox.read(3, 100).toList())
-        try {
-            inbox.read(1, 50)
-            fail("nothing came")
-        } catch (e: IOException) {
-            assertEquals("the stick did not answer within 0 s", e.message)
-        }
-        inbox.close()
-        try {
-            inbox.read(1, 1_000)
-            fail("closed")
-        } catch (e: IOException) {
-            assertEquals("the stick went away", e.message)
-        }
     }
 }

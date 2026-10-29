@@ -313,10 +313,17 @@ class StockConversion(
                 else -> false
             }
 
-    /** The stick [take] asked the manager for, opened through the bridge; null when it couldn't be (the manager logged why). */
-    fun stickOpened(transport: RawBulkTransport?) {
+    /**
+     * The stick [take] asked the manager for, opened through the bridge; null when it couldn't be (the
+     * manager logged why), or because the installed bridge is older than the stick needs ([bridgeTooOld]).
+     */
+    fun stickOpened(
+        transport: StickTransport?,
+        bridgeTooOld: Boolean = false,
+    ) {
         if (transport == null) {
-            moveOn<ConversionPhase.ReadingStick>(ConversionPhase.StickProblem(CANT_OPEN, "The USB bridge couldn't open it. $PUT_BACK"))
+            val why = if (bridgeTooOld) BRIDGE_TOO_OLD else "The USB bridge couldn't open it. $PUT_BACK"
+            moveOn<ConversionPhase.ReadingStick>(ConversionPhase.StickProblem(CANT_OPEN, why))
             return
         }
         val trace: ((String) -> Unit)? = if (BuildConfig.DEBUG) { line -> logInfo("[STICK] $line", tag = Logger.Tags.USB) } else null
@@ -668,6 +675,9 @@ class StockConversion(
         const val MS_PER_MINUTE = 60_000L
         const val MIB = 1024L * 1024
         const val PUT_BACK = "Take the stick out of the adapter and put it back in to try again."
+        const val BRIDGE_TOO_OLD =
+            "The Carlink USB bridge on this head unit is too old to write to a stick. Install the bridge that comes with this " +
+                "Carlink (1.0.6 or newer), then take the stick out of the adapter and put it back in."
         const val FORMAT_IT = "Format it as FAT32 on a computer, then put it back into the adapter."
         const val NOT_FAT32 = "The stick isn't FAT32"
         const val TOO_FULL = "The stick is too full"

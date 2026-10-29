@@ -82,6 +82,37 @@ class BridgeService : Service() {
                 enforceCaller()
                 return prompt.request(deviceName)
             }
+
+            override fun openOnRequest(
+                deviceName: String?,
+                trace: Boolean,
+            ): Boolean {
+                enforceCaller()
+                return session.openOnRequest(deviceName, trace)
+            }
+
+            override fun read(
+                length: Int,
+                timeoutMs: Int,
+            ): ByteArray? {
+                enforceCaller()
+                return session.read(length, timeoutMs)
+            }
+
+            override fun clearHalt(inEndpoint: Boolean): Int {
+                enforceCaller()
+                return session.clearHalt(inEndpoint)
+            }
+
+            override fun resetBulkOnly(): Boolean {
+                enforceCaller()
+                return session.resetBulkOnly()
+            }
+
+            override fun takeTrace(): String {
+                enforceCaller()
+                return session.takeTrace()
+            }
         }
 
     override fun onCreate() {
