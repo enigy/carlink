@@ -1,6 +1,8 @@
 package com.carlink
 
 import android.content.Context
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
@@ -24,6 +26,12 @@ import com.carlink.callui.CallState
 import com.carlink.car.AppFocusClaimer
 import com.carlink.car.DriveStateMonitor
 import com.carlink.cluster.ClusterNavigation
+import com.carlink.convert.BridgeStickTransport
+import com.carlink.convert.ConversionUsb
+import com.carlink.convert.InstallerImageStore
+import com.carlink.convert.SharedStick
+import com.carlink.convert.StockAdapters
+import com.carlink.convert.StockConversion
 import com.carlink.device.KnownDevice
 import com.carlink.device.KnownDeviceSnapshot
 import com.carlink.device.KnownDeviceStore
@@ -57,10 +65,12 @@ import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.CarPlayDock
 import com.carlink.ocbm.HostInstanceNonce
+import com.carlink.ocbm.InstallSession
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
 import com.carlink.ocbm.OcbmClient
 import com.carlink.ocbm.OemIcon
+import com.carlink.ocbm.PhoneSetup
 import com.carlink.ocbm.PixelRect
 import com.carlink.ocbm.RawBulkTransport
 import com.carlink.ocbm.SplitViewArea
@@ -193,6 +203,10 @@ class CarlinkManager(
 
         /** Without the bridge Carlink can't reach the adapter (it has no USB access of its own). */
         private const val INSTALL_BRIDGE_STATUS = "Install the Carlink USB bridge"
+
+        /** Under the conversion's panels, and on its own once the driver has dismissed them. */
+        private const val STOCK_ADAPTER_STATUS = "Adapter runs Carlinkit firmware — Carlink needs an OCBM adapter"
+        private const val STICK_IN_ADAPTER_STATUS = "A USB stick in the adapter? Take it out"
 
         /** How long a bridge permission prompt may stay unanswered before the start gives up. */
         private const val BRIDGE_PROMPT_WAIT_MS = 30_000L
@@ -508,6 +522,49 @@ class CarlinkManager(
     // cheap — neither holds a Context or native resources beyond the bridge's socket.
     private var transport: RawBulkTransport? = null
     private var client: OcbmClient? = null
+
+    /** The adapter's OCBM one-file install: its trial state, the gated confirm and the way back to stock. */
+    val oneFileInstall = InstallSession({ client }, scope, confirmAllowed = BuildConfig.INSTALL_CONFIRM)
+
+    /** Pairing an iPhone on the connecting screen, when the adapter has no phone paired or none comes. */
+    val phoneSetup =
+        PhoneSetup(
+            box =
+                object : PhoneSetup.Box {
+                    override fun info(): String? = client?.mgmtGetInfo()
+
+                    override val gatesPairing: Boolean get() = client?.supportsPairWindow == true
+
+                    override fun pairWindow(seconds: Int): Int? {
+                        val arg = byteArrayOf((seconds and BYTE_MASK).toByte(), ((seconds shr Byte.SIZE_BITS) and BYTE_MASK).toByte())
+                        return client?.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, arg)
+                    }
+                },
+            scope = scope,
+        )
+
+    /** A stock adapter (Carlinkit firmware) found instead: its conversion to OCBM, or the stick guide when the build's switch is off. */
+    val stockConversion =
+        StockConversion(
+            images = InstallerImageStore(context.applicationContext),
+            conversionOn = BuildConfig.STOCK_CONVERSION,
+            scope = scope,
+            usb =
+                object : ConversionUsb {
+                    override fun attached(accepts: (vendorId: Int, productId: Int) -> Boolean): Set<String> =
+                        usbDevices().filter { accepts(it.vendorId, it.productId) }.map { it.deviceName }.toSet()
+
+                    override fun searchAgain() {
+                        scope.launch { startIfDisconnected("looking again for the adapter the conversion waits for") }
+                    }
+
+                    override fun openStick(deviceName: String) {
+                        scope.launch(Dispatchers.IO) { openConversionStick(deviceName) }
+                    }
+                },
+        )
+
+    private fun usbDevices(): Collection<UsbDevice> = (context.getSystemService(Context.USB_SERVICE) as UsbManager).deviceList.values
 
     private val ocbmLog = ProbeLog.sub("ocbm")
     private val usbLog = ProbeLog.sub("usb")
@@ -1126,25 +1183,106 @@ class CarlinkManager(
             handleFailedStart("Adapter not found")
             return null
         }
-        if (released) return null
+        if (released || noSessionFor(dev)) return null
+        stockConversion.reset() // an OCBM adapter: a converted one back in its trial, or another
+        return openThroughBridge(dev.deviceName)
+    }
+
+    /** True when [dev] gets no OCBM session: the conversion holds the bridge, or it is a shared stick or a stock adapter. */
+    private suspend fun noSessionFor(dev: UsbDevice): Boolean {
+        when {
+            stockConversion.holdsStick -> {
+                // The bridge relays one session and the conversion's stick has it: opening anything would cut the stick off.
+                logInfo("[CONVERT] ${dev.deviceName} left alone: the conversion holds the bridge for its stick", tag = Logger.Tags.USB)
+                setState(State.DISCONNECTED)
+                setStatusText(STOCK_ADAPTER_STATUS)
+            }
+            SharedStick.isAdapterStick(dev.vendorId, dev.productId) -> {
+                // Most likely the adapter, started with a stick in it: the conversion shows guidance, nothing opens the stick.
+                logInfo("[CONVERT] ${dev.deviceName}: an adapter's shared stick, no adapter; guidance only", tag = Logger.Tags.USB)
+                cancelReconnect()
+                setState(State.DISCONNECTED)
+                setStatusText(STICK_IN_ADAPTER_STATUS)
+            }
+            StockAdapters.isStock(dev.vendorId, dev.productId) -> takeStockAdapter(dev)
+            else -> return false
+        }
+        return true
+    }
+
+    /** Bind the bridge, hold USB permission for [name] and open it; null (reported) on any failure. */
+    private suspend fun openThroughBridge(name: String): RawBulkTransport? {
         val bridge = bindRawStreamBridge() ?: return null
-        if (!awaitBridgePermission(bridge, dev.deviceName)) {
+        if (!awaitBridgePermission(bridge, name)) {
             // The bridge asks once per attach and a denial sticks until the adapter re-enumerates.
             handleFailedStart("USB permission denied — unplug and replug the adapter")
             return null
         }
-        return openViaBridge(bridge, dev.deviceName)
+        return openViaBridge(bridge, name)
     }
 
-    /** The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s. */
-    private suspend fun awaitAdapterListed(): android.hardware.usb.UsbDevice? {
+    /**
+     * The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s: the OCBM
+     * adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the conversion,
+     * or else a shared stick that looks like an adapter's, for which the conversion shows guidance
+     * ([StockConversion.strayStick]). A conversion's USB stick never comes this way ([openConversionStick]).
+     */
+    private suspend fun awaitAdapterListed(): UsbDevice? {
         var attempts = 0
         while (attempts < USB_FIND_ATTEMPTS) {
-            BridgeBulkTransport.findAdapter(context)?.let { return it }
+            (BridgeBulkTransport.findAdapter(context) ?: StockAdapters.find(context) ?: strayStick())?.let { return it }
             attempts++
             delay(USB_WAIT_PERIOD_MS)
         }
         return null
+    }
+
+    /** A shared stick for which the conversion now shows "take the stick out" guidance; it is never opened. */
+    private fun strayStick(): UsbDevice? =
+        usbDevices().firstOrNull {
+            SharedStick.isAdapterStick(it.vendorId, it.productId) &&
+                stockConversion.strayStick(it.vendorId, it.productId, it.version, it.deviceName)
+        }
+
+    /**
+     * A stock adapter instead of an OCBM one. Carlink can't run a session on Carlinkit firmware, so no
+     * reconnects follow; the adapter goes to [stockConversion], which opens it (through the bridge, like
+     * the OCBM adapter) only when it converts it, and the connecting screen shows its panel.
+     */
+    private suspend fun takeStockAdapter(dev: UsbDevice) {
+        val id = StockAdapters.usbId(dev.vendorId, dev.productId)
+        logInfo("[CONVERT] $id is a stock adapter (Carlinkit firmware)", tag = Logger.Tags.USB)
+        cancelReconnect()
+        oneFileInstall.onStockAdapter()
+        if (stockConversion.claim(id)) stockConversion.attach(openThroughBridge(dev.deviceName) ?: return, id)
+        setState(State.DISCONNECTED)
+        setStatusText(STOCK_ADAPTER_STATUS)
+    }
+
+    /**
+     * The USB stick the conversion asked for, shared by the adapter, opened through the bridge as its one
+     * session and handed back. This is apart from the adapter's connect path, which leaves the bridge alone
+     * while the conversion holds the stick. The bridge asks for permission if it has none, and claims the
+     * stick's interface with force, which takes it from the head unit's own mount while the installer goes on.
+     */
+    private suspend fun openConversionStick(name: String) {
+        if (released) return
+        val bridge = bindRawStreamBridge()
+        val api = bridge?.let { b -> runCatching { b.apiVersion }.getOrDefault(-1) } ?: -1
+        if (bridge != null && api < BridgeContract.ON_REQUEST_API_VERSION) {
+            // A stick needs reads of an exact length, on request; an older bridge only has the adapter's read pump.
+            logWarn("[CONVERT] bridge API $api can't open a stick on request (needs ${BridgeContract.ON_REQUEST_API_VERSION})", tag = Logger.Tags.USB)
+            stockConversion.stickOpened(null, bridgeTooOld = true)
+            return
+        }
+        val t = bridge?.takeIf { awaitBridgePermission(it, name) }?.let { BridgeStickTransport.open(it, name, trace = BuildConfig.DEBUG) }
+        if (t == null) {
+            val why = bridge?.let { b -> runCatching { b.status }.getOrNull() } ?: "no bridge"
+            logWarn("[CONVERT] the stick $name didn't open — $why", tag = Logger.Tags.USB)
+        } else {
+            logInfo("[CONVERT] the stick $name is open on request: ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
+        }
+        stockConversion.stickOpened(t)
     }
 
     /** Bind the bridge and require the raw-stream API; reports the failure and returns null otherwise. */
@@ -1236,13 +1374,12 @@ class CarlinkManager(
         name: String,
     ): RawBulkTransport? {
         setStatusText("Adapter found — opening...")
-        val stream = runCatching { bridge.open(name) }.getOrNull()
-        if (stream == null) {
+        val t = BridgeBulkTransport.open(bridge, name, usbLog)
+        if (t == null) {
             logError("[BRIDGE] open failed — ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
             handleFailedStart("USB bridge could not open the adapter")
             return null
         }
-        val t = BridgeBulkTransport(bridge, stream, name, usbLog)
         if (released) {
             logWarn("[LIFECYCLE] released during bridge open — closing and abandoning", tag = Logger.Tags.ADAPTR)
             t.stop()
@@ -1298,6 +1435,8 @@ class CarlinkManager(
         c.startHeartbeat()
         armBoxLogStream(c)
         syncPhonePolicyAfterSubscribe()
+        oneFileInstall.onSubscribed()
+        phoneSetup.onSubscribed()
 
         setStatusText("Waiting for phone...")
     }
@@ -1394,6 +1533,8 @@ class CarlinkManager(
         cancelDelayedKeyframe()
         cancelReconnect()
         OcbmNavigationFeed.clear() // Carlink: drop the route so the cluster does not show a stale trip
+        oneFileInstall.reset()
+        phoneSetup.reset()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
@@ -1450,21 +1591,18 @@ class CarlinkManager(
     /**
      * Settings → Adapter → Save Logs: pull the box's `/tmp/box.log` over the live link (it lives in
      * RAM on the box and is gone at power-off, so this is the only way to keep it after a drive) and
-     * save it next to this process's own logcat under Downloads/Carlink. Returns where they went.
+     * save it next to this process's own logcat under Downloads/Carlink. Returns where they went. With no
+     * OCBM adapter connected (a stock adapter mid-conversion, say) it saves the app's own logs alone.
      */
     suspend fun saveLogs(): Result<String> =
         withContext(Dispatchers.IO) {
-            val c = client ?: return@withContext Result.failure(IllegalStateException("Adapter not connected"))
             val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
-            logInfo("[LOGS] pulling $BOX_LOG_PATH", tag = Logger.Tags.ADAPTR)
-            val box = c.pullFile(BOX_LOG_PATH).getOrElse { return@withContext Result.failure(it) }
             val saved = ArrayList<String>(6)
-            saved += LogExport.save(context, "carlink-box-$stamp.log", box).getOrElse { return@withContext Result.failure(it) }
-            // The per-daemon logs, best effort: a daemon that never ran has no file, which is fine.
-            for ((path, label) in BOX_DAEMON_LOGS) {
-                val pulled = c.pullFile(path, timeoutMs = 10_000)
-                pulled.onSuccess { bytes -> LogExport.save(context, "carlink-$label-$stamp.log", bytes).onSuccess { saved += it } }
-                pulled.onFailure { logInfo("[LOGS] $path: ${it.message}", tag = Logger.Tags.ADAPTR) }
+            val c = client
+            if (c == null) {
+                logWarn("[LOGS] no OCBM adapter connected: saving the app's logs without the box's", tag = Logger.Tags.ADAPTR)
+            } else {
+                saveBoxLogs(c, stamp, saved).onFailure { return@withContext Result.failure(it) }
             }
             // The app's own INFO+ trail, independent of logcat and its filters (Logger.recordTrail).
             // Stamped with the flag states so a thin logcat file can be told from a filter problem.
@@ -1478,9 +1616,28 @@ class CarlinkManager(
             LogExport.appLogcat()?.let { app ->
                 saved += LogExport.save(context, "carlink-app-$stamp.log", app).getOrElse { return@withContext Result.failure(it) }
             }
-            logInfo("[LOGS] saved ${saved.joinToString(", ")} (box log ${box.size} bytes, trail ${trail.size} bytes)", tag = Logger.Tags.ADAPTR)
+            logInfo("[LOGS] saved ${saved.joinToString(", ")} (trail ${trail.size} bytes)", tag = Logger.Tags.ADAPTR)
             Result.success(saved.joinToString(" and "))
         }
+
+    /** The box's logs into [saved]: box.log (a failure fails Save Logs), then each daemon's, best effort. */
+    private fun saveBoxLogs(
+        c: OcbmClient,
+        stamp: String,
+        saved: MutableList<String>,
+    ): Result<Unit> {
+        logInfo("[LOGS] pulling $BOX_LOG_PATH", tag = Logger.Tags.ADAPTR)
+        val box = c.pullFile(BOX_LOG_PATH).getOrElse { return Result.failure(it) }
+        saved += LogExport.save(context, "carlink-box-$stamp.log", box).getOrElse { return Result.failure(it) }
+        logInfo("[LOGS] box log ${box.size} bytes", tag = Logger.Tags.ADAPTR)
+        // The per-daemon logs, best effort: a daemon that never ran has no file, which is fine.
+        for ((path, label) in BOX_DAEMON_LOGS) {
+            val pulled = c.pullFile(path, timeoutMs = 10_000)
+            pulled.onSuccess { bytes -> LogExport.save(context, "carlink-$label-$stamp.log", bytes).onSuccess { saved += it } }
+            pulled.onFailure { logInfo("[LOGS] $path: ${it.message}", tag = Logger.Tags.ADAPTR) }
+        }
+        return Result.success(Unit)
+    }
 
     /**
      * `MGMT_RESTART_WIRELESS`: bounce the box's wireless stack (btd + radios; the box re-advertises).
@@ -2057,6 +2214,7 @@ class CarlinkManager(
         scope.cancel()
 
         stop()
+        stockConversion.reset()
 
         releaseAudio()
 
@@ -2348,6 +2506,7 @@ class CarlinkManager(
             // BOTH ends, so the code is a PROMPT (Pair / Cancel -> answerPairing), not just text.
             scope.launch {
                 if (client !== c) return@launch
+                phoneSetup.onPairingCode(code)
                 if (code.isNotEmpty()) {
                     setStatusText("Pairing code: $code")
                     pairingCode = code
@@ -2385,6 +2544,7 @@ class CarlinkManager(
                 if (client !== c) return@launch
                 setState(State.DEVICE_CONNECTED)
                 setStatusText("Phone connected")
+                phoneSetup.onPhoneConnected()
                 currentPhoneType = PhoneType.CARPLAY
                 callback?.onPhoneTypeChanged(PhoneType.CARPLAY)
                 startCodecIfDeferred()
@@ -2416,6 +2576,7 @@ class CarlinkManager(
         }
 
         c.onBtPhase = { phase ->
+            phoneSetup.onBtPhase(phase)
             val text = btPhaseText(phase)
             if (text != null) scope.launch { if (state != State.STREAMING) setStatusText(text) }
         }
@@ -3003,14 +3164,12 @@ class CarlinkManager(
     /** The box reports the window open (CT_BOX_HEALTH BH_PAIR_WINDOW). */
     val pairWindowOpen: Boolean get() = boxHealth and Ocbm.BH_PAIR_WINDOW != 0
 
-    /** Open the pairing window for [seconds] (the box clamps to 1..300), or close it with 0. */
+    /**
+     * Open the pairing window for [seconds] (the box clamps to 1..300), or close it with 0: Settings' "Add
+     * phone". The connecting screen's "Pair iPhone" makes the same call ([PhoneSetup.window]).
+     */
     fun setPairWindow(seconds: Int) {
-        logWarn("[PAIRING] window ${if (seconds > 0) "open for ${seconds}s" else "close"} requested", tag = Logger.Tags.ADAPTR)
-        scope.launch(Dispatchers.IO) {
-            val arg = byteArrayOf((seconds and BYTE_MASK).toByte(), ((seconds shr Byte.SIZE_BITS) and BYTE_MASK).toByte())
-            val status = client?.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, arg)
-            logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
-        }
+        scope.launch(Dispatchers.IO) { phoneSetup.window(seconds) }
     }
 
     // ---- Phone priority (enigy/ocbm phone-priority: MGMT_SET_POLICY / MGMT_CONNECT_DEVICE) -------
@@ -3049,6 +3208,10 @@ class CarlinkManager(
     /** Ask the box to call this bonded phone now. The box never interrupts a phone that is projecting. */
     fun connectPhone(btMac: String) {
         if (!phonePolicySupported) return
+        if (phoneSetup.noPhonePaired) {
+            logInfo("[DEVICE_MGMT] CONNECT_DEVICE($btMac) not sent: the adapter has no phone paired", tag = Logger.Tags.ADAPTR)
+            return
+        }
         scope.launch(Dispatchers.IO) {
             val status = client?.mgmtAction(Ocbm.MGMT_CONNECT_DEVICE, btMac.uppercase().toByteArray(Charsets.US_ASCII))
             logInfo("[DEVICE_MGMT] CONNECT_DEVICE($btMac) status=$status", tag = Logger.Tags.ADAPTR)
@@ -3075,15 +3238,18 @@ class CarlinkManager(
      */
     private fun syncPhonePolicyAfterSubscribe() {
         scope.launch {
+            var status: Int? = null
             for (waitMs in POLICY_SYNC_DELAYS_MS) {
                 delay(waitMs)
                 if (!phonePolicySupported) return@launch
                 val snap = knownStore?.snapshot ?: return@launch
                 val body = phonePolicyJson(_pairedDevices.map { it.btMac }, snap.autoConnect)
-                val status = withContext(Dispatchers.IO) { client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8)) }
+                status = withContext(Dispatchers.IO) { client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8)) }
                 logInfo("[DEVICE_MGMT] SET_POLICY (session) $body status=$status", tag = Logger.Tags.ADAPTR)
                 if (status == 0) return@launch
             }
+            // No try came back 0: btd never answered this session.
+            phoneSetup.onPolicyFailed(status)
         }
     }
 

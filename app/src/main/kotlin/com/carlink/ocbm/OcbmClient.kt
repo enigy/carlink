@@ -35,6 +35,10 @@ class OcbmClient(
     private val ctrlQ = LinkedBlockingQueue<ByteArray>()
     private val mfiQ = LinkedBlockingQueue<ByteArray>()
     private val mgmtQ = LinkedBlockingQueue<ByteArray>()
+
+    // One MGMT request at a time: each clears [mgmtQ] and waits for its own answer, so two at once (the
+    // session start's MGMT_INFO reads and SET_POLICY) could take or drop each other's.
+    private val mgmtLock = Any()
     private val fileQ = LinkedBlockingQueue<ByteArray>()
 
     @Volatile var helloAcked = false
@@ -79,6 +83,9 @@ class OcbmClient(
 
     /** The box gates new Bluetooth pairing behind MGMT_PAIR_WINDOW (security plan 2026-10-21 §3). */
     val supportsPairWindow: Boolean get() = (caps and Ocbm.CAP_PAIR_WINDOW) != 0
+
+    /** The box is a one-file install that takes MGMT_INSTALL_CONFIRM / MGMT_GO_STOCK (enigy/ocbm 153df7f). */
+    val supportsInstall: Boolean get() = (caps and Ocbm.CAP_INSTALL) != 0
 
     /** Config blob last sent with CT_SUBSCRIBE; re-sent verbatim if the box drops us. */
     @Volatile private var configBlob: ByteArray = ByteArray(0)
@@ -1050,37 +1057,39 @@ class OcbmClient(
     // ---- CH_MGMT --------------------------------------------------------------------------------
 
     /** MGMT_GET_INFO → MGMT_INFO, whose payload is UTF-8 JSON running to the end of the frame. */
-    fun mgmtGetInfo(timeoutMs: Long = 5000): String? {
-        mgmtQ.clear()
-        if (!send(Ocbm.CH_MGMT, byteArrayOf(Ocbm.MGMT_GET_INFO))) return null
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            val pl = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
-            if (pl.isNotEmpty() && pl[0] == Ocbm.MGMT_INFO) {
-                return String(pl, 1, pl.size - 1, Charsets.UTF_8)
+    fun mgmtGetInfo(timeoutMs: Long = 5000): String? =
+        synchronized(mgmtLock) {
+            mgmtQ.clear()
+            if (!send(Ocbm.CH_MGMT, byteArrayOf(Ocbm.MGMT_GET_INFO))) return null
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                val pl = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                if (pl.isNotEmpty() && pl[0] == Ocbm.MGMT_INFO) {
+                    return String(pl, 1, pl.size - 1, Charsets.UTF_8)
+                }
             }
+            null
         }
-        return null
-    }
 
     /** Any of the four action verbs; returns the status byte from MGMT_ACK (0 ok, 1 error). */
     fun mgmtAction(
         verb: Byte,
         arg: ByteArray = ByteArray(0),
         timeoutMs: Long = 5000,
-    ): Int? {
-        mgmtQ.clear()
-        val pl = ByteArray(1 + arg.size)
-        pl[0] = verb
-        System.arraycopy(arg, 0, pl, 1, arg.size)
-        if (!send(Ocbm.CH_MGMT, pl)) return null
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            val r = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
-            if (r.size >= 3 && r[0] == Ocbm.MGMT_ACK && r[1] == verb) return r[2].toInt()
+    ): Int? =
+        synchronized(mgmtLock) {
+            mgmtQ.clear()
+            val pl = ByteArray(1 + arg.size)
+            pl[0] = verb
+            System.arraycopy(arg, 0, pl, 1, arg.size)
+            if (!send(Ocbm.CH_MGMT, pl)) return null
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                val r = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                if (r.size >= 3 && r[0] == Ocbm.MGMT_ACK && r[1] == verb) return r[2].toInt()
+            }
+            null
         }
-        return null
-    }
 
     // ---- CH_FILE --------------------------------------------------------------------------------
 

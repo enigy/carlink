@@ -18,7 +18,7 @@ package com.enigy.carlink2.bridge
  */
 object BridgeContract {
     /** Bump when ICarlinkBridge gains methods or changes semantics; the display app checks [MIN_API_VERSION]. */
-    const val API_VERSION = 3
+    const val API_VERSION = 4
 
     /**
      * Carlink3: from this API the bridge relays the adapter's bulk stream RAW — chunks as read from
@@ -27,6 +27,15 @@ object BridgeContract {
      * message framing and must not be used with an OCBM adapter.
      */
     const val RAW_STREAM_API_VERSION = 3
+
+    /**
+     * From this API (bridge 1.0.6) the bridge also opens a device for transfers on request
+     * (openOnRequest, read, clearHalt, resetBulkOnly, takeTrace): no read pump, reads of an exact
+     * length only when asked. USB mass storage (Bulk-Only Transport) needs that, for the stick a
+     * stock adapter shares during its conversion: a stick stalls or loses data under a free-running
+     * 16 KiB read (bench, 29 Oct). The adapter itself still uses open() and the pump.
+     */
+    const val ON_REQUEST_API_VERSION = 4
 
     /** Oldest bridge API the display app can drive. */
     const val MIN_API_VERSION = 3
@@ -57,4 +66,7 @@ object BridgeContract {
      * The OCBM client writes ≤16 KiB chunks; this is headroom, not a target.
      */
     const val MAX_WRITE_BYTES = 512 * 1024
+
+    /** Largest single read() of an on-request session; the same Binder headroom as [MAX_WRITE_BYTES]. */
+    const val MAX_READ_BYTES = 512 * 1024
 }

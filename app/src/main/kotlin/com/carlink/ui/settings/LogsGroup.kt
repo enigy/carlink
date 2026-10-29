@@ -98,7 +98,7 @@ private fun CopyToUsbRow() {
     }
 }
 
-/** Save logs: pulls the box's RAM-only logs over the live link, so it needs a connected adapter. */
+/** Save logs: the app's logs always, and the box's RAM-only logs over the live link when an adapter is connected. */
 @Composable
 private fun SaveLogsRow(
     carlinkManager: CarlinkManager,
@@ -109,12 +109,12 @@ private fun SaveLogsRow(
     var result by remember { mutableStateOf<String?>(null) }
     SettingRow(
         title = "Save logs",
-        subtitle = result ?: "App and adapter logs for a bug report",
+        subtitle = result ?: if (live.box.adapterConnected) "App and adapter logs for a bug report" else "App logs; the adapter's need it connected",
         icon = Icons.Default.Save,
     ) {
         RowAction(
             label = if (saving) "Saving…" else "Save",
-            enabled = live.box.adapterConnected && !saving,
+            enabled = !saving,
             onClick = {
                 logWarn("[UI_ACTION] Save Logs button clicked", tag = "UI")
                 saving = true

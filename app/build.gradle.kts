@@ -1,3 +1,4 @@
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -33,7 +34,7 @@ android {
         targetSdk = 36
         // versionCode is the single source of truth (Play requires a monotonic integer; it is also
         // the release tag vNNN). versionName is DERIVED so the two can never drift: 1 -> "0.01".
-        val appVersionCode = 200
+        val appVersionCode = 201
         versionCode = appVersionCode
         versionName = "%d.%02d".format(appVersionCode / 100, appVersionCode % 100)
 
@@ -42,6 +43,14 @@ android {
 // ###############################################
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // OCBM one-file install (handoff 10-28): MGMT_INSTALL_CONFIRM lets the adapter delete the
+        // Carlinkit stack when the session ends, and there is no way back from that without an SPI
+        // programmer yet. Off until the no-programmer way back is built and proven and the owner
+        // agrees; with it off the app shows the trial and the way back but holds the confirm.
+        // -Pcarlink.installConfirm=true turns it on for a deliberate bench build.
+        val installConfirm = (findProperty("carlink.installConfirm") as String?).toBoolean()
+        buildConfigField("boolean", "INSTALL_CONFIRM", installConfirm.toString())
 
         vectorDrawables {
             useSupportLibrary = true
@@ -69,8 +78,18 @@ android {
         }
     }
 
+    // Converting a stock adapter from the app (OCBM one-file install M5 part 3, decisions of 10-28): one
+    // build, behind a switch that is on in debug builds and off in release builds (Play and the release
+    // APK), which point a stock adapter at the stick guide instead. -Pcarlink.stockConversion=true|false
+    // overrides it for either; turning it on for Play is a commit here and a normal tagged release.
+    val stockConversion = (findProperty("carlink.stockConversion") as String?)?.toBoolean()
+
     buildTypes {
+        debug {
+            buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: true).toString())
+        }
         release {
+            buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: false).toString())
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
@@ -140,6 +159,64 @@ android {
         //   "CarAppActivity must extend android.app.Activity". Same false positive, same disable,
         //   as Carlink2.
         disable += "Instantiatable"
+    }
+}
+
+// A debug build that carries the conversion's installer itself, for a head unit with no adb to put the
+// bench copy in the app's files folder (the truck, 29 Oct): -Pcarlink.benchImage=<path to A15W_Update.img>,
+// with its SHA-256 beside it (A15W_Update.img.sha256, or the SHA256SUMS tools/make_update_img.sh writes).
+// The image must match that SHA-256 to be packed, into the debug APK's assets (ocbm/), where the app
+// checks it again like the bench copy (convert/InstallerImage.kt). Release builds never carry it.
+abstract class PackBenchImage : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val image: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val sums: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun pack() {
+        val img = image.get().asFile
+        val text = sums.get().asFile.readText()
+        val line = text.lines().firstOrNull { it.contains(img.name) } ?: text
+        val want =
+            Regex("[0-9a-fA-F]{64}").find(line)?.value?.lowercase()
+                ?: throw GradleException("carlink.benchImage: no SHA-256 for ${img.name} in ${sums.get().asFile}")
+        val have = MessageDigest.getInstance("SHA-256").digest(img.readBytes()).joinToString("") { "%02x".format(it) }
+        if (have != want) throw GradleException("carlink.benchImage: ${img.path} has SHA-256 $have, not the $want beside it")
+        val dir = outputDir.get().asFile.resolve("ocbm")
+        dir.deleteRecursively()
+        dir.mkdirs()
+        img.copyTo(dir.resolve("A15W_Update.img"), overwrite = true)
+        dir.resolve("A15W_Update.img.sha256").writeText("$have  A15W_Update.img\n")
+        logger.lifecycle("carlink.benchImage: ${img.path} (${img.length()} B, SHA-256 $have) packed into the debug APK")
+    }
+}
+
+val benchImage =
+    (findProperty("carlink.benchImage") as String?)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        file(if (it.startsWith("~/")) System.getProperty("user.home") + it.drop(1) else it)
+    }
+val packBenchImage =
+    benchImage?.let { img ->
+        val sums =
+            listOf(File(img.path + ".sha256"), File(img.parentFile, "SHA256SUMS")).firstOrNull { it.isFile }
+                ?: throw GradleException("carlink.benchImage: no ${img.name}.sha256 or SHA256SUMS beside ${img.path}")
+        tasks.register<PackBenchImage>("packBenchImage") {
+            image.set(img)
+            this.sums.set(sums)
+            outputDir.set(layout.buildDirectory.dir("generated/benchImage"))
+        }
+    }
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        packBenchImage?.let { variant.sources.assets?.addGeneratedSourceDirectory(it, PackBenchImage::outputDir) }
     }
 }
 
@@ -224,6 +301,11 @@ dependencies {
     val media3Version = "1.10.1"
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
+
+    // FAT32 on the USB stick a stock adapter shares, for its conversion (Apache-2.0). Only the file
+    // system is used: the stick is reached through the bridge (convert/BulkOnlyStorage), not libaums' own
+    // USB driver, and neither Android's mount nor SAF is relied on.
+    implementation("me.jahnen.libaums:core:0.10.0")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

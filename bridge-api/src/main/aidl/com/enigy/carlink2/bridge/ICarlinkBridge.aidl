@@ -45,4 +45,36 @@ interface ICarlinkBridge {
      * adapter re-enumerates (new deviceName). Returns a BridgeContract.PERMISSION_* value.
      */
     int requestPermission(String deviceName);
+
+    /**
+     * API 4. Open deviceName for transfers on request, as USB mass storage needs (a stick a stock
+     * adapter shares): claim its bulk interface with force, and start NO read pump. Nothing is read
+     * from the device until read() asks. A session that is already open is closed first. write()
+     * and close() work on it as on an open() session. When trace is true the bridge records each
+     * transfer's result for takeTrace(). Returns false on failure (reason in getStatus()).
+     */
+    boolean openOnRequest(String deviceName, boolean trace);
+
+    /**
+     * API 4. On an openOnRequest() session: bulk IN transfers until length bytes are in, a short
+     * packet ends the transfer, or a transfer fails. Returns what came, maybe fewer than length,
+     * or null when the first transfer failed (a stall, or timeoutMs passed).
+     */
+    byte[] read(int length, int timeoutMs);
+
+    /**
+     * API 4. On an openOnRequest() session: CLEAR_FEATURE(ENDPOINT_HALT) on the bulk IN endpoint
+     * (inEndpoint) or the bulk OUT one. Returns controlTransfer()'s result: 0, or -1 on failure.
+     */
+    int clearHalt(boolean inEndpoint);
+
+    /**
+     * API 4. On an openOnRequest() session: USB mass storage's reset recovery. Bulk-Only Mass
+     * Storage Reset (class request 0xFF to the interface), then CLEAR_FEATURE(ENDPOINT_HALT) on
+     * both bulk endpoints. True when all three went through.
+     */
+    boolean resetBulkOnly();
+
+    /** API 4. The transfer results recorded since the last call (openOnRequest with trace), one per line; "" when none. */
+    String takeTrace();
 }
