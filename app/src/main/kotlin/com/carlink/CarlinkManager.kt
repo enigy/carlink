@@ -1,6 +1,8 @@
 package com.carlink
 
 import android.content.Context
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
@@ -24,6 +26,7 @@ import com.carlink.callui.CallState
 import com.carlink.car.AppFocusClaimer
 import com.carlink.car.DriveStateMonitor
 import com.carlink.cluster.ClusterNavigation
+import com.carlink.convert.ConversionUsb
 import com.carlink.convert.InstallerImageStore
 import com.carlink.convert.StockAdapters
 import com.carlink.convert.StockConversion
@@ -525,8 +528,18 @@ class CarlinkManager(
             images = InstallerImageStore(context.applicationContext),
             conversionOn = BuildConfig.STOCK_CONVERSION,
             scope = scope,
-            searchAgain = { scope.launch { startIfDisconnected("looking for the adapter the conversion restarted") } },
+            usb =
+                object : ConversionUsb {
+                    override fun attached(accepts: (vendorId: Int, productId: Int) -> Boolean): Set<String> =
+                        usbDevices().filter { accepts(it.vendorId, it.productId) }.map { it.deviceName }.toSet()
+
+                    override fun searchAgain() {
+                        scope.launch { startIfDisconnected("looking again for the adapter or the stick the conversion waits for") }
+                    }
+                },
         )
+
+    private fun usbDevices(): Collection<UsbDevice> = (context.getSystemService(Context.USB_SERVICE) as UsbManager).deviceList.values
 
     private val ocbmLog = ProbeLog.sub("ocbm")
     private val usbLog = ProbeLog.sub("usb")
@@ -1146,6 +1159,10 @@ class CarlinkManager(
             return null
         }
         if (released) return null
+        if (stockConversion.wantsStick(dev.vendorId, dev.productId, dev.deviceName)) {
+            takeStick(dev)
+            return null
+        }
         if (StockAdapters.isStock(dev.vendorId, dev.productId)) {
             takeStockAdapter(dev)
             return null
@@ -1167,12 +1184,15 @@ class CarlinkManager(
 
     /**
      * The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s: the OCBM
-     * adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the conversion.
+     * adapter, or else the stick a conversion waits for ([takeStick]; on the emulator bench it sits beside
+     * the stock adapter), or else a stock adapter on Carlinkit firmware, which [takeStockAdapter] hands to
+     * the conversion.
      */
-    private suspend fun awaitAdapterListed(): android.hardware.usb.UsbDevice? {
+    private suspend fun awaitAdapterListed(): UsbDevice? {
         var attempts = 0
         while (attempts < USB_FIND_ATTEMPTS) {
-            (BridgeBulkTransport.findAdapter(context) ?: StockAdapters.find(context))?.let { return it }
+            val stick = usbDevices().firstOrNull { stockConversion.wantsStick(it.vendorId, it.productId, it.deviceName) }
+            (BridgeBulkTransport.findAdapter(context) ?: stick ?: StockAdapters.find(context))?.let { return it }
             attempts++
             delay(USB_WAIT_PERIOD_MS)
         }
@@ -1184,12 +1204,25 @@ class CarlinkManager(
      * reconnects follow; the adapter goes to [stockConversion], which opens it (through the bridge, like
      * the OCBM adapter) only when it converts it, and the connecting screen shows its panel.
      */
-    private suspend fun takeStockAdapter(dev: android.hardware.usb.UsbDevice) {
+    private suspend fun takeStockAdapter(dev: UsbDevice) {
         val id = StockAdapters.usbId(dev.vendorId, dev.productId)
         logInfo("[CONVERT] $id is a stock adapter (Carlinkit firmware)", tag = Logger.Tags.USB)
         cancelReconnect()
         oneFileInstall.onStockAdapter()
         if (stockConversion.claim(id)) stockConversion.attach(openThroughBridge(dev.deviceName) ?: return, id)
+        setState(State.DISCONNECTED)
+        setStatusText(STOCK_ADAPTER_STATUS)
+    }
+
+    /**
+     * The USB stick the conversion asked for, shared by the adapter. It is opened through the bridge like
+     * the adapter: the bridge asks for permission if it has none, and claims the stick's interface with
+     * force, which takes it from the head unit's own mount while the installer goes onto it.
+     */
+    private suspend fun takeStick(dev: UsbDevice) {
+        logInfo("[CONVERT] ${StockAdapters.usbId(dev.vendorId, dev.productId)} at ${dev.deviceName}: the stick the conversion asked for", tag = Logger.Tags.USB)
+        cancelReconnect()
+        if (stockConversion.takeStick(dev.deviceName)) stockConversion.stickOpened(openThroughBridge(dev.deviceName))
         setState(State.DISCONNECTED)
         setStatusText(STOCK_ADAPTER_STATUS)
     }

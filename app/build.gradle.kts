@@ -243,6 +243,11 @@ dependencies {
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
 
+    // FAT32 on the USB stick a stock adapter shares, for its conversion (Apache-2.0). Only the file
+    // system is used: the stick is reached through the bridge (convert/BulkOnlyStorage), not libaums' own
+    // USB driver, and neither Android's mount nor SAF is relied on.
+    implementation("me.jahnen.libaums:core:0.10.0")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     // Real org.json for unit tests. The android.jar the unit-test classpath uses ships STUBS whose

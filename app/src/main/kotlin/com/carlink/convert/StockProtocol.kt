@@ -12,8 +12,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 // What the app needs of Carlinkit's own USB protocol to convert a stock adapter to OCBM (OCBM one-file
-// install, M5 part 3): find the adapter, read what it is, send it the installer. Frames are Carlink2's:
-// a 16-byte header [0x55AA55AA][payload length][type][~type], all little-endian, then the payload.
+// install, M5 part 3): find the adapter and read what it is; the installer goes to it on a USB stick.
+// Frames are Carlink2's: a 16-byte header [0x55AA55AA][payload length][type][~type], all little-endian,
+// then the payload.
 
 /** A stock CPC200-CCPA on Carlinkit firmware, by USB id: 1314:1520 or 1314:1521. */
 object StockAdapters {
@@ -38,6 +39,30 @@ object StockAdapters {
     ): String = "${hex4(vendorId)}:${hex4(productId)}"
 
     private fun hex4(id: Int): String = id.toString(16).padStart(4, '0')
+}
+
+/**
+ * The USB stick a stock adapter shares with the head unit while no installer image is on it: Linux's
+ * mass-storage gadget defaults, 1d6b:a4a5 ("File-Stor Gadget"). Those ids are generic, so they say "a
+ * shared stick", not "our adapter": the conversion only touches one right after asking for the stick
+ * ([StockConversion.wantsStick]). Debug builds also take the emulator bench's stick, 46f4:0001
+ * ("QEMU USB HARDDRIVE").
+ */
+object SharedStick {
+    private const val GADGET_VENDOR = 0x1d6b
+    private const val GADGET_PRODUCT = 0xa4a5
+    private const val QEMU_VENDOR = 0x46f4
+    private const val QEMU_PRODUCT = 0x0001
+
+    fun isAdapterStick(
+        vendorId: Int,
+        productId: Int,
+    ): Boolean = vendorId == GADGET_VENDOR && productId == GADGET_PRODUCT
+
+    fun isBenchStick(
+        vendorId: Int,
+        productId: Int,
+    ): Boolean = vendorId == QEMU_VENDOR && productId == QEMU_PRODUCT
 }
 
 /**

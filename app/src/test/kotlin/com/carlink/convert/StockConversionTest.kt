@@ -1,15 +1,16 @@
 package com.carlink.convert
 
 import com.carlink.ocbm.FakeTransport
-import com.carlink.protocol.MessageSerializer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import me.jahnen.libaums.core.fs.FileSystem
 import org.junit.After
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -18,16 +19,18 @@ import org.robolectric.RobolectricTestRunner
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.random.Random
 
-/** Converting a stock adapter, against a fake adapter: what is sent, what is offered, and each way it ends. */
+/** Converting a stock adapter, against a fake adapter and sticks in memory: what is offered, what goes on the stick, and each way it ends. */
 @RunWith(RobolectricTestRunner::class)
 class StockConversionTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val images = FakeImages("an OCBM installer".toByteArray())
-    private val searches = AtomicInteger()
-    private val timing = StockConversion.Timing(readMs = 400, heartbeatMs = 50, deadlineMs = 700, searchMs = 200)
-    private val conversion = StockConversion(images, conversionOn = true, scope = scope, searchAgain = { searches.incrementAndGet() }, timing = timing)
+    private val images = FakeImages(Random(11).nextBytes(120_000))
+    private val usb = FakeUsb()
+    private val timing = StockConversion.Timing(readMs = 400, heartbeatMs = 50, deadlineMs = 700, searchMs = 200, pollMs = 20)
+    private val conversion = StockConversion(images, conversionOn = true, scope = scope, usb = usb, timing = timing, benchStick = false)
     private val adapter = FakeTransport()
 
     @After
@@ -38,7 +41,7 @@ class StockConversionTest {
 
     @Test
     fun `with the switch off a stock adapter is only recognised, never opened`() {
-        val off = StockConversion(images, conversionOn = false, scope = scope, searchAgain = {}, timing = timing)
+        val off = StockConversion(images, conversionOn = false, scope = scope, usb = usb, timing = timing)
         assertFalse(off.claim("1314:1520"))
         assertEquals(ConversionPhase.StickOnly("1314:1520"), off.phase.value)
         off.dismiss()
@@ -98,111 +101,14 @@ class StockConversionTest {
     }
 
     @Test
-    fun `convert sends the installer whole, with no heartbeat inside it, then waits for the restart`() {
-        attachAndAnswer()
-        awaitPhase<ConversionPhase.Offered>()
-        conversion.convert()
-        awaitPhase<ConversionPhase.Installing>()
-        val files = writtenFrames(waitMs = 150).filter { it.first == 0x99 }
-        assertEquals(1, files.size)
-        val expected = MessageSerializer.serializeFile(InstallerImage.SEND_PATH, images.image!!)
-        assertArrayEquals(expected.copyOfRange(16, expected.size), files.single().second)
-        adapter.killLink()
-        assertEquals(ConversionPhase.Restarting, conversion.phase.value)
-        waitUntil(1_000) { searches.get() >= 1 }
-        conversion.reset() // the manager found the OCBM adapter
-        assertEquals(ConversionPhase.Idle, conversion.phase.value)
-    }
-
-    @Test
-    fun `the adapter back on Carlinkit firmware after the installer has not converted`() {
-        attachAndAnswer()
-        awaitPhase<ConversionPhase.Offered>()
-        conversion.convert()
-        awaitPhase<ConversionPhase.Installing>()
-        adapter.killLink()
-        val back = FakeTransport()
-        assertTrue(conversion.claim("1314:1520"))
-        conversion.attach(back, "1314:1520")
-        back.feed(frame(0xCC, "2025.10.15.1127CAY") + frame(0x19, """{"productType":"A15W"}"""))
-        val failed = awaitPhase<ConversionPhase.Failed>()
-        assertEquals("The adapter didn't convert", failed.title)
-        assertTrue("the adapter is let go", quietAfter(back))
-        conversion.dismiss()
-        assertEquals(ConversionPhase.Declined, conversion.phase.value)
-        assertFalse("no conversion is offered again", conversion.claim("1314:1520"))
-    }
-
-    @Test
-    fun `a refusal is an adapter that never restarts, so the deadline says nothing changed and lets it go`() {
-        attachAndAnswer()
-        awaitPhase<ConversionPhase.Offered>()
-        conversion.convert()
-        awaitPhase<ConversionPhase.Installing>()
-        val failed = awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000)
-        assertEquals("The conversion didn't happen", failed.title)
-        assertEquals("Nothing on the adapter changed. Unplug it and plug it back in to use stock CarPlay.", failed.body)
-        assertTrue("the adapter is let go", quietAfter(adapter))
-        assertEquals("nothing searched while it stayed", 0, searches.get())
-        conversion.dismiss()
-        assertEquals(ConversionPhase.Declined, conversion.phase.value)
-        assertFalse("replugged: no conversion is offered again", conversion.claim("1314:1520"))
-        conversion.reset() // an OCBM adapter connected
-        assertTrue("until an OCBM adapter has connected", conversion.claim("1314:1520"))
-    }
-
-    @Test
-    fun `an adapter that never comes back is reported, and nothing is offered again`() {
-        attachAndAnswer()
-        awaitPhase<ConversionPhase.Offered>()
-        conversion.convert()
-        awaitPhase<ConversionPhase.Installing>()
-        adapter.killLink()
-        assertEquals("The adapter hasn't come back", awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000).title)
-        assertTrue("searched while waiting", searches.get() >= 2)
-        val before = searches.get()
-        conversion.dismiss()
-        assertEquals(ConversionPhase.Declined, conversion.phase.value)
-        assertEquals("no search after OK", before, searches.get())
-        assertFalse(conversion.claim("1314:1520"))
-    }
-
-    @Test
-    fun `the deadline runs from the send through the restart, not anew when the adapter leaves`() {
-        attachAndAnswer()
-        awaitPhase<ConversionPhase.Offered>()
-        conversion.convert()
-        awaitPhase<ConversionPhase.Installing>()
-        Thread.sleep(500)
-        val leftAt = System.currentTimeMillis()
-        adapter.killLink()
-        val failed = awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000)
-        val after = System.currentTimeMillis() - leftAt
-        assertEquals("The adapter hasn't come back", failed.title)
-        assertTrue("failed $after ms after it left, inside the 700 ms from the send", after < 600)
-    }
-
-    @Test
-    fun `an installer that can't be had is reported and nothing is sent`() {
+    fun `an installer that can't be had is reported, and no stick is asked for`() {
         images.broken = true
         attachAndAnswer()
         awaitPhase<ConversionPhase.Offered>()
         conversion.convert()
         assertEquals("Couldn't get the installer", awaitPhase<ConversionPhase.Failed>().title)
-        assertTrue(writtenFrames(waitMs = 100).none { it.first == 0x99 })
-    }
-
-    @Test
-    fun `a write that fails during the send is reported`() {
-        val refusing = StockConversion(images, conversionOn = true, scope = scope, searchAgain = {}, timing = timing)
-        val dead = RefusingTransport()
-        refusing.attach(dead, "1314:1520")
-        dead.feed(frame(0xCC, "2025.10.15.1127CAY") + frame(0x19, """{"productType":"A15W"}"""))
-        waitUntil(1_000) { refusing.phase.value is ConversionPhase.Offered }
-        refusing.convert()
-        waitUntil(1_000) { refusing.phase.value is ConversionPhase.Failed }
-        assertEquals("The installer didn't finish sending", (refusing.phase.value as ConversionPhase.Failed).title)
-        refusing.reset()
+        usb.devices[STICK] = ADAPTER_STICK
+        assertFalse(conversion.wantsStick(0x1d6b, 0xa4a5, STICK))
     }
 
     @Test
@@ -219,6 +125,184 @@ class StockConversionTest {
         assertTrue("plugged in again: offered again", conversion.claim("1314:1520"))
     }
 
+    @Test
+    fun `convert gets the installer, then asks for the stick, holding the adapter meanwhile`() {
+        toWaitingForStick()
+        assertEquals("a bench stick may be there already", 1, usb.searches.get())
+        assertFalse("no other stock adapter is opened", conversion.claim("1314:1520"))
+        assertFalse("the adapter's heartbeat goes on", quietAfter(adapter))
+    }
+
+    @Test
+    fun `only a shared stick that appears after Convert is taken`() {
+        attachAndAnswer()
+        awaitPhase<ConversionPhase.Offered>()
+        usb.devices[EARLIER] = ADAPTER_STICK
+        assertFalse("no write is offered to a shared stick outside the conversion", conversion.wantsStick(0x1d6b, 0xa4a5, EARLIER))
+        conversion.convert()
+        awaitPhase<ConversionPhase.WaitingForStick>()
+        assertFalse("on USB before Convert: someone else's", conversion.wantsStick(0x1d6b, 0xa4a5, EARLIER))
+        assertFalse(conversion.takeStick(EARLIER))
+        assertTrue(conversion.wantsStick(0x1d6b, 0xa4a5, STICK))
+        assertFalse("not a shared stick", conversion.wantsStick(0x0781, 0x5567, STICK))
+        assertFalse("the emulator's stick only in debug builds", conversion.wantsStick(0x46f4, 0x0001, STICK))
+    }
+
+    @Test
+    fun `debug builds take the emulator's stick, even one plugged in before Convert`() {
+        val bench = StockConversion(images, conversionOn = true, scope = scope, usb = usb, timing = timing, benchStick = true)
+        assertTrue(bench.claim("1314:1520"))
+        bench.attach(adapter, "1314:1520")
+        adapter.feed(frame(0xCC, "2025.10.15.1127CAY") + frame(0x19, """{"productType":"A15W"}"""))
+        waitUntil(1_000) { bench.phase.value is ConversionPhase.Offered }
+        usb.devices[EARLIER] = 0x46f4 to 0x0001
+        assertFalse(bench.wantsStick(0x46f4, 0x0001, EARLIER))
+        bench.convert()
+        waitUntil(1_000) { bench.phase.value == ConversionPhase.WaitingForStick }
+        assertTrue(bench.wantsStick(0x46f4, 0x0001, EARLIER))
+        bench.reset()
+    }
+
+    @Test
+    fun `the adapter leaving USB as the stick goes in keeps the conversion waiting`() {
+        toWaitingForStick()
+        adapter.killLink()
+        assertEquals(ConversionPhase.WaitingForStick, conversion.phase.value)
+    }
+
+    @Test
+    fun `an empty stick gets the installer at once, then the driver is asked to replug the adapter`() {
+        toWaitingForStick()
+        adapter.killLink()
+        val stick = MemoryStick.partitioned(64)
+        val bridge = plugStick(stick, STICK)
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        assertFalse("the stick is let go", bridge.running)
+        val fs = fat32(stick)
+        assertEquals(listOf(StickFiles.IMAGE), names(fs))
+        assertEquals(InstallerImage.sha256Hex(images.image!!), InstallerImage.sha256Hex(read(fs, StickFiles.IMAGE)))
+        assertFalse("taken once", conversion.wantsStick(0x1d6b, 0xa4a5, STICK))
+        usb.devices.remove(STICK) // the adapter unplugged
+        assertNull(awaitPhase<ConversionPhase.InstallingFromStick>().hint)
+        conversion.reset() // the manager found it back as 1314:2d00
+        assertEquals(ConversionPhase.Idle, conversion.phase.value)
+    }
+
+    @Test
+    fun `the installer's last report is shown first, and Try again adds OCBM_RETRY`() {
+        toWaitingForStick()
+        val stick = MemoryStick.superfloppy(64)
+        put(fat32(stick), StickFiles.RESULT, Reports.undone.toByteArray())
+        plugStick(stick, STICK)
+        val ready = awaitPhase<ConversionPhase.StickReady>(timeoutMs = 5_000)
+        assertEquals("REFUSED", ready.report?.headline)
+        assertTrue(ready.retry)
+        assertFalse(ready.returned)
+        assertFalse(ready.hasImage)
+        assertEquals("nothing written before the driver says so", listOf(StickFiles.RESULT), names(fat32(stick)))
+        conversion.writeStick()
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        assertEquals(listOf(StickFiles.IMAGE, StickFiles.RESULT, StickFiles.RETRY), names(fat32(stick)).sorted())
+    }
+
+    @Test
+    fun `an image already on the stick is replaced only once the driver confirms`() {
+        toWaitingForStick()
+        val stick = MemoryStick.superfloppy(64)
+        put(fat32(stick), StickFiles.IMAGE, ByteArray(5_000) { 1 })
+        plugStick(stick, STICK)
+        val ready = awaitPhase<ConversionPhase.StickReady>(timeoutMs = 5_000)
+        assertTrue(ready.hasImage)
+        assertNull(ready.report)
+        assertFalse(ready.retry)
+        assertEquals(5_000, read(fat32(stick), StickFiles.IMAGE).size)
+        conversion.writeStick()
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        val fs = fat32(stick)
+        assertEquals(listOf(StickFiles.IMAGE), names(fs))
+        assertEquals(InstallerImage.sha256Hex(images.image!!), InstallerImage.sha256Hex(read(fs, StickFiles.IMAGE)))
+    }
+
+    @Test
+    fun `a stick that isn't FAT32 is turned away, and read again when it is put back`() {
+        toWaitingForStick()
+        plugStick(MemoryStick(16_384), STICK)
+        val problem = awaitPhase<ConversionPhase.StickProblem>(timeoutMs = 5_000)
+        assertEquals("The stick isn't FAT32", problem.title)
+        assertTrue(problem.body, problem.body.contains("Format it as FAT32 on a computer"))
+        assertFalse("the same stick is not read again", conversion.wantsStick(0x1d6b, 0xa4a5, STICK))
+        plugStick(MemoryStick.superfloppy(64), AGAIN)
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+    }
+
+    @Test
+    fun `a stick without room for the installer and the backup is turned away`() {
+        toWaitingForStick()
+        val stick = MemoryStick.superfloppy(40)
+        plugStick(stick, STICK)
+        val problem = awaitPhase<ConversionPhase.StickProblem>(timeoutMs = 5_000)
+        assertEquals("The stick is too full", problem.title)
+        assertTrue(names(fat32(stick)).isEmpty())
+    }
+
+    @Test
+    fun `the adapter back sharing the stick shows the installer's report, and offers nothing more`() {
+        val back = MemoryStick.superfloppy(64) // as the installer leaves it, ready before the deadline runs
+        put(fat32(back), StickFiles.RESULT, Reports.wrongFirmware.toByteArray())
+        put(fat32(back), "${StickFiles.IMAGE}.refused", ByteArray(100))
+        toInstalling()
+        plugStick(back, AGAIN)
+        val ready = awaitPhase<ConversionPhase.StickReady>(timeoutMs = 5_000)
+        assertTrue(ready.returned)
+        assertFalse(ready.retry)
+        val said = ready.report?.paragraphs.orEmpty()
+        assertTrue(said.toString(), said.first().startsWith("This adapter runs firmware 2025.02.25.1521."))
+        conversion.writeStick()
+        assertEquals("no retry offered for this refusal", ready, conversion.phase.value)
+        conversion.dismiss()
+        assertEquals(ConversionPhase.Declined, conversion.phase.value)
+        assertFalse("no conversion is offered again", conversion.claim("1314:1520"))
+    }
+
+    @Test
+    fun `back sharing the stick with the installer not started, the driver is told to put the stick in again`() {
+        val stick = toInstalling()
+        plugStick(stick, AGAIN)
+        val hint = awaitPhase<ConversionPhase.InstallingFromStick>(timeoutMs = 5_000) { it.hint != null }.hint
+        assertTrue(hint.orEmpty(), hint.orEmpty().contains("Take the stick out of the adapter and put it back in"))
+    }
+
+    @Test
+    fun `an adapter that never comes back is reported at the deadline, and nothing is offered again`() {
+        toInstalling()
+        val before = usb.searches.get()
+        val failed = awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000)
+        assertEquals("The adapter hasn't come back", failed.title)
+        assertTrue("searched while waiting", usb.searches.get() - before >= 2)
+        conversion.dismiss()
+        assertEquals(ConversionPhase.Declined, conversion.phase.value)
+        assertFalse(conversion.claim("1314:1520"))
+    }
+
+    @Test
+    fun `a stock adapter while it installs is not opened, and the deadline says it didn't convert`() {
+        toInstalling()
+        assertFalse(conversion.claim("1314:1520"))
+        assertEquals("The adapter didn't convert", awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000).title)
+    }
+
+    @Test
+    fun `cancel while waiting for the stick, the adapter gone, looks for it again`() {
+        toWaitingForStick()
+        adapter.killLink()
+        val before = usb.searches.get()
+        conversion.dismiss()
+        assertEquals(ConversionPhase.Idle, conversion.phase.value)
+        assertEquals(before + 1, usb.searches.get())
+        assertFalse(conversion.wantsStick(0x1d6b, 0xa4a5, STICK))
+        assertTrue("its stick out, it is offered again", conversion.claim("1314:1520"))
+    }
+
     private fun attach() {
         assertTrue(conversion.claim("1314:1520"))
         conversion.attach(adapter, "1314:1520")
@@ -231,6 +315,38 @@ class StockConversionTest {
         adapter.feed(frame(0x19, """{"uuid":"651e","productType":"A15W"}"""))
     }
 
+    private fun toWaitingForStick() {
+        attachAndAnswer()
+        awaitPhase<ConversionPhase.Offered>()
+        conversion.convert()
+        awaitPhase<ConversionPhase.WaitingForStick>()
+        waitUntil(1_000) { usb.searches.get() >= 1 } // the look for a bench stick, after the phase is set
+    }
+
+    /** Through the write and the replug: the adapter is away installing. Returns the stick it took. */
+    private fun toInstalling(): MemoryStick {
+        toWaitingForStick()
+        adapter.killLink()
+        val stick = MemoryStick.superfloppy(64)
+        plugStick(stick, STICK)
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        usb.devices.remove(STICK)
+        awaitPhase<ConversionPhase.InstallingFromStick>()
+        return stick
+    }
+
+    /** The stick shows up on USB as [name]; the conversion takes it, as the manager would, and gets it open. */
+    private fun plugStick(
+        stick: MemoryStick,
+        name: String,
+    ): FakeStickTransport {
+        usb.devices[name] = ADAPTER_STICK
+        assertTrue("wanted: $name in ${conversion.phase.value}", conversion.wantsStick(0x1d6b, 0xa4a5, name))
+        assertTrue(conversion.takeStick(name))
+        assertEquals(ConversionPhase.ReadingStick, conversion.phase.value)
+        return FakeStickTransport(stick).also { conversion.stickOpened(it) }
+    }
+
     /** True once nothing more is written to [t]: its heartbeat stopped, so the link was let go. */
     private fun quietAfter(t: FakeTransport): Boolean {
         Thread.sleep(150) // the close runs on another thread
@@ -239,8 +355,11 @@ class StockConversionTest {
         return t.written.isEmpty()
     }
 
-    private inline fun <reified T : ConversionPhase> awaitPhase(timeoutMs: Long = 1_000): T {
-        waitUntil(timeoutMs) { conversion.phase.value is T }
+    private inline fun <reified T : ConversionPhase> awaitPhase(
+        timeoutMs: Long = 1_000,
+        crossinline where: (T) -> Boolean = { true },
+    ): T {
+        waitUntil(timeoutMs) { (conversion.phase.value as? T)?.let(where) == true }
         return conversion.phase.value as T
     }
 
@@ -281,6 +400,31 @@ class StockConversionTest {
         return head + body
     }
 
+    private fun fat32(stick: MemoryStick): FileSystem = (StickVolume.open(stick) as StickVolume.Fat32).fs
+
+    private fun names(fs: FileSystem): List<String> = fs.rootDirectory.listFiles().map { it.name }
+
+    private fun read(
+        fs: FileSystem,
+        name: String,
+    ): ByteArray {
+        val file = fs.rootDirectory.search(name)
+        assertNotNull("$name is on the stick", file)
+        val out = ByteArray(file!!.length.toInt())
+        file.read(0, ByteBuffer.wrap(out))
+        return out
+    }
+
+    private fun put(
+        fs: FileSystem,
+        name: String,
+        bytes: ByteArray,
+    ) {
+        val file = fs.rootDirectory.createFile(name)
+        file.write(0, ByteBuffer.wrap(bytes))
+        file.close()
+    }
+
     private class FakeImages(
         @Volatile var image: ByteArray?,
     ) : ImageSupplier {
@@ -292,27 +436,29 @@ class StockConversionTest {
 
         override fun obtain(progress: (done: Long, total: Long) -> Unit): Result<ByteArray> {
             val bytes = image
-            if (broken || bytes == null) return Result.failure(IOException("The installer's SHA-256 does not match. Nothing was sent."))
+            if (broken || bytes == null) return Result.failure(IOException("The installer's SHA-256 does not match. Nothing was written."))
             progress(bytes.size.toLong(), bytes.size.toLong())
             return Result.success(bytes)
         }
     }
 
-    /** A transport whose every write after Open fails, like a bridge whose adapter stopped taking data. */
-    private class RefusingTransport : com.carlink.ocbm.RawBulkTransport {
-        private val inner = FakeTransport()
-        private var writes = 0
+    /** USB as the manager sees it: device names and their ids, and the searches asked of it. */
+    private class FakeUsb : ConversionUsb {
+        val devices = ConcurrentHashMap<String, Pair<Int, Int>>()
+        val searches = AtomicInteger()
 
-        override fun writeBulk(data: ByteArray): Boolean = ++writes == 1
+        override fun attached(accepts: (vendorId: Int, productId: Int) -> Boolean): Set<String> =
+            devices.filterValues { (vendor, product) -> accepts(vendor, product) }.keys.toSet()
 
-        override fun setReadHandler(handler: (ByteArray, Int) -> Unit) = inner.setReadHandler(handler)
+        override fun searchAgain() {
+            searches.incrementAndGet()
+        }
+    }
 
-        override fun setDeadHandler(handler: () -> Unit) = inner.setDeadHandler(handler)
-
-        override fun start() = inner.start()
-
-        override fun stop() = inner.stop()
-
-        fun feed(data: ByteArray) = inner.feed(data)
+    private companion object {
+        const val EARLIER = "/dev/bus/usb/001/004"
+        const val STICK = "/dev/bus/usb/001/007"
+        const val AGAIN = "/dev/bus/usb/001/009"
+        val ADAPTER_STICK = 0x1d6b to 0xa4a5
     }
 }

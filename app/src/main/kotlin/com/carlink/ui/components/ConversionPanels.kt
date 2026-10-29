@@ -16,9 +16,9 @@ import com.carlink.convert.REQUIRED_FIRMWARE
 import com.carlink.convert.StockConversion
 import java.util.Locale
 
-// Converting a stock adapter from the app (OCBM one-file install M5 part 3): the plan page's detect,
-// confirm, send, installing and restart cards, a download step because the installer comes from a
-// GitHub release (decisions of 10-28), and the stick guide where the build's switch is off.
+// Converting a stock adapter from the app (OCBM one-file install M5 part 3): the plan page's detect and
+// confirm cards, a download step because the installer comes from a GitHub release (decisions of 10-28),
+// the stick it goes to the adapter on (29 Oct), and the stick guide where the build's switch is off.
 
 /**
  * The connecting screen's panel for a stock adapter, or [otherwise] when there is none. Converting is
@@ -66,28 +66,93 @@ private fun conversionPanel(
         is ConversionPhase.Reading ->
             PanelContent(title = "Carlinkit adapter found", body = "Asking it for its model and firmware version.", meta = phase.usbId, busy = true)
         is ConversionPhase.Offered -> offerPanel(phase, conversion, onConvert)
+        is ConversionPhase.Failed -> PanelContent(phase.title, phase.body, actions = listOf(ok))
+        is ConversionPhase.Converting -> stickPanel(phase, conversion)
+    }
+}
+
+/** From "Convert" on: getting the installer, the stick it goes on, and the adapter's restart with it. */
+private fun stickPanel(
+    phase: ConversionPhase.Converting,
+    conversion: StockConversion,
+): PanelContent {
+    val cancel = PanelAction("Cancel", PanelActionLook.QUIET, conversion::dismiss)
+    return when (phase) {
         is ConversionPhase.Downloading ->
             if (phase.total > 0) {
                 PanelContent("Downloading the installer", megabytes(phase.done, phase.total), progress = fraction(phase.done, phase.total))
             } else {
-                PanelContent("Getting the installer", "Checking it before anything is sent.", busy = true)
+                PanelContent("Getting the installer", "Checking it before anything is written.", busy = true)
             }
-        is ConversionPhase.Sending ->
+        ConversionPhase.WaitingForStick ->
             PanelContent(
-                title = "Sending the installer",
-                body = megabytes(phase.done, phase.total),
-                note = "Don't unplug the adapter.",
-                progress = fraction(phase.done, phase.total),
+                title = "Put a USB stick into the adapter",
+                body = "A FAT32 stick of 16 GB or less, in the adapter's own USB port. Leave the adapter plugged in.",
+                note = KEEP_STICK,
+                busy = true,
+                actions = listOf(cancel),
             )
-        ConversionPhase.Installing ->
+        ConversionPhase.ReadingStick ->
             PanelContent(
-                title = "The adapter is installing",
-                body = "About 90 seconds. The adapter disappears and comes back on its own.",
-                note = "Don't turn off the car.",
+                title = "Reading the stick",
+                body = "Checking it has room for the installer and the backup. If Android asks, allow the Carlink USB bridge to use it.",
                 busy = true,
             )
-        ConversionPhase.Restarting -> PanelContent("Adapter restarting", "Waiting for it to come back as an OCBM adapter.", busy = true)
-        is ConversionPhase.Failed -> PanelContent(phase.title, phase.body, actions = listOf(ok))
+        is ConversionPhase.StickReady -> stickReadyPanel(phase, conversion, cancel)
+        is ConversionPhase.StickProblem ->
+            PanelContent(phase.title, phase.body, note = "Carlink reads the stick again when it goes back into the adapter.", busy = true, actions = listOf(cancel))
+        is ConversionPhase.WritingStick ->
+            PanelContent(
+                title = "Writing the installer to the stick",
+                body = megabytes(phase.done, phase.total),
+                note = "Don't unplug the adapter or take the stick out.",
+                progress = fraction(phase.done, phase.total),
+            )
+        ConversionPhase.CheckingStick -> PanelContent("Checking the installer on the stick", "Reading it back and comparing its SHA-256.", busy = true)
+        ConversionPhase.ReplugAdapter ->
+            PanelContent(
+                title = "Unplug the adapter and plug it back in",
+                body = "Unplug the adapter and plug it back in, with the stick still in it. It installs OCBM from the stick as it starts.",
+                note = KEEP_STICK,
+                actions = listOf(PanelAction("Close", PanelActionLook.QUIET, conversion::dismiss)),
+            )
+        is ConversionPhase.InstallingFromStick ->
+            PanelContent(
+                title = "The adapter is installing OCBM",
+                body = phase.hint ?: "From the stick. It comes back as an OCBM adapter when it's done, within a few minutes.",
+                note = "Don't unplug the adapter, take the stick out or turn off the car.",
+                busy = true,
+            )
+    }
+}
+
+/** What is on the stick before writing (the installer's last report, an image already there), or the adapter back with it. */
+private fun stickReadyPanel(
+    ready: ConversionPhase.StickReady,
+    conversion: StockConversion,
+    cancel: PanelAction,
+): PanelContent {
+    val report = ready.report
+    val said = report?.let { r -> "Its last report: ${r.headline}${r.installer?.let { " ($it)" }.orEmpty()}. ${r.paragraphs.joinToString(" ")}" }
+    val write = PanelAction(if (ready.retry) "Try again" else "Write the installer", onClick = conversion::writeStick)
+    val note = if (ready.retry) RETRY_NOTE else null
+    return when {
+        ready.returned && ready.retry -> PanelContent("The adapter didn't convert", said.orEmpty(), note = note, actions = listOf(write, cancel))
+        ready.returned ->
+            PanelContent(
+                title = "The adapter didn't convert",
+                body = said ?: "It came back sharing the stick, and there is no OCBM_RESULT.txt on it.",
+                actions = listOf(PanelAction("OK", onClick = conversion::dismiss)),
+            )
+        else -> {
+            val replaces = if (ready.hasImage) "It already holds an ${InstallerImage.FILE_NAME}: writing replaces it." else ""
+            PanelContent(
+                title = if (report != null) "This stick was used for OCBM before" else "Replace the installer on the stick?",
+                body = listOfNotNull(said, replaces).joinToString(" ").trim(),
+                note = note,
+                actions = listOf(write, cancel),
+            )
+        }
     }
 }
 
@@ -107,7 +172,7 @@ private fun offerPanel(
                 meta = meta,
                 title = STOCK_TITLE,
                 body = "Convert it to OCBM for current CarPlay. Stock CarPlay stays on the adapter until your first drive with Carlink ends.",
-                note = "Keep the car on for about 3 minutes.",
+                note = "It takes a FAT32 USB stick, 16 GB or less, in the adapter.",
                 actions = listOf(PanelAction("Convert to OCBM", onClick = onConvert), notNow),
             )
         Offer.NO_IMAGE -> noImagePanel(meta, conversion, notNow)
@@ -126,7 +191,7 @@ private fun offerPanel(
                 title = "Carlink can't convert this adapter",
                 body =
                     info.product?.let { "The installer is for the Carlinkit A15W (CPC200-CCPA). This adapter says it is a $it." }
-                        ?: "It didn't say which model it is, so Carlink won't send it the installer.",
+                        ?: "It didn't say which model it is, so Carlink won't convert it.",
                 actions = listOf(ok),
             )
     }
@@ -143,16 +208,16 @@ private fun noImagePanel(
     return if (folder != null) {
         PanelContent(
             meta = meta,
-            title = "No installer to send",
-            body = "This build sends a copy of the installer kept on the head unit. Put $name and $name.sha256 in $folder, then tap Check again.",
+            title = "No installer",
+            body = "This build writes a copy of the installer kept on the head unit. Put $name and $name.sha256 in $folder, then tap Check again.",
             actions = listOf(PanelAction("Check again", onClick = conversion::recheck), notNow),
         )
     } else {
-        PanelContent(meta = meta, title = "No installer to send", body = "This build of Carlink has no installer image to send yet.", actions = listOf(notNow))
+        PanelContent(meta = meta, title = "No installer", body = "This build of Carlink has no installer image yet.", actions = listOf(notNow))
     }
 }
 
-/** "Convert this adapter now?": what is kept, what is not, and what not to do meanwhile. */
+/** "Convert this adapter now?": the stick it takes, the backup that goes on it, and what not to do meanwhile. */
 @Composable
 private fun ConvertDialog(
     onConvert: () -> Unit,
@@ -161,8 +226,8 @@ private fun ConvertDialog(
     CarlinkDialog(
         title = "Convert this adapter now?",
         text =
-            "The adapter keeps a copy of its own Wi-Fi and Bluetooth settings. There is no full flash backup: that takes " +
-                "the USB stick. Don't unplug the adapter or turn off the car.",
+            "Carlink writes the installer to a FAT32 USB stick (16 GB or less) that you put into the adapter. As it installs, the " +
+                "adapter saves a full backup of its flash to the stick. $KEEP_STICK Don't turn off the car while it installs.",
         confirmLabel = "Convert",
         onConfirm = onConvert,
         onDismiss = onDismiss,
@@ -183,4 +248,6 @@ private fun fraction(
 ): Float = if (total > 0) done.toFloat() / total else 0f
 
 private const val STOCK_TITLE = "This adapter runs Carlinkit firmware"
+private const val KEEP_STICK = "Keep the stick afterwards, and keep it private: the backup holds the adapter's Wi-Fi password and Bluetooth keys."
+private const val RETRY_NOTE = "Try again writes the installer with an empty OCBM_RETRY file beside it, as the report asks."
 private const val BYTES_PER_MB = 1_000_000.0

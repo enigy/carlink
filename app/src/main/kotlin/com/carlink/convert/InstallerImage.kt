@@ -12,7 +12,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
-/** The installer image an app release converts with: pinned, so a download is checked before a byte goes to the adapter. */
+/** The installer image an app release converts with: pinned, so a download is checked before a byte goes to the stick. */
 data class PinnedImage(
     /** The enigy/ocbm release tag it was published under. */
     val tag: String,
@@ -33,28 +33,16 @@ object InstallerImage {
      * The published image this release converts with; null until it is published (M7, which needs the owner's OK).
      * Publishing, as agreed with the Mac bench (10-28): turn on release immutability on enigy/ocbm before the first
      * release; create the release as a draft, attach the image and its SHA-256, then publish; then pin its tag,
-     * asset URL, size and SHA-256 here, in a commit and an app release. Pin an image built from enigy/ocbm
-     * 8d772cb or newer: from there a version undone with Go back installs again over USB with no OCBM_RETRY,
-     * so Convert works again with the same image.
+     * asset URL, size and SHA-256 here, in a commit and an app release. The app writes it to a stick in the
+     * adapter, where it runs as ROUTE=stick: pin an image built from enigy/ocbm 710eb23 or newer.
      */
     val PINNED: PinnedImage? = null
 
     /** Where the one-page stick guide is, once it is published with the image (M7); a build with the switch off points at it. */
     val STICK_GUIDE: String? = null
 
+    /** The name the stock firmware installs from, at the root of a stick in the adapter. */
     const val FILE_NAME = "A15W_Update.img"
-
-    /**
-     * The SendFile name that starts the stock updater — a bare basename, not an absolute path.
-     *
-     * ARMadb-driver stages every SendFile upload in `/tmp` and, when the name holds "Update.img", runs
-     * `/script/update_box_ota.sh <that name> &`. `update_box_ota.sh` tests `/tmp/$1`, so it prepends
-     * `/tmp/` to the name it is given (lvalen's firmware_update.md). On the bench (28 Oct) an absolute
-     * `/tmp/A15W_Update.img` landed in `/tmp` but the updater then looked for `/tmp//tmp/A15W_Update.img`
-     * and stopped, changing nothing. The bare name makes both the staged file and the updater's `/tmp/$1`
-     * resolve to `/tmp/A15W_Update.img`. The bench is still to confirm the install starts with it.
-     */
-    const val SEND_PATH = FILE_NAME
 
     /** The first 64-hex-digit word of a `.sha256` file, lower-cased; null when there is none. */
     fun hashIn(sidecar: String): String? =
@@ -73,7 +61,7 @@ object InstallerImage {
     ): Result<ByteArray> =
         when {
             size != null && bytes.size.toLong() != size -> Result.failure(IOException("The installer is ${bytes.size} bytes, not the $size expected."))
-            sha256Hex(bytes) != sha256.lowercase() -> Result.failure(IOException("The installer's SHA-256 does not match. Nothing was sent."))
+            sha256Hex(bytes) != sha256.lowercase() -> Result.failure(IOException("The installer's SHA-256 does not match. Nothing was written."))
             else -> Result.success(bytes)
         }
 }

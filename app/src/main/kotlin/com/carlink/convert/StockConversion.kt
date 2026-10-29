@@ -1,5 +1,6 @@
 package com.carlink.convert
 
+import com.carlink.BuildConfig
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
@@ -16,11 +17,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import me.jahnen.libaums.core.fs.FileSystem
 
 /** Where converting a stock adapter stands, for the connecting screen ([StockConversion.phase]). */
 sealed interface ConversionPhase {
+    /**
+     * Past "Convert": the installer is being got, or is on its way to the adapter on the stick. The stock
+     * link may end meanwhile: a stick going into the adapter takes it off USB as the adapter.
+     */
+    sealed interface Converting : ConversionPhase
+
     /** No stock adapter in hand. */
     data object Idle : ConversionPhase
 
@@ -45,18 +51,48 @@ sealed interface ConversionPhase {
     data class Downloading(
         val done: Long,
         val total: Long,
-    ) : ConversionPhase
+    ) : Converting
 
-    data class Sending(
+    /** The installer is in hand: waiting for a FAT32 stick to go into the adapter, which then shares it over USB. */
+    data object WaitingForStick : Converting
+
+    /** The stick is in hand: opening it and seeing what is on it. */
+    data object ReadingStick : Converting
+
+    /**
+     * The open stick asks a decision first: it holds the installer's last report ([report]) or an
+     * A15W_Update.img already ([hasImage]), or the adapter came back sharing it after an install ([returned]).
+     */
+    data class StickReady(
+        val report: StickReport?,
+        val hasImage: Boolean,
+        val returned: Boolean,
+    ) : Converting {
+        /** The report says this version was undone on the adapter before: writing it again takes OCBM_RETRY too. */
+        val retry: Boolean get() = report?.undone == true
+    }
+
+    /** The stick can't take the installer. Fixed on a computer and put back into the adapter, it is read again. */
+    data class StickProblem(
+        val title: String,
+        val body: String,
+    ) : Converting
+
+    data class WritingStick(
         val done: Long,
         val total: Long,
-    ) : ConversionPhase
+    ) : Converting
 
-    /** The adapter has the installer: its updater runs it and restarts the adapter. */
-    data object Installing : ConversionPhase
+    /** Reading the installer back from the stick and checking its SHA-256. */
+    data object CheckingStick : Converting
 
-    /** The adapter left USB after taking the installer; waiting for it to come back. */
-    data object Restarting : ConversionPhase
+    /** The installer is on the stick: the adapter installs it when it starts with the stick in it. */
+    data object ReplugAdapter : Converting
+
+    /** The adapter left USB with the stick, to install; [hint] when it came back sharing the stick instead. */
+    data class InstallingFromStick(
+        val hint: String? = null,
+    ) : Converting
 
     data class Failed(
         val title: String,
@@ -70,44 +106,60 @@ sealed interface ConversionPhase {
     data object Declined : ConversionPhase
 }
 
+/** What the conversion needs of the manager's USB side. */
+interface ConversionUsb {
+    /** The names of the attached devices whose ids [accepts] takes; readable without USB permission. */
+    fun attached(accepts: (vendorId: Int, productId: Int) -> Boolean): Set<String>
+
+    /** Look for the adapter, or the stick, again: in case an attach broadcast was missed. */
+    fun searchAgain()
+}
+
 /**
- * Converting a stock adapter to OCBM from the app (OCBM one-file install M5 part 3, decisions of 10-28).
+ * Converting a stock adapter to OCBM from the app (OCBM one-file install M5 part 3), by the stick (29 Oct).
  *
  * The manager hands over each stock adapter it finds on USB ([claim]). In a build with the switch off
  * ([conversionOn]; off in release builds) the adapter is only recognised by its USB id and the driver
  * is pointed at the stick guide: nothing is opened. With it on, the manager opens the adapter and the
  * conversion speaks Carlinkit's protocol on it ([attach]): the firmware version (0xCC) and BoxSettings'
- * product type (0x19) decide the [Offer]. On "Convert" the installer is obtained and checked
- * ([ImageSupplier]) and sent with SendFile to [InstallerImage.SEND_PATH]; the adapter's own updater runs
- * it and restarts the adapter, which ends the link. It comes back as an OCBM adapter (1314:2d00) in its
- * trial, the manager drops the conversion ([reset]) and the trial screen takes over.
+ * product type (0x19) decide the [Offer].
  *
- * A refusal shows nothing over USB: wrong product or firmware, chip, flash room or factory mode, the
- * adapter just never restarts, and stock keeps CarPlay off until it is unplugged and plugged back in
- * (the Mac bench, 28 Oct). So the app gives the adapter [Timing.deadlineMs] from the end of the send to
- * come back as 1314:2d00, then says the conversion didn't happen, lets the adapter go and offers it no
- * conversion again on its own ([gaveUp]) until an OCBM adapter connects or the app restarts.
+ * On "Convert" the installer is obtained and checked ([ImageSupplier]) and the driver is asked for a
+ * FAT32 stick in the adapter. A stock adapter with a stick and no installer on it shares the stick over
+ * USB ([SharedStick]); only a shared stick that appears after "Convert" is taken ([wantsStick]), never
+ * one outside this flow. The manager opens it through the bridge, which claims it from the head unit's
+ * own mount, and hands it over ([stickOpened]). The conversion speaks USB mass storage to it
+ * ([BulkOnlyStorage]) and writes the installer as the stock firmware's stick update ([StickFiles]): it
+ * runs as ROUTE=stick, the one route that also takes the adapter's full flash backup to the stick. The
+ * driver then unplugs the adapter and plugs it back in with the stick still in it. It comes back as an
+ * OCBM adapter (1314:2d00) in its trial, the manager drops the conversion ([reset]) and the trial screen
+ * takes over; or it comes back sharing the stick, and the installer's report on it says why.
  *
- * The link is held, heartbeat and all, while the adapter is on screen or declined, so the adapter's
- * watchdog does not reset it under the driver; it is let go when the link ends or [reset] runs.
+ * A conversion that ends without an OCBM adapter offers none again on its own ([gaveUp]) until an OCBM
+ * adapter connects or the app restarts. The stock link is held, heartbeat and all, while the adapter is
+ * on screen, so its watchdog does not reset it under the driver.
  */
-@Suppress("TooManyFunctions") // a state machine: six entry points and the steps between its phases
+@Suppress("TooManyFunctions") // a state machine: its entry points and the steps between its phases
 class StockConversion(
     private val images: ImageSupplier,
     private val conversionOn: Boolean,
     private val scope: CoroutineScope,
-    private val searchAgain: () -> Unit,
+    private val usb: ConversionUsb,
     private val timing: Timing = Timing(),
+    /** Whether the emulator bench's stick (46f4:0001) is taken too: debug builds. */
+    private val benchStick: Boolean = BuildConfig.DEBUG,
 ) {
     /** How long each wait lasts. */
     data class Timing(
         /** For the firmware version and BoxSettings after Open. */
         val readMs: Long = 8_000,
         val heartbeatMs: Long = 2_000,
-        /** From the end of the send to the adapter's return as 1314:2d00 (the Mac bench: about 5 minutes). */
+        /** From the adapter leaving USB with the stick to its return as 1314:2d00; 5 minutes until a stick install is timed. */
         val deadlineMs: Long = 300_000,
         /** Between searches while it is away, in case its attach broadcast is missed. */
         val searchMs: Long = 45_000,
+        /** Between looks at whether the stick has left USB, once the installer is on it. */
+        val pollMs: Long = 1_000,
     )
 
     private val phaseState = MutableStateFlow<ConversionPhase>(ConversionPhase.Idle)
@@ -123,25 +175,39 @@ class StockConversion(
     private var usbId = ""
     private var info = StockInfo()
 
-    // The installer went out and no OCBM adapter has come back since: a stock adapter now is that one, unconverted.
-    private var installerSent = false
-
-    // A conversion failed after the installer went out: no stock adapter is offered one again until an OCBM
-    // adapter connects ([reset]) or the app restarts.
+    // A conversion ended without an OCBM adapter: none is offered again until one connects ([reset]) or the app restarts.
     private var gaveUp = false
 
-    // The one timer running (reading, installing or restarting); only touched under [lock].
+    // The one timer running (reading, the replug or the install); only touched under [lock].
     private var wait: Job? = null
+
+    // The checked installer, from "Convert" on.
+    private var image: ByteArray? = null
+
+    // Shared sticks that are not the one asked for: those on USB at "Convert", and each one already taken.
+    private val notStick = mutableSetOf<String>()
+
+    // The stick being opened, and then the open stick while a decision on it is pending or the installer goes to it.
+    private var stickName = ""
+    private var stick: OpenStick? = null
+
+    // The stick being read came back from the adapter after an install.
+    private var returning = false
+
+    // A stock adapter showed up while the adapter was away installing.
+    private var sawStock = false
 
     /**
      * A stock adapter ([usbId], "1314:1520") is on USB: true when the manager should open it and hand the
-     * link to [attach]. False while a link is held, while a failure or a "Not now" stands, after a failed
-     * conversion ([gaveUp]), and in a build with the switch off, which shows the stick guide instead.
+     * link to [attach]. False while a link is held, past "Convert", while a failure or a "Not now" stands,
+     * after a conversion that failed ([gaveUp]), and in a build with the switch off, which shows the stick
+     * guide instead.
      */
     fun claim(usbId: String): Boolean =
         synchronized(lock) {
             val now = phaseState.value
-            val quiet = gaveUp || now is ConversionPhase.Failed || now == ConversionPhase.Declined
+            val quiet = gaveUp || now is ConversionPhase.Converting || now is ConversionPhase.Failed || now == ConversionPhase.Declined
+            if (now is ConversionPhase.InstallingFromStick) sawStock = true
             when {
                 link != null || quiet -> false
                 !conversionOn -> {
@@ -169,30 +235,28 @@ class StockConversion(
         if (!l.start()) logWarn("[CONVERT] Open did not go out to $usbId", tag = Logger.Tags.ADAPTR)
         synchronized(lock) {
             if (link !== l) return
-            wait?.cancel()
-            wait =
-                scope.launch {
-                    delay(timing.readMs)
-                    settle()
-                }
+            startWait {
+                delay(timing.readMs)
+                settle()
+            }
         }
     }
 
-    /** The driver confirmed "Convert this adapter now?": get the installer, check it, send it. */
+    /** The driver confirmed "Convert this adapter now?": get the installer and check it, then ask for the stick. */
     fun convert() {
-        val l =
-            synchronized(lock) {
-                val now = phaseState.value
-                val held = link
-                if (now !is ConversionPhase.Offered || now.offer != Offer.CONVERT || held == null) return
-                phaseState.value = ConversionPhase.Downloading(0, 0)
-                held
-            }
+        synchronized(lock) {
+            val now = phaseState.value
+            if (now !is ConversionPhase.Offered || now.offer != Offer.CONVERT || link == null) return
+            phaseState.value = ConversionPhase.Downloading(0, 0)
+            // The stick asked for is one that appears from here on: a shared stick already on USB is not this adapter's.
+            notStick.clear()
+            notStick += usb.attached(SharedStick::isAdapterStick)
+        }
         logWarn("[CONVERT] converting $usbId: confirmed in the app", tag = Logger.Tags.ADAPTR)
-        scope.launch(Dispatchers.IO) { install(l) }
+        scope.launch(Dispatchers.IO) { obtain() }
     }
 
-    /** "Check again" on "No installer to send": the bench copy may be there now. */
+    /** "Check again" on "No installer": the bench copy may be there now. */
     fun recheck() {
         val ready = images.available()
         synchronized(lock) {
@@ -204,38 +268,100 @@ class StockConversion(
     }
 
     /**
-     * "Not now", or OK on a message. The adapter stays quiet ([ConversionPhase.Declined]) until it leaves.
-     * After a send cut short, with no adapter in hand, the manager looks again, so a returned adapter is
-     * offered anew; after a failed conversion ([gaveUp]) it does not.
+     * Whether the shared stick [deviceName] (by its ids) is the one the conversion asked for: one that
+     * appeared after "Convert", while the conversion waits for the stick or for the adapter to come back
+     * with it. Debug builds also take the emulator bench's stick, plugged in before "Convert" or after.
      */
-    fun dismiss() {
-        val lookAgain =
+    fun wantsStick(
+        vendorId: Int,
+        productId: Int,
+        deviceName: String,
+    ): Boolean = synchronized(lock) { waitsForStick(phaseState.value) && deviceName !in notStick && isStick(vendorId, productId) }
+
+    /** The manager is opening the stick [wantsStick] took; false when it is no longer wanted. */
+    fun takeStick(deviceName: String): Boolean {
+        synchronized(lock) {
+            val now = phaseState.value
+            if (!waitsForStick(now) || deviceName in notStick) return false
+            notStick += deviceName
+            stickName = deviceName
+            returning = now == ConversionPhase.ReplugAdapter || now is ConversionPhase.InstallingFromStick || (now is ConversionPhase.StickProblem && returning)
+            wait?.cancel()
+            phaseState.value = ConversionPhase.ReadingStick
+        }
+        logInfo("[CONVERT] taking the stick at $deviceName${if (returning) ", back from the adapter" else ""}", tag = Logger.Tags.ADAPTR)
+        return true
+    }
+
+    /** The stick [takeStick] took, opened through the bridge; null when it couldn't be (the manager logged why). */
+    fun stickOpened(transport: RawBulkTransport?) {
+        if (transport == null) {
+            moveOn<ConversionPhase.ReadingStick>(ConversionPhase.StickProblem(CANT_OPEN, "The USB bridge couldn't open it. $PUT_BACK"))
+            return
+        }
+        scope.launch(Dispatchers.IO) { readStick(BulkOnlyStorage(transport)) }
+    }
+
+    /** "Write the installer", or "Try again" after a report that this version was undone: write it, with OCBM_RETRY for a retry. */
+    fun writeStick() {
+        val (open, retry) =
             synchronized(lock) {
-                val now = phaseState.value
-                if (now !is ConversionPhase.Offered && now !is ConversionPhase.StickOnly && now !is ConversionPhase.Failed) return
-                val gone = link == null && now is ConversionPhase.Failed && !gaveUp
-                phaseState.value = if (gone) ConversionPhase.Idle else ConversionPhase.Declined
-                gone
+                val now = phaseState.value as? ConversionPhase.StickReady ?: return
+                val s = stick ?: return
+                val bytes = image ?: return
+                if (now.returned && !now.retry) return
+                phaseState.value = ConversionPhase.WritingStick(0, bytes.size.toLong())
+                s to now.retry
             }
-        logInfo("[CONVERT] dismissed${if (lookAgain) "; looking for the adapter again" else ""}", tag = Logger.Tags.ADAPTR)
-        if (lookAgain) searchAgain()
+        logWarn("[CONVERT] writing the installer to the stick${if (retry) ", with OCBM_RETRY" else ""}: confirmed in the app", tag = Logger.Tags.ADAPTR)
+        scope.launch(Dispatchers.IO) { writeTo(open, retry) }
     }
 
     /**
-     * Forget the stock adapter and let go of its link: an OCBM adapter is in hand (the converted one, back
-     * in its trial, or another), or the manager is being released.
+     * "Not now", "Cancel", or OK on a message. The stick is let go. With the adapter's link held it stays quiet
+     * ([ConversionPhase.Declined]) until the adapter leaves; with no link (the stick took the adapter off USB)
+     * the manager looks again, so the adapter is offered anew once the stick is out. After a conversion that
+     * failed ([gaveUp]) it does not.
+     */
+    fun dismiss() {
+        var open: OpenStick? = null
+        val lookAgain =
+            synchronized(lock) {
+                val now = phaseState.value
+                if (!dismissable(now)) return
+                if (now is ConversionPhase.StickReady && now.returned) gaveUp = true
+                open = stick
+                stick = null
+                wait?.cancel()
+                val gone = link == null && !gaveUp && (now is ConversionPhase.Failed || now is ConversionPhase.Converting)
+                phaseState.value = if (gone) ConversionPhase.Idle else ConversionPhase.Declined
+                gone
+            }
+        open?.storage?.release()
+        logInfo("[CONVERT] dismissed${if (lookAgain) "; looking for the adapter again" else ""}", tag = Logger.Tags.ADAPTR)
+        if (lookAgain) usb.searchAgain()
+    }
+
+    /**
+     * Forget the stock adapter, let go of its link and of the stick: an OCBM adapter is in hand (the converted
+     * one, back in its trial, or another), or the manager is being released.
      */
     fun reset() {
-        val l =
+        val (l, open) =
             synchronized(lock) {
-                val held = link
+                val held = link to stick
                 link = null
-                installerSent = false
+                stick = null
+                image = null
                 gaveUp = false
+                returning = false
+                sawStock = false
+                notStick.clear()
                 phaseState.value = ConversionPhase.Idle
                 wait?.cancel()
                 held
             }
+        open?.storage?.release()
         l?.close()
     }
 
@@ -260,150 +386,256 @@ class StockConversion(
     /** Asking is over (both answers in, or [Timing.readMs] passed): what the adapter is and what it is offered. */
     private fun settle() {
         val ready = images.available()
-        var dropped: StockLink? = null
         val next =
             synchronized(lock) {
                 if (phaseState.value !is ConversionPhase.Reading) return
-                val p = if (installerSent) stillStock(info) else ConversionPhase.Offered(usbId, info, offerFor(info, ready))
-                if (installerSent) {
-                    // Back on stock after the installer: let it go, and offer it nothing more.
-                    gaveUp = true
-                    dropped = link
-                    link = null
-                }
-                installerSent = false
+                val p = ConversionPhase.Offered(usbId, info, offerFor(info, ready))
                 phaseState.value = p
                 wait?.cancel()
                 p
             }
-        dropped?.let { l -> scope.launch(Dispatchers.IO) { l.close() } } // not on the read thread it would join
         logInfo("[CONVERT] stock adapter $usbId: ${info.product ?: "model unknown"}, firmware ${info.firmware ?: "unknown"}: $next", tag = Logger.Tags.ADAPTR)
     }
 
-    private suspend fun install(l: StockLink) {
-        val bytes =
-            images.obtain { done, total -> if (link === l) phaseState.value = ConversionPhase.Downloading(done, total) }.getOrElse {
-                logWarn("[CONVERT] no installer: ${it.message}", tag = Logger.Tags.ADAPTR)
-                if (link === l) phaseState.value = ConversionPhase.Failed("Couldn't get the installer", it.message ?: "No reason was given.")
-                return
+    private fun obtain() {
+        val got = images.obtain { done, total -> moveOn<ConversionPhase.Downloading>(ConversionPhase.Downloading(done, total)) }
+        val next =
+            synchronized(lock) {
+                if (phaseState.value !is ConversionPhase.Downloading) return
+                image = got.getOrNull()
+                val p: ConversionPhase =
+                    got.exceptionOrNull()?.let { ConversionPhase.Failed("Couldn't get the installer", it.message ?: "No reason was given.") }
+                        ?: ConversionPhase.WaitingForStick
+                phaseState.value = p
+                p
             }
-        if (link !== l) return
-        val message = MessageSerializer.serializeFile(InstallerImage.SEND_PATH, bytes)
-        val started = System.nanoTime()
-        phaseState.value = ConversionPhase.Sending(0, message.size.toLong())
-        val sent = l.send(message) { done, total -> if (link === l) phaseState.value = ConversionPhase.Sending(done, total) }
-        val ms = (System.nanoTime() - started) / NANOS_PER_MS
-        if (!sent) {
-            logWarn("[CONVERT] SendFile stopped after $ms ms", tag = Logger.Tags.ADAPTR)
-            if (link === l) phaseState.value = ConversionPhase.Failed(SEND_FAILED, "A write to the adapter failed. Unplug it and plug it back in to try again.")
-            return
-        }
-        logWarn("[CONVERT] installer sent: ${bytes.size} B to ${InstallerImage.SEND_PATH} in $ms ms; the adapter's updater has it", tag = Logger.Tags.ADAPTR)
-        synchronized(lock) {
-            if (link !== l) return
-            installerSent = true
-            phaseState.value = ConversionPhase.Installing
-            wait?.cancel()
-            wait = scope.launch { awaitReturn(l) }
-        }
+        logInfo("[CONVERT] installer: ${got.getOrNull()?.let { "${it.size} B, checked" } ?: got.exceptionOrNull()?.message}; $next", tag = Logger.Tags.ADAPTR)
+        if (next == ConversionPhase.WaitingForStick) usb.searchAgain() // a bench stick may be plugged in already
+    }
+
+    /** On the bridge's thread: open the stick and see what is on it, then write to it at once when it is empty. */
+    private fun readStick(storage: BulkOnlyStorage) {
+        val (bytes, returned) = synchronized(lock) { image to returning }
+        val (next, fs) =
+            runCatching { look(storage, bytes?.size ?: 0, returned) }
+                .getOrElse { ConversionPhase.StickProblem(CANT_READ, "${reason(it)} $PUT_BACK") to null }
+        val open = fs?.let { OpenStick(storage, it, synchronized(lock) { stickName }) }
+        val taken =
+            synchronized(lock) {
+                if (phaseState.value != ConversionPhase.ReadingStick || bytes == null) return@synchronized false
+                stick = open
+                phaseState.value = next
+                if (next is ConversionPhase.InstallingFromStick) startWait { awaitInstall() }
+                true
+            }
+        if (!taken || open == null) storage.release()
+        logInfo("[CONVERT] the stick: $next${if (taken) "" else " (no longer wanted)"}", tag = Logger.Tags.ADAPTR)
+        if (taken && open != null && next is ConversionPhase.WritingStick) writeTo(open, retry = false)
     }
 
     /**
-     * From the end of the send: [Timing.deadlineMs] for the adapter to leave USB and come back as 1314:2d00,
-     * which ends this through [reset]. While it is away the manager searches now and then, in case its
-     * attach broadcast is missed. At the deadline: still on stock with the link up is a refusal, which
-     * changed nothing; still away is an adapter that hasn't come back. Either way the app gives up.
+     * Open the stick's FAT32 volume and see what is on it: the next phase, and the file system when the stick
+     * stays open for it. A stick with nothing on it to show or replace is written at once: "Convert" was the go-ahead.
      */
-    private suspend fun awaitReturn(l: StockLink) {
+    private fun look(
+        storage: BulkOnlyStorage,
+        imageBytes: Int,
+        returned: Boolean,
+    ): Pair<ConversionPhase, FileSystem?> {
+        storage.init()
+        val fs =
+            when (val v = StickVolume.open(storage)) {
+                is StickVolume.NotFat32 -> return ConversionPhase.StickProblem(NOT_FAT32, "It holds ${v.found}. $FORMAT_IT") to null
+                is StickVolume.Fat32 -> v.fs
+            }
+        if (returned && StickFiles.imageWaiting(fs)) return ConversionPhase.InstallingFromStick(NOT_STARTED) to null
+        val contents = StickFiles.inspect(fs)
+        if (!returned) roomProblem(contents, imageBytes)?.let { return it to null }
+        if (!returned && contents.report == null && !contents.hasImage) return ConversionPhase.WritingStick(0, imageBytes.toLong()) to fs
+        return ConversionPhase.StickReady(contents.report, contents.hasImage, returned) to fs
+    }
+
+    /** On the bridge's thread: the installer onto the stick, read back and checked, then the stick let go. */
+    private fun writeTo(
+        open: OpenStick,
+        retry: Boolean,
+    ) {
+        val bytes = synchronized(lock) { image } ?: return
+        val started = System.nanoTime()
+        val problem =
+            runCatching {
+                roomProblem(StickFiles.inspect(open.fs), bytes.size) ?: run {
+                    StickFiles.write(open.fs, bytes, InstallerImage.sha256Hex(bytes), retry, ::writing)
+                    open.storage.sync()
+                    null
+                }
+            }.getOrElse { ConversionPhase.StickProblem(WRITE_FAILED, "${reason(it)} $PUT_BACK") }
+        open.storage.release()
+        val ms = (System.nanoTime() - started) / NANOS_PER_MS
+        val next =
+            synchronized(lock) {
+                if (stick === open) stick = null
+                val now = phaseState.value
+                if (now !is ConversionPhase.WritingStick && now != ConversionPhase.CheckingStick) return
+                val p = problem ?: ConversionPhase.ReplugAdapter
+                phaseState.value = p
+                if (problem == null) startWait { awaitReplug(open.name) }
+                p
+            }
+        logWarn("[CONVERT] ${bytes.size} B to the stick in $ms ms${if (retry) " with OCBM_RETRY" else ""}: $next", tag = Logger.Tags.ADAPTR)
+    }
+
+    private fun writing(
+        done: Long,
+        total: Long,
+    ) = moveOn<ConversionPhase.WritingStick>(if (done < total) ConversionPhase.WritingStick(done, total) else ConversionPhase.CheckingStick)
+
+    /** The installer is on the stick: wait for the driver to unplug the adapter, which takes the stick off USB with it. */
+    private suspend fun awaitReplug(name: String) {
+        while (name in usb.attached { _, _ -> true }) delay(timing.pollMs)
+        synchronized(lock) {
+            if (phaseState.value != ConversionPhase.ReplugAdapter) return
+            phaseState.value = ConversionPhase.InstallingFromStick()
+        }
+        logInfo("[CONVERT] the stick left USB with the adapter; ${timing.deadlineMs / MS_PER_SECOND} s for it to come back as OCBM", tag = Logger.Tags.ADAPTR)
+        awaitInstall()
+    }
+
+    /**
+     * The adapter is away with the stick: [Timing.deadlineMs] for it to come back as 1314:2d00, which ends
+     * this through [reset], or sharing the stick, which [takeStick] reads. The manager searches now and
+     * then, in case an attach broadcast is missed. At the deadline the app gives up on this conversion.
+     */
+    private suspend fun awaitInstall() {
         var waited = 0L
         while (waited < timing.deadlineMs) {
             val step = minOf(timing.searchMs, timing.deadlineMs - waited)
             delay(step)
             waited += step
-            val now = phaseState.value
-            if (now != ConversionPhase.Installing && now != ConversionPhase.Restarting) return
-            if (now == ConversionPhase.Restarting && waited < timing.deadlineMs) searchAgain()
+            if (phaseState.value !is ConversionPhase.InstallingFromStick) return
+            if (waited < timing.deadlineMs) usb.searchAgain()
         }
         var dropped: StockLink? = null
         val failed =
             synchronized(lock) {
-                val p =
-                    when (phaseState.value) {
-                        ConversionPhase.Installing -> {
-                            if (link !== l) return
-                            dropped = l
-                            link = null
-                            ConversionPhase.Failed(NOT_DONE, NOT_DONE_BODY)
-                        }
-                        ConversionPhase.Restarting -> ConversionPhase.Failed(NOT_BACK, "It left USB to install OCBM ${timing.deadlineMs / MS_PER_MINUTE} minutes ago. $REPLUG")
-                        else -> return
-                    }
-                installerSent = false
+                if (phaseState.value !is ConversionPhase.InstallingFromStick) return
+                val onStock = sawStock || link != null
+                dropped = link
+                link = null
                 gaveUp = true
+                val p = if (onStock) ConversionPhase.Failed(NOT_CONVERTED, STOCK_AGAIN) else ConversionPhase.Failed(NOT_BACK, notBack())
                 phaseState.value = p
                 p
             }
-        dropped?.let { gone -> scope.launch(Dispatchers.IO) { gone.close() } }
-        logWarn("[CONVERT] ${failed.title}: ${timing.deadlineMs / MS_PER_SECOND} s after the installer; no conversion is offered again", tag = Logger.Tags.ADAPTR)
+        dropped?.let { l -> scope.launch(Dispatchers.IO) { l.close() } }
+        logWarn("[CONVERT] ${failed.title}: ${timing.deadlineMs / MS_PER_SECOND} s after it left with the stick; no conversion is offered again", tag = Logger.Tags.ADAPTR)
     }
 
-    /** The link ended: the adapter restarting, as it should once it has the installer, or unplugged. */
+    /** The link ended: the adapter unplugged, or a stick put into it, which takes it off USB as the adapter. */
     private fun onLinkLost(l: StockLink) {
         val next =
             synchronized(lock) {
                 if (link !== l) return
                 link = null
-                val now = phaseState.value
-                // All of it went out: the updater can restart the adapter before Installing is even set.
-                val allSent = now is ConversionPhase.Sending && now.total > 0 && now.done >= now.total
-                val p =
-                    when {
-                        now == ConversionPhase.Installing || allSent -> ConversionPhase.Restarting
-                        now is ConversionPhase.Sending -> ConversionPhase.Failed(SEND_FAILED, SEND_CUT)
-                        else -> ConversionPhase.Idle
-                    }
-                phaseState.value = p
-                when {
-                    // Installing: the deadline install() started keeps running through the restart.
-                    now == ConversionPhase.Installing -> installerSent = true
-                    // The whole installer went out but install() had not reached Installing: start it here.
-                    allSent -> {
-                        installerSent = true
-                        wait?.cancel()
-                        wait = scope.launch { awaitReturn(l) }
-                    }
-                    else -> wait?.cancel()
+                if (phaseState.value !is ConversionPhase.Converting) {
+                    phaseState.value = ConversionPhase.Idle
+                    wait?.cancel()
                 }
-                p
+                phaseState.value
             }
         logInfo("[CONVERT] link to $usbId ended: $next", tag = Logger.Tags.ADAPTR)
         l.close() // the bridge session outlives the read loop
     }
 
+    /** Waiting for a stick, or for the adapter to come back with it. */
+    private fun waitsForStick(p: ConversionPhase): Boolean =
+        when (p) {
+            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter -> true
+            is ConversionPhase.StickProblem, is ConversionPhase.InstallingFromStick -> true
+            else -> false
+        }
+
+    private fun isStick(
+        vendorId: Int,
+        productId: Int,
+    ): Boolean = SharedStick.isAdapterStick(vendorId, productId) || (benchStick && SharedStick.isBenchStick(vendorId, productId))
+
+    /** A panel with a button that ends it: [dismiss] does something there. */
+    private fun dismissable(p: ConversionPhase): Boolean =
+        when (p) {
+            is ConversionPhase.Offered, is ConversionPhase.StickOnly, is ConversionPhase.Failed -> true
+            is ConversionPhase.StickProblem, is ConversionPhase.StickReady -> true
+            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter -> true
+            else -> false
+        }
+
+    private fun roomProblem(
+        contents: StickContents,
+        imageBytes: Int,
+    ): ConversionPhase.StickProblem? =
+        if (!StickFiles.tooFull(contents, imageBytes)) {
+            null
+        } else {
+            val has = ((contents.freeBytes ?: 0) + contents.reclaimableBytes) / MIB
+            val needs = (StickFiles.roomNeeded(imageBytes) + MIB - 1) / MIB
+            ConversionPhase.StickProblem(
+                TOO_FULL,
+                "It has $has MB free; it needs $needs MB, for the installer and the adapter's flash backup. Make room on a computer, then put it back into the adapter.",
+            )
+        }
+
+    /** Replace the phase with [next] while it is still a [T]: progress that must not undo a later step. */
+    private inline fun <reified T : ConversionPhase> moveOn(next: ConversionPhase) {
+        synchronized(lock) { if (phaseState.value is T) phaseState.value = next }
+    }
+
+    /** Start the one timer, ending the one before. Under [lock]. */
+    private fun startWait(block: suspend () -> Unit) {
+        wait?.cancel()
+        wait = scope.launch { block() }
+    }
+
+    private fun notBack(): String =
+        "It hasn't come back as an OCBM adapter in the ${timing.deadlineMs / MS_PER_MINUTE} minutes since it restarted with the stick. " +
+            "Give it a few more minutes. If it still doesn't come back, unplug it and read OCBM_RESULT.txt on the stick with a computer."
+
     private companion object {
         const val NANOS_PER_MS = 1_000_000L
         const val MS_PER_SECOND = 1_000L
         const val MS_PER_MINUTE = 60_000L
-        const val SEND_FAILED = "The installer didn't finish sending"
-        const val SEND_CUT = "The adapter left USB before it had the whole installer. Plug it back in to try again."
-        const val REPLUG = "Unplug it and plug it back in to use stock CarPlay."
-        const val NOT_DONE = "The conversion didn't happen"
-        const val NOT_DONE_BODY = "Nothing on the adapter changed. $REPLUG"
+        const val MIB = 1024L * 1024
+        const val PUT_BACK = "Take the stick out of the adapter and put it back in to try again."
+        const val FORMAT_IT = "Format it as FAT32 on a computer, then put it back into the adapter."
+        const val NOT_FAT32 = "The stick isn't FAT32"
+        const val TOO_FULL = "The stick is too full"
+        const val CANT_OPEN = "Carlink couldn't open the stick"
+        const val CANT_READ = "Carlink couldn't read the stick"
+        const val WRITE_FAILED = "The installer didn't go onto the stick"
+        const val NOT_CONVERTED = "The adapter didn't convert"
         const val NOT_BACK = "The adapter hasn't come back"
+        const val STOCK_AGAIN = "It came back on its Carlinkit firmware instead of OCBM. The installer's report, OCBM_RESULT.txt, is on the stick: read it with a computer."
+        const val NOT_STARTED =
+            "It came back sharing the stick instead of installing from it. Take the stick out of the adapter and put it back in, " +
+                "leaving the adapter plugged in: it installs from a stick put in while it runs."
 
-        /** The adapter that took the installer came back on Carlinkit firmware. */
-        fun stillStock(info: StockInfo): ConversionPhase.Failed =
-            ConversionPhase.Failed(
-                "The adapter didn't convert",
-                "It restarted on its Carlinkit firmware${info.firmware?.let { " $it" }.orEmpty()} instead of OCBM.",
-            )
+        /** An exception's message as a sentence. */
+        fun reason(e: Throwable): String {
+            val text = (e.message ?: e.javaClass.simpleName).replaceFirstChar { it.uppercase() }
+            return if (text.endsWith(".")) text else "$text."
+        }
     }
 }
 
+/** A stick open for the conversion: its USB mass storage, its FAT32 volume, and its USB device name. */
+private class OpenStick(
+    val storage: BulkOnlyStorage,
+    val fs: FileSystem,
+    val name: String,
+)
+
 /**
- * Carlinkit's protocol on a stock adapter, as much as converting it needs: Open and the heartbeat as
- * Carlink2 sent them, the frames that come back, and one SendFile. The heartbeat and SendFile's slices
- * take turns on [writing], so a heartbeat never lands inside the installer.
+ * Carlinkit's protocol on a stock adapter, as much as the conversion needs: Open and the heartbeat as
+ * Carlink2 sent them, and the frames that come back.
  */
 internal class StockLink(
     private val transport: RawBulkTransport,
@@ -413,7 +645,6 @@ internal class StockLink(
     private val onLost: () -> Unit,
 ) {
     private val frames = StockFrames(onFrame)
-    private val writing = Mutex()
     private var heartbeat: Job? = null
 
     @Volatile private var open = false
@@ -432,37 +663,16 @@ internal class StockLink(
             scope.launch(Dispatchers.IO) {
                 while (isActive) {
                     delay(heartbeatMs)
-                    writing.withLock { transport.writeBulk(MessageSerializer.serializeHeartbeat()) }
+                    transport.writeBulk(MessageSerializer.serializeHeartbeat())
                 }
             }
         return transport.writeBulk(MessageSerializer.serializeOpen(AdapterConfig.DEFAULT))
     }
-
-    /** Write [message] in slices, reporting the bytes written; false if a write failed or the link closed. */
-    suspend fun send(
-        message: ByteArray,
-        progress: (done: Long, total: Long) -> Unit,
-    ): Boolean =
-        writing.withLock {
-            var at = 0
-            while (at < message.size && open) {
-                val end = minOf(at + SLICE, message.size)
-                if (!transport.writeBulk(message.copyOfRange(at, end))) break
-                at = end
-                progress(at.toLong(), message.size.toLong())
-            }
-            at == message.size
-        }
 
     /** Stop the heartbeat and let go of the adapter. Blocks while the transport winds down. */
     fun close() {
         open = false
         heartbeat?.cancel()
         transport.stop()
-    }
-
-    private companion object {
-        /** One step of the send's progress: four of the bridge's 16 KiB writes. */
-        const val SLICE = 64 * 1024
     }
 }

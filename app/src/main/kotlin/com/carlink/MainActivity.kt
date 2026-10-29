@@ -225,6 +225,10 @@ class MainActivity : ComponentActivity() {
                     if (device != null && KnownDevices.isKnownDevice(device.vendorId, device.productId)) {
                         logInfo("[USB_ATTACH] Carlinkit device attached: path=${device.deviceName}", tag = "MAIN")
                         carlinkManager?.onUsbDeviceAttached()
+                    } else if (device != null && carlinkManager?.stockConversion?.wantsStick(device.vendorId, device.productId, device.deviceName) == true) {
+                        // The stick a conversion asked for, shared by the adapter: never acted on outside that flow.
+                        logInfo("[USB_ATTACH] the stick the conversion waits for: path=${device.deviceName}", tag = "MAIN")
+                        carlinkManager?.onUsbDeviceAttached()
                     }
                 } else if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent.action) {
                     device?.let {
