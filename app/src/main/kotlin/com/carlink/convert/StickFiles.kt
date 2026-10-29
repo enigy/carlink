@@ -25,6 +25,7 @@ data class StickReport(
 
     companion object {
         const val BACK_TO_STOCK = "BACK TO STOCK"
+        const val STOPPED = "STOPPED"
         const val INSTALLED = "INSTALLED"
         private const val HEAD = "OCBM install:"
         private const val INSTALLER = "installer:"
@@ -153,6 +154,58 @@ private fun text(
     n: Int,
 ): String = String(b, at, n, Charsets.US_ASCII)
 
+/**
+ * Reading ahead for libaums, which reads a file a cluster at a time: on a stick with 512-byte clusters
+ * the read-back of a 2 MB installer was about 4,300 commands (truck, 29 Oct; the whole write took 24.9 s).
+ * A miss reads [AHEAD_BYTES] from where it starts, so a file laid out in order comes back in a few dozen.
+ * Any write drops what was read ahead, so nothing read back is older than the last write.
+ */
+internal class ReadAhead(
+    private val inner: BlockDeviceDriver,
+) : BlockDeviceDriver {
+    private var start = -1L
+    private var cache = ByteArray(0)
+
+    override val blockSize: Int get() = inner.blockSize
+    override val blocks: Long get() = inner.blocks
+
+    override fun init() = inner.init()
+
+    override fun read(
+        deviceOffset: Long,
+        buffer: ByteBuffer,
+    ) {
+        val want = buffer.remaining()
+        val ahead = maxOf(1, AHEAD_BYTES / blockSize)
+        val wantBlocks = want / blockSize
+        val count = minOf(ahead.toLong(), blocks - deviceOffset).toInt()
+        if (want % blockSize != 0 || wantBlocks >= ahead || count < wantBlocks) {
+            inner.read(deviceOffset, buffer)
+            return
+        }
+        if (start < 0 || deviceOffset < start || (deviceOffset - start + wantBlocks) * blockSize > cache.size) {
+            val fresh = ByteBuffer.allocate(count * blockSize)
+            inner.read(deviceOffset, fresh)
+            cache = fresh.array()
+            start = deviceOffset
+        }
+        buffer.put(cache, ((deviceOffset - start) * blockSize).toInt(), want)
+    }
+
+    override fun write(
+        deviceOffset: Long,
+        buffer: ByteBuffer,
+    ) {
+        start = -1
+        cache = ByteArray(0)
+        inner.write(deviceOffset, buffer)
+    }
+
+    private companion object {
+        const val AHEAD_BYTES = 64 * 1024
+    }
+}
+
 /** What is on the stick before anything is written. [freeBytes] is null when the volume does not say. */
 data class StickContents(
     val report: StickReport?,
@@ -173,6 +226,12 @@ object StickFiles {
     const val RESULT = "OCBM_RESULT.txt"
     const val RETRY = "OCBM_RETRY"
 
+    /** A bad .part set aside ([writePart]). */
+    private const val BAD = "$IMAGE.bad"
+
+    /** What once.sh renames the image to when it refuses or stops (the same installer, set aside), and [BAD]. */
+    private val PARKED = listOf("$IMAGE.refused", "$IMAGE.stopped", BAD)
+
     /** once.sh refuses a stick with less free than this: the flash backup goes there. */
     const val BACKUP_ROOM = 40L * 1024 * 1024
     private const val CHUNK = 64 * 1024
@@ -182,7 +241,7 @@ object StickFiles {
     fun inspect(fs: FileSystem): StickContents {
         val root = fs.rootDirectory
         val image = root.search(IMAGE)
-        val reclaimable = (image?.length ?: 0) + (root.search(PART)?.length ?: 0)
+        val reclaimable = (image?.length ?: 0) + (root.search(PART)?.length ?: 0) + PARKED.sumOf { root.search(it)?.length ?: 0 }
         val free = fs.freeSpace.takeIf { it in 0..fs.capacity }
         return StickContents(readReport(fs), image != null, free, reclaimable)
     }
@@ -207,8 +266,47 @@ object StickFiles {
         progress: (done: Long, total: Long) -> Unit,
     ) {
         val root = fs.rootDirectory
-        root.search(PART)?.delete()
+        val want = sha256.lowercase()
+        val parked = PARKED.mapNotNull { root.search(it) }
+        val same = sameInstaller(parked, image.size, want, progress)
+        val ready = same ?: writePart(root, image, want, progress)
+        if (same != null) parked.filter { it !== same }.forEach { it.delete() }
+        root.search(IMAGE)?.delete()
+        ready.name = IMAGE
+        if (retry && root.search(RETRY) == null) root.createFile(RETRY).close()
+    }
+
+    /**
+     * The installer an earlier try parked (A15W_Update.img.refused or .stopped), when it is this one (its
+     * SHA-256): renamed back rather than written again.
+     */
+    private fun sameInstaller(
+        parked: List<UsbFile>,
+        size: Int,
+        sha256: String,
+        progress: (done: Long, total: Long) -> Unit,
+    ): UsbFile? {
+        if (parked.isEmpty()) return null
+        progress(size.toLong(), size.toLong()) // checking, not writing
+        return parked.firstOrNull { it.length == size.toLong() && InstallerImage.sha256Hex(readAll(it)) == sha256 }
+    }
+
+    /**
+     * [image] written as A15W_Update.img.part, read back and checked against [sha256]. Parked images go once
+     * the .part is there, so their room goes to this one. The root directory is never left empty on the way:
+     * libaums frees an empty root's cluster and moves the root elsewhere, while the stick's boot sector still
+     * names the old cluster, so every later change is lost (bench, 29 Oct). So a .part alone at the root is
+     * set aside as A15W_Update.img.bad rather than deleted (libaums can't truncate one to nothing either).
+     */
+    private fun writePart(
+        root: UsbFile,
+        image: ByteArray,
+        sha256: String,
+        progress: (done: Long, total: Long) -> Unit,
+    ): UsbFile {
+        root.search(PART)?.let { discard(root, it) }
         val part = root.createFile(PART)
+        PARKED.mapNotNull { root.search(it) }.forEach { it.delete() }
         var at = 0
         while (at < image.size) {
             val n = minOf(CHUNK, image.size - at)
@@ -219,13 +317,19 @@ object StickFiles {
         part.flush()
         part.close()
         val back = root.search(PART) ?: throw IOException("the written file is not on the stick")
-        if (InstallerImage.sha256Hex(readAll(back)) != sha256.lowercase()) {
-            back.delete()
+        if (InstallerImage.sha256Hex(readAll(back)) != sha256) {
+            discard(root, back)
             throw IOException("what the stick gave back does not match the installer")
         }
-        root.search(IMAGE)?.delete()
-        back.name = IMAGE
-        if (retry && root.search(RETRY) == null) root.createFile(RETRY).close()
+        return back
+    }
+
+    /** Delete [file], or, when it is alone at the root, set it aside as A15W_Update.img.bad ([writePart]). */
+    private fun discard(
+        root: UsbFile,
+        file: UsbFile,
+    ) {
+        if (root.listFiles().size > 1) file.delete() else file.name = BAD
     }
 
     private fun readAll(file: UsbFile): ByteArray {

@@ -30,7 +30,7 @@ class StockConversionTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val images = FakeImages(Random(11).nextBytes(120_000))
     private val usb = FakeUsb()
-    private val timing = StockConversion.Timing(readMs = 400, heartbeatMs = 50, deadlineMs = 700, searchMs = 200, pollMs = 20, openDelayMs = 30)
+    private val timing = StockConversion.Timing(readMs = 400, heartbeatMs = 50, deadlineMs = 700, searchMs = 200, pollMs = 20, openDelayMs = 30, stockMs = 300)
     private val conversion = StockConversion(images, conversionOn = true, scope = scope, usb = usb, timing = timing, benchStick = false)
     private val adapter = FakeTransport()
 
@@ -376,10 +376,45 @@ class StockConversionTest {
     }
 
     @Test
-    fun `a stock adapter while it installs is not opened, and the deadline says it didn't convert`() {
+    fun `a stock adapter that stays stock means the install didn't go ahead, and the replugged stick says why`() {
+        val stick = toInstalling()
+        assertFalse("not opened", conversion.claim("1314:1520"))
+        Thread.sleep(100)
+        assertFalse("its re-attaches don't restart the clock", conversion.claim("1314:1520"))
+        awaitPhase<ConversionPhase.NotInstalled>()
+        Thread.sleep(timing.deadlineMs)
+        assertEquals("no deadline after it", ConversionPhase.NotInstalled, conversion.phase.value)
+        // What once.sh leaves after the same-version guard: the report, and the image renamed .refused.
+        val fs = fat32(stick)
+        put(fs, StickFiles.RESULT, Reports.undone.toByteArray())
+        fs.rootDirectory.search(StickFiles.IMAGE)!!.name = "${StickFiles.IMAGE}.refused"
+        plugStick(stick, AGAIN)
+        val ready = awaitPhase<ConversionPhase.StickReady>(timeoutMs = 5_000)
+        assertTrue(ready.returned)
+        assertTrue("Try again", ready.retry)
+        conversion.writeStick()
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        val after = fat32(stick)
+        assertEquals(listOf(StickFiles.IMAGE, StickFiles.RESULT, StickFiles.RETRY), names(after).sorted())
+        assertEquals(InstallerImage.sha256Hex(images.image!!), InstallerImage.sha256Hex(read(after, StickFiles.IMAGE)))
+    }
+
+    @Test
+    fun `a successful install's stock start isn't taken for a failure`() {
         toInstalling()
         assertFalse(conversion.claim("1314:1520"))
-        assertEquals("The adapter didn't convert", awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000).title)
+        conversion.reset() // 1314:2d00 came, well inside the minute
+        Thread.sleep(timing.stockMs + 100)
+        assertEquals(ConversionPhase.Idle, conversion.phase.value)
+    }
+
+    @Test
+    fun `closing the didn't-install panel offers no conversion again`() {
+        toInstalling()
+        conversion.claim("1314:1520")
+        awaitPhase<ConversionPhase.NotInstalled>()
+        conversion.dismiss()
+        assertFalse(conversion.claim("1314:1520"))
     }
 
     @Test

@@ -105,6 +105,67 @@ class StickFilesTest {
     }
 
     @Test
+    fun `a bad read-back on an empty stick keeps its root directory where the stick says it is`() {
+        val stick = MemoryStick.superfloppy(64)
+        val head = image.copyOfRange(0, 16)
+        stick.corrupt = { _, block -> if (block.copyOfRange(0, 16).contentEquals(head)) block[100] = (block[100].toInt() xor 1).toByte() }
+        try {
+            StickFiles.write(fat32(stick), image, sha, retry = false) { _, _ -> }
+            fail("a bad read-back must fail the write")
+        } catch (_: IOException) {
+        }
+        stick.corrupt = null
+        assertEquals("set aside, not deleted: an empty root would move", listOf("${StickFiles.IMAGE}.bad"), names(fat32(stick)))
+        StickFiles.write(fat32(stick), image, sha, retry = false) { _, _ -> }
+        assertEquals(listOf(StickFiles.IMAGE), names(fat32(stick)))
+        assertEquals(sha, InstallerImage.sha256Hex(read(fat32(stick), StickFiles.IMAGE)))
+    }
+
+    @Test
+    fun `an installer once_sh set aside is renamed back when it is this one, not written again`() {
+        val stick = MemoryStick.superfloppy(64)
+        StickFiles.write(fat32(stick), image, sha, retry = false) { _, _ -> }
+        fat32(stick).rootDirectory.search(StickFiles.IMAGE)!!.name = "${StickFiles.IMAGE}.refused"
+        assertTrue("counted as room", StickFiles.inspect(fat32(stick)).reclaimableBytes >= image.size)
+        val before = stick.blocksWritten
+        StickFiles.write(fat32(stick), image, sha, retry = true) { _, _ -> }
+        assertTrue("a rename, not ${image.size / 512} blocks: ${stick.blocksWritten - before}", stick.blocksWritten - before < 50)
+        val fs = fat32(stick)
+        assertEquals(listOf(StickFiles.IMAGE, StickFiles.RETRY), names(fs).sorted())
+        assertEquals(sha, InstallerImage.sha256Hex(read(fs, StickFiles.IMAGE)))
+    }
+
+    @Test
+    fun `another installer set aside is deleted, and its room goes to this one`() {
+        val stick = MemoryStick.superfloppy(64)
+        val old = Random(9).nextBytes(400_000)
+        StickFiles.write(fat32(stick), old, InstallerImage.sha256Hex(old), retry = false) { _, _ -> }
+        fat32(stick).rootDirectory.search(StickFiles.IMAGE)!!.name = "${StickFiles.IMAGE}.stopped"
+        StickFiles.write(fat32(stick), image, sha, retry = false) { _, _ -> }
+        val fs = fat32(stick)
+        assertEquals(listOf(StickFiles.IMAGE), names(fs))
+        assertEquals(sha, InstallerImage.sha256Hex(read(fs, StickFiles.IMAGE)))
+    }
+
+    @Test
+    fun `reading ahead turns a cluster-at-a-time read-back into a few reads, and a write drops it`() {
+        val stick = MemoryStick.superfloppy(64)
+        val ahead = ReadAhead(stick)
+        StickFiles.write(fat32(stick), image, sha, retry = false) { _, _ -> }
+        val reads = stick.reads
+        val fs = (StickVolume.open(ahead) as StickVolume.Fat32).fs
+        assertEquals(sha, InstallerImage.sha256Hex(read(fs, StickFiles.IMAGE)))
+        val used = stick.reads - reads
+        assertTrue("${image.size / 512} blocks in $used reads", used < 40)
+        val block = ByteBuffer.allocate(512)
+        ahead.read(100, block)
+        ahead.write(100, ByteBuffer.wrap(ByteArray(512) { 7 }))
+        val again = ByteBuffer.allocate(512)
+        ahead.read(100, again)
+        assertEquals("what was written, not what was read ahead", 7, again.array()[0].toInt())
+    }
+
+    @Test
     fun `too little room for the installer and once_sh's 40 MB backup is refused`() {
         assertEquals("once.sh's STICK_NEED_KB, 40960 KB", 40960L * 1024, StickFiles.BACKUP_ROOM)
         val small = StickFiles.inspect(fat32(MemoryStick.superfloppy(40)))

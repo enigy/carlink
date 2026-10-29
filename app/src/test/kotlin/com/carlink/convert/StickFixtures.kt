@@ -19,12 +19,18 @@ internal class MemoryStick(
 
     @Volatile var corrupt: ((lba: Long, block: ByteArray) -> Unit)? = null
 
+    /** read() calls, and blocks written, so far. */
+    @Volatile var reads = 0
+
+    @Volatile var blocksWritten = 0
+
     override fun init() = Unit
 
     override fun read(
         deviceOffset: Long,
         buffer: ByteBuffer,
     ) {
+        reads++
         var lba = deviceOffset
         while (buffer.hasRemaining()) {
             check(lba < blocks) { "read past the end: block $lba of $blocks" }
@@ -44,6 +50,7 @@ internal class MemoryStick(
             val block = ByteArray(BLOCK)
             buffer.get(block, 0, minOf(BLOCK, buffer.remaining()))
             corrupt?.invoke(lba, block)
+            blocksWritten++
             synchronized(stored) { stored[lba] = block }
             lba++
         }

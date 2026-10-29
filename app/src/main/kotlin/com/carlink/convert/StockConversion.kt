@@ -103,6 +103,13 @@ sealed interface ConversionPhase {
         val hint: String? = null,
     ) : Converting
 
+    /**
+     * The adapter came back on its Carlinkit firmware and stayed there ([StockConversion.Timing.stockMs]): the
+     * installer refused or stopped. It renamed its image, so stock doesn't share the stick on its own; replugged
+     * with the stick in, the adapter shares it, and the installer's report on it is read.
+     */
+    data object NotInstalled : Converting
+
     data class Failed(
         val title: String,
         val body: String,
@@ -176,6 +183,11 @@ class StockConversion(
         val deadlineMs: Long = 300_000,
         /** Between searches while it is away, in case its attach broadcast is missed. */
         val searchMs: Long = 45_000,
+        /**
+         * From a stock adapter's first attach while the adapter is away installing to "The adapter didn't install":
+         * a successful install restarts into 1314:2d00 within about 40 s of power-on.
+         */
+        val stockMs: Long = 60_000,
         /** Between looks for the stick, and at whether it has left USB once the installer is on it. */
         val pollMs: Long = 1_000,
         /**
@@ -222,6 +234,7 @@ class StockConversion(
 
     // A stock adapter showed up while the adapter was away installing.
     private var sawStock = false
+    private var stockWait: Job? = null
 
     // The shared stick [ConversionPhase.StickInFirst] is about, and those its guidance was dismissed for.
     private var strayName = ""
@@ -237,7 +250,12 @@ class StockConversion(
         synchronized(lock) {
             val now = phaseState.value
             val quiet = gaveUp || now is ConversionPhase.Converting || now is ConversionPhase.Failed || now == ConversionPhase.Declined
-            if (now is ConversionPhase.InstallingFromStick) sawStock = true
+            if (now is ConversionPhase.InstallingFromStick && !sawStock) {
+                // An install restarts into 1314:2d00 within about 40 s of power-on, as stock until then.
+                sawStock = true
+                stockWait?.cancel()
+                stockWait = scope.launch { stockStays() }
+            }
             when {
                 link != null || quiet -> false
                 !conversionOn -> {
@@ -405,7 +423,7 @@ class StockConversion(
                     phaseState.value = ConversionPhase.Idle
                     return@synchronized false
                 }
-                if (now is ConversionPhase.StickReady && now.returned) gaveUp = true
+                if ((now is ConversionPhase.StickReady && now.returned) || now == ConversionPhase.NotInstalled) gaveUp = true
                 open = stick
                 stick = null
                 wait?.cancel()
@@ -432,6 +450,7 @@ class StockConversion(
                 gaveUp = false
                 returning = false
                 sawStock = false
+                stockWait?.cancel()
                 notStick.clear()
                 strayDismissed.clear()
                 phaseState.value = ConversionPhase.Idle
@@ -519,7 +538,9 @@ class StockConversion(
                 if (!waitsForStick(now) || deviceName in notStick) return
                 notStick += deviceName
                 stickName = deviceName
-                returning = now == ConversionPhase.ReplugAdapter || now is ConversionPhase.InstallingFromStick || (now is ConversionPhase.StickProblem && returning)
+                // Taken after the installer went on: the adapter came back sharing it, and its report is read.
+                val afterInstall = now == ConversionPhase.ReplugAdapter || now is ConversionPhase.InstallingFromStick || now == ConversionPhase.NotInstalled
+                returning = afterInstall || (now is ConversionPhase.StickProblem && returning)
                 wait?.cancel()
                 phaseState.value = ConversionPhase.ReadingStick
                 link.also { link = null }
@@ -543,7 +564,7 @@ class StockConversion(
                 if (phaseState.value != ConversionPhase.ReadingStick || bytes == null) return@synchronized false
                 stick = open
                 phaseState.value = next
-                if (next is ConversionPhase.InstallingFromStick) startWait { awaitInstall() }
+                if (next is ConversionPhase.InstallingFromStick) installing(next)
                 true
             }
         if (!taken || open == null) storage.release()
@@ -563,7 +584,7 @@ class StockConversion(
     ): Pair<ConversionPhase, FileSystem?> {
         storage.init()
         val fs =
-            when (val v = StickVolume.open(storage)) {
+            when (val v = StickVolume.open(ReadAhead(storage))) {
                 is StickVolume.NotFat32 -> return ConversionPhase.StickProblem(NOT_FAT32, "It holds ${v.found}. $FORMAT_IT") to null
                 is StickVolume.Fat32 -> v.fs
             }
@@ -614,10 +635,32 @@ class StockConversion(
         while (name in usb.attached { _, _ -> true }) delay(timing.pollMs)
         synchronized(lock) {
             if (phaseState.value != ConversionPhase.ReplugAdapter) return
-            phaseState.value = ConversionPhase.InstallingFromStick()
+            installing(ConversionPhase.InstallingFromStick())
         }
         logInfo("[CONVERT] the stick left USB with the adapter; ${timing.deadlineMs / MS_PER_SECOND} s for it to come back as OCBM", tag = Logger.Tags.ADAPTR)
-        awaitInstall()
+    }
+
+    /** The adapter is away installing: [next], the deadline, and a fresh look out for it coming back as stock. Under [lock]. */
+    private fun installing(next: ConversionPhase.InstallingFromStick) {
+        phaseState.value = next
+        sawStock = false
+        stockWait?.cancel()
+        startWait { awaitInstall() }
+    }
+
+    /**
+     * A stock adapter showed up while the adapter was away installing. A successful install is 1314:2d00 within
+     * about 40 s of power-on (27 s and 38 s on the bench), which ends this through [reset]; one still here after
+     * [Timing.stockMs] refused or stopped (truck, 29 Oct: refused, and Carlink waited the whole 300 s).
+     */
+    private suspend fun stockStays() {
+        delay(timing.stockMs)
+        synchronized(lock) {
+            if (phaseState.value !is ConversionPhase.InstallingFromStick) return
+            wait?.cancel()
+            phaseState.value = ConversionPhase.NotInstalled
+        }
+        logWarn("[CONVERT] still a stock adapter ${timing.stockMs / MS_PER_SECOND} s after it came back: the install didn't go ahead", tag = Logger.Tags.ADAPTR)
     }
 
     /**
@@ -670,7 +713,7 @@ class StockConversion(
     private fun waitsForStick(p: ConversionPhase): Boolean =
         when (p) {
             ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter -> true
-            is ConversionPhase.StickProblem, is ConversionPhase.InstallingFromStick -> true
+            is ConversionPhase.StickProblem, is ConversionPhase.InstallingFromStick, ConversionPhase.NotInstalled -> true
             else -> false
         }
 
@@ -684,7 +727,7 @@ class StockConversion(
         when (p) {
             is ConversionPhase.Offered, is ConversionPhase.StickOnly, is ConversionPhase.Failed, is ConversionPhase.StickInFirst -> true
             is ConversionPhase.StickProblem, is ConversionPhase.StickReady -> true
-            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter -> true
+            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter, ConversionPhase.NotInstalled -> true
             else -> false
         }
 

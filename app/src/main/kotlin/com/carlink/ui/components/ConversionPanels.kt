@@ -13,6 +13,7 @@ import com.carlink.convert.ConversionPhase
 import com.carlink.convert.InstallerImage
 import com.carlink.convert.Offer
 import com.carlink.convert.REQUIRED_FIRMWARE
+import com.carlink.convert.StickReport
 import com.carlink.convert.StockConversion
 import java.util.Locale
 
@@ -123,6 +124,13 @@ private fun stickPanel(
                 note = KEEP_STICK,
                 actions = listOf(PanelAction("Close", PanelActionLook.QUIET, conversion::dismiss)),
             )
+        ConversionPhase.NotInstalled ->
+            PanelContent(
+                title = "The adapter didn't install",
+                body = "Unplug it and plug it back in, with the stick still in, so Carlink can read why.",
+                busy = true,
+                actions = listOf(PanelAction("Close", PanelActionLook.QUIET, conversion::dismiss)),
+            )
         is ConversionPhase.InstallingFromStick ->
             PanelContent(
                 title = "The adapter is installing OCBM",
@@ -148,7 +156,7 @@ private fun stickReadyPanel(
         ready.returned ->
             PanelContent(
                 title = "The adapter didn't convert",
-                body = said ?: "It came back sharing the stick, and there is no OCBM_RESULT.txt on it.",
+                body = (said ?: "It came back sharing the stick, and there is no OCBM_RESULT.txt on it.") + stoppedGuide(report),
                 actions = listOf(PanelAction("OK", onClick = conversion::dismiss)),
             )
         else -> {
@@ -162,6 +170,10 @@ private fun stickReadyPanel(
         }
     }
 }
+
+/** After a STOPPED install, where the stick guide is, once it is published (M7). */
+private fun stoppedGuide(report: StickReport?): String =
+    if (report?.headline == StickReport.STOPPED) InstallerImage.STICK_GUIDE?.let { " The stick guide says what to do next: $it" }.orEmpty() else ""
 
 /** What the adapter said it is, and what it is offered: the detect cards. */
 private fun offerPanel(
