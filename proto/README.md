@@ -1,7 +1,7 @@
 # OCBM protocol table — reference copy
 
 `ocbm-proto.lib.rs` is a byte-identical copy of `crates/ocbm-proto/src/lib.rs` from
-enigy/ocbm at commit `b7144f0` (main, 2026-10-27: media buttons 6 to 8, shuffle and repeat). It is **not compiled** here; it is the
+enigy/ocbm at commit `153df7f` (main, 2026-10-28: the one-file install, CAP_INSTALL, MGMT_INSTALL_CONFIRM and MGMT_GO_STOCK). It is **not compiled** here; it is the
 canonical constant table that `tools/proto_check.py` compares the Kotlin client
 (`app/src/main/kotlin/com/carlink/ocbm/OcbmProto.kt`) against. OCBM's own checker only looks at
 clients inside its repo, so a separate repo needs its own copy of both.
