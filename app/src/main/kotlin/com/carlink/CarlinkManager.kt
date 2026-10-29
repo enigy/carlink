@@ -3177,9 +3177,6 @@ class CarlinkManager(
     /** True when the box advertises CAP_PHONE_POLICY; without it the priority controls stay hidden. */
     val phonePolicySupported: Boolean get() = client?.supportsPhonePolicy == true
 
-    /** Whether the box calls known phones on its own when it starts (the app's durable copy). */
-    val autoConnectPhones: Boolean get() = knownStore?.snapshot?.autoConnect ?: true
-
     /**
      * Move a phone one place up ([delta] = -1) or down (+1) in the reconnect order. The whole list on
      * screen becomes the explicit order, so what the user sees is exactly what the box is told.
@@ -3199,12 +3196,6 @@ class CarlinkManager(
         pushPhonePolicy("reorder")
     }
 
-    fun setAutoConnectPhones(on: Boolean) {
-        logInfo("[DEVICE_MGMT] Auto-connect -> $on", tag = Logger.Tags.ADAPTR)
-        knownStore?.update { it.copy(autoConnect = on) }
-        pushPhonePolicy("auto-connect")
-    }
-
     /** Ask the box to call this bonded phone now. The box never interrupts a phone that is projecting. */
     fun connectPhone(btMac: String) {
         if (!phonePolicySupported) return
@@ -3219,13 +3210,12 @@ class CarlinkManager(
     }
 
     /**
-     * Send the order on screen and the auto-connect flag to the box. The app is the durable copy, so
-     * this also runs at every session start; the box writes flash only when the policy changed.
+     * Send the order on screen to the box, with auto-connect on ([phonePolicyJson]). The app is the
+     * durable copy, so this also runs at every session start; the box writes flash only when the policy changed.
      */
     private fun pushPhonePolicy(reason: String) {
         if (!phonePolicySupported) return
-        val snap = knownStore?.snapshot ?: return
-        val body = phonePolicyJson(_pairedDevices.map { it.btMac }, snap.autoConnect)
+        val body = phonePolicyJson(_pairedDevices.map { it.btMac })
         scope.launch(Dispatchers.IO) {
             val status = client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8))
             logInfo("[DEVICE_MGMT] SET_POLICY ($reason) $body status=$status", tag = Logger.Tags.ADAPTR)
@@ -3242,8 +3232,7 @@ class CarlinkManager(
             for (waitMs in POLICY_SYNC_DELAYS_MS) {
                 delay(waitMs)
                 if (!phonePolicySupported) return@launch
-                val snap = knownStore?.snapshot ?: return@launch
-                val body = phonePolicyJson(_pairedDevices.map { it.btMac }, snap.autoConnect)
+                val body = phonePolicyJson(_pairedDevices.map { it.btMac })
                 status = withContext(Dispatchers.IO) { client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8)) }
                 logInfo("[DEVICE_MGMT] SET_POLICY (session) $body status=$status", tag = Logger.Tags.ADAPTR)
                 if (status == 0) return@launch
