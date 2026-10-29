@@ -69,7 +69,7 @@ private fun TrialPanel(
     LaunchedEffect(install.mode) { onShown() }
     InstallPanel(
         title = "Welcome to OCBM",
-        body = "${installLabel(install)}. Your adapter passed its self-test. Stock CarPlay stays on it until this drive ends.",
+        body = "${installLabel(install)}. Your adapter passed its self-test. Stock CarPlay stays on it until this drive ends.\n$STICK_OUT",
         primary = "Continue" to onContinue,
         wayBack = { asking = true },
     )

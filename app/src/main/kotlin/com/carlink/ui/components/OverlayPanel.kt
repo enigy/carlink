@@ -96,7 +96,7 @@ internal fun OverlayPanel(content: PanelContent) {
 }
 
 @Composable
-private fun PanelButton(action: PanelAction) {
+internal fun PanelButton(action: PanelAction) {
     val padding = PaddingValues(horizontal = AutomotiveDimens.ButtonPaddingHorizontal, vertical = AutomotiveDimens.ButtonPaddingVertical)
     val modifier = Modifier.height(AutomotiveDimens.ButtonMinHeight)
     val style = MaterialTheme.typography.titleLarge

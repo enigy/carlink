@@ -31,10 +31,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.carlink.logging.logWarn
+import com.carlink.ocbm.PhoneSetup
 import kotlinx.coroutines.delay
 
 /** How long "Add phone" opens the adapter's pairing window for. */
-internal const val PAIR_WINDOW_SECONDS = 120
+internal const val PAIR_WINDOW_SECONDS = PhoneSetup.WINDOW_SECONDS
 
 /** If the box hasn't reported the window open this long after the tap, say so. */
 private const val OPEN_CONFIRM_MS = 5_000L

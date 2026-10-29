@@ -78,6 +78,7 @@ import com.carlink.ui.components.InstallPanelOr
 import com.carlink.ui.components.LoadingStatusView
 import com.carlink.ui.components.LoadingSteps
 import com.carlink.ui.components.NO_BACKGROUND_BRUSH
+import com.carlink.ui.components.PhoneSetupPanelOr
 import com.carlink.ui.components.VideoSurface
 import com.carlink.ui.components.VideoSurfaceState
 import com.carlink.ui.components.rememberScene
@@ -461,24 +462,7 @@ private fun LoadingOverlay(
                 modifier = Modifier.height(220.dp),
             )
             Spacer(modifier = Modifier.height(24.dp))
-            when {
-                // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
-                !bridge.installed -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
-                statusText.startsWith(BRIDGE_TROUBLE_PREFIX) -> BridgeNotStartingPanel(onOpenAppInfo = { CarlinkBridge.openAppInfo(context) })
-                // A stock adapter's conversion, then the adapter's one-file install (its trial and way back),
-                // before the words; the adapter's own projection mode starts the last step: it flips to
-                // WIRELESS_CP/WIRED_CP when CarPlay really begins, ahead of "Phone connected".
-                else ->
-                    ConversionPanelOr(carlinkManager) {
-                        InstallPanelOr(carlinkManager) {
-                            LoadingStatusView(
-                                statusText = statusText,
-                                phoneConnected = LoadingSteps.projectionStarting(projectionMode),
-                                androidAuto = LoadingSteps.isAndroidAuto(projectionMode),
-                            )
-                        }
-                    }
-            }
+            ConnectingWords(carlinkManager, statusText, bridge, projectionMode) { CarlinkBridge.openAppInfo(context) }
         }
         BoxStatusLine(
             carlinkManager,
@@ -488,6 +472,40 @@ private fun LoadingOverlay(
                 .padding(bottom = 16.dp)
                 .alpha(BOX_STATUS_ALPHA),
         )
+    }
+}
+
+/**
+ * Under the logo: what the driver can do about the bridge, or a panel (a stock adapter's conversion, the
+ * adapter's one-file install, pairing an iPhone), or else the status words.
+ */
+@Composable
+private fun ConnectingWords(
+    carlinkManager: CarlinkManager,
+    statusText: String,
+    bridge: BridgeSetup,
+    projectionMode: Byte,
+    onOpenAppInfo: () -> Boolean,
+) {
+    when {
+        // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
+        !bridge.installed -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
+        statusText.startsWith(BRIDGE_TROUBLE_PREFIX) -> BridgeNotStartingPanel(onOpenAppInfo = onOpenAppInfo)
+        // A stock adapter's conversion, then the adapter's one-file install (its trial and way back), then
+        // pairing an iPhone, before the words; the adapter's own projection mode starts the last step: it
+        // flips to WIRELESS_CP/WIRED_CP when CarPlay really begins, ahead of "Phone connected".
+        else ->
+            ConversionPanelOr(carlinkManager) {
+                InstallPanelOr(carlinkManager) {
+                    PhoneSetupPanelOr(carlinkManager) {
+                        LoadingStatusView(
+                            statusText = statusText,
+                            phoneConnected = LoadingSteps.projectionStarting(projectionMode),
+                            androidAuto = LoadingSteps.isAndroidAuto(projectionMode),
+                        )
+                    }
+                }
+            }
     }
 }
 

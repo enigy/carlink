@@ -70,6 +70,7 @@ import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
 import com.carlink.ocbm.OcbmClient
 import com.carlink.ocbm.OemIcon
+import com.carlink.ocbm.PhoneSetup
 import com.carlink.ocbm.PixelRect
 import com.carlink.ocbm.RawBulkTransport
 import com.carlink.ocbm.SplitViewArea
@@ -524,6 +525,23 @@ class CarlinkManager(
 
     /** The adapter's OCBM one-file install: its trial state, the gated confirm and the way back to stock. */
     val oneFileInstall = InstallSession({ client }, scope, confirmAllowed = BuildConfig.INSTALL_CONFIRM)
+
+    /** Pairing an iPhone on the connecting screen, when the adapter has no phone paired or none comes. */
+    val phoneSetup =
+        PhoneSetup(
+            box =
+                object : PhoneSetup.Box {
+                    override fun info(): String? = client?.mgmtGetInfo()
+
+                    override val gatesPairing: Boolean get() = client?.supportsPairWindow == true
+
+                    override fun pairWindow(seconds: Int): Int? {
+                        val arg = byteArrayOf((seconds and BYTE_MASK).toByte(), ((seconds shr Byte.SIZE_BITS) and BYTE_MASK).toByte())
+                        return client?.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, arg)
+                    }
+                },
+            scope = scope,
+        )
 
     /** A stock adapter (Carlinkit firmware) found instead: its conversion to OCBM, or the stick guide when the build's switch is off. */
     val stockConversion =
@@ -1418,6 +1436,7 @@ class CarlinkManager(
         armBoxLogStream(c)
         syncPhonePolicyAfterSubscribe()
         oneFileInstall.onSubscribed()
+        phoneSetup.onSubscribed()
 
         setStatusText("Waiting for phone...")
     }
@@ -1515,6 +1534,7 @@ class CarlinkManager(
         cancelReconnect()
         OcbmNavigationFeed.clear() // Carlink: drop the route so the cluster does not show a stale trip
         oneFileInstall.reset()
+        phoneSetup.reset()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
@@ -2470,6 +2490,7 @@ class CarlinkManager(
             // BOTH ends, so the code is a PROMPT (Pair / Cancel -> answerPairing), not just text.
             scope.launch {
                 if (client !== c) return@launch
+                phoneSetup.onPairingCode(code)
                 if (code.isNotEmpty()) {
                     setStatusText("Pairing code: $code")
                     pairingCode = code
@@ -2507,6 +2528,7 @@ class CarlinkManager(
                 if (client !== c) return@launch
                 setState(State.DEVICE_CONNECTED)
                 setStatusText("Phone connected")
+                phoneSetup.onPhoneConnected()
                 currentPhoneType = PhoneType.CARPLAY
                 callback?.onPhoneTypeChanged(PhoneType.CARPLAY)
                 startCodecIfDeferred()
@@ -2538,6 +2560,7 @@ class CarlinkManager(
         }
 
         c.onBtPhase = { phase ->
+            phoneSetup.onBtPhase(phase)
             val text = btPhaseText(phase)
             if (text != null) scope.launch { if (state != State.STREAMING) setStatusText(text) }
         }
@@ -3125,14 +3148,12 @@ class CarlinkManager(
     /** The box reports the window open (CT_BOX_HEALTH BH_PAIR_WINDOW). */
     val pairWindowOpen: Boolean get() = boxHealth and Ocbm.BH_PAIR_WINDOW != 0
 
-    /** Open the pairing window for [seconds] (the box clamps to 1..300), or close it with 0. */
+    /**
+     * Open the pairing window for [seconds] (the box clamps to 1..300), or close it with 0: Settings' "Add
+     * phone". The connecting screen's "Pair iPhone" makes the same call ([PhoneSetup.window]).
+     */
     fun setPairWindow(seconds: Int) {
-        logWarn("[PAIRING] window ${if (seconds > 0) "open for ${seconds}s" else "close"} requested", tag = Logger.Tags.ADAPTR)
-        scope.launch(Dispatchers.IO) {
-            val arg = byteArrayOf((seconds and BYTE_MASK).toByte(), ((seconds shr Byte.SIZE_BITS) and BYTE_MASK).toByte())
-            val status = client?.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, arg)
-            logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
-        }
+        scope.launch(Dispatchers.IO) { phoneSetup.window(seconds) }
     }
 
     // ---- Phone priority (enigy/ocbm phone-priority: MGMT_SET_POLICY / MGMT_CONNECT_DEVICE) -------
@@ -3171,6 +3192,10 @@ class CarlinkManager(
     /** Ask the box to call this bonded phone now. The box never interrupts a phone that is projecting. */
     fun connectPhone(btMac: String) {
         if (!phonePolicySupported) return
+        if (phoneSetup.noPhonePaired) {
+            logInfo("[DEVICE_MGMT] CONNECT_DEVICE($btMac) not sent: the adapter has no phone paired", tag = Logger.Tags.ADAPTR)
+            return
+        }
         scope.launch(Dispatchers.IO) {
             val status = client?.mgmtAction(Ocbm.MGMT_CONNECT_DEVICE, btMac.uppercase().toByteArray(Charsets.US_ASCII))
             logInfo("[DEVICE_MGMT] CONNECT_DEVICE($btMac) status=$status", tag = Logger.Tags.ADAPTR)
@@ -3197,15 +3222,18 @@ class CarlinkManager(
      */
     private fun syncPhonePolicyAfterSubscribe() {
         scope.launch {
+            var status: Int? = null
             for (waitMs in POLICY_SYNC_DELAYS_MS) {
                 delay(waitMs)
                 if (!phonePolicySupported) return@launch
                 val snap = knownStore?.snapshot ?: return@launch
                 val body = phonePolicyJson(_pairedDevices.map { it.btMac }, snap.autoConnect)
-                val status = withContext(Dispatchers.IO) { client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8)) }
+                status = withContext(Dispatchers.IO) { client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8)) }
                 logInfo("[DEVICE_MGMT] SET_POLICY (session) $body status=$status", tag = Logger.Tags.ADAPTR)
                 if (status == 0) return@launch
             }
+            // No try came back 0: btd never answered this session.
+            phoneSetup.onPolicyFailed(status)
         }
     }
 
