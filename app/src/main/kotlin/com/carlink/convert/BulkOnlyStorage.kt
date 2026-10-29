@@ -18,11 +18,15 @@ import java.nio.ByteOrder
  * control transfers over the bridge, so there is no reset or clear-halt: any protocol error ends the
  * session, and the stick is taken out and put back in.
  *
- * A libaums [BlockDeviceDriver]: offsets are block numbers, buffers whole blocks.
+ * A libaums [BlockDeviceDriver]: offsets are block numbers, buffers whole blocks. [trace] (debug builds)
+ * gets a line for each command block, each data write, and each piece the bridge hands back (its length
+ * and first 16 bytes), for the bench.
  */
 class BulkOnlyStorage(
     private val transport: RawBulkTransport,
     private val timeoutMs: Long = TIMEOUT_MS,
+    private val trace: ((String) -> Unit)? = null,
+    private val settleMs: Long = SETTLE_MS,
 ) : BlockDeviceDriver {
     private val inbox = ByteInbox()
     private var tag = 0
@@ -33,11 +37,22 @@ class BulkOnlyStorage(
     override var blocks: Long = 0
         private set
 
-    /** Start reading, then INQUIRY, TEST UNIT READY (with retries while the stick settles) and READ CAPACITY. */
+    /**
+     * Start reading, drop what the stick still had to send, then INQUIRY, TEST UNIT READY (with retries
+     * while the stick settles) and READ CAPACITY. The head unit's own driver may have been mid-command when
+     * the bridge took the stick from it: the rest of that answer would put every command after it out of
+     * step, and without control transfers there is no reset to clear it. So it is read off and dropped first.
+     */
     override fun init() {
-        transport.setReadHandler { buf, n -> inbox.put(buf, n) }
+        transport.setReadHandler { buf, n ->
+            trace?.invoke("in $n B: ${hex(buf, n)}")
+            inbox.put(buf, n)
+        }
         transport.setDeadHandler { inbox.close() }
         transport.start()
+        Thread.sleep(settleMs)
+        val stale = inbox.clear()
+        if (stale > 0) trace?.invoke("dropped $stale B the stick had left from before the claim")
         val inquiry = command(byteArrayOf(INQUIRY, 0, 0, 0, INQUIRY_LEN.toByte(), 0), dataIn = INQUIRY_LEN)
         if ((inquiry[0].toInt() and PERIPHERAL_TYPE) != DIRECT_ACCESS) throw IOException("the USB device is not a disk")
         waitReady()
@@ -108,7 +123,10 @@ class BulkOnlyStorage(
         check: Boolean = true,
     ): ByteArray {
         val t = ++tag
-        out(cbw(t, dataOut?.size ?: dataIn, dataOut == null && dataIn > 0, cb), "the command")
+        val length = dataOut?.size ?: dataIn
+        val sent = transport.writeBulk(cbw(t, length, dataOut == null && dataIn > 0, cb))
+        trace?.invoke("CBW tag $t op 0x%02x, %d B %s: %s".format(cb[0], length, if (dataOut != null) "out" else "in", if (sent) "sent" else "NOT SENT"))
+        if (!sent) throw IOException("the command did not reach the stick")
         val data = if (dataIn > 0) inbox.read(dataIn, timeoutMs) else EMPTY
         dataOut?.let { out(it, "the data") }
         val status = csw(t, csWaitMs)
@@ -123,7 +141,9 @@ class BulkOnlyStorage(
         bytes: ByteArray,
         what: String,
     ) {
-        if (!transport.writeBulk(bytes)) throw IOException("$what did not reach the stick")
+        val sent = transport.writeBulk(bytes)
+        trace?.invoke("$what out, ${bytes.size} B: ${if (sent) "sent" else "NOT SENT"}")
+        if (!sent) throw IOException("$what did not reach the stick")
     }
 
     /** The status of the command tagged [t], from its Command Status Wrapper. */
@@ -139,6 +159,9 @@ class BulkOnlyStorage(
     companion object {
         const val TIMEOUT_MS = 10_000L
         const val WRITE_STATUS_MS = 30_000L
+
+        /** For the end of an answer the head unit's driver was getting when the bridge took the stick. */
+        const val SETTLE_MS = 300L
         const val CBW_LEN = 31
         const val CSW_LEN = 13
         const val CBW_SIGNATURE = 0x43425355
@@ -166,6 +189,7 @@ class BulkOnlyStorage(
         private const val READY_PAUSE_MS = 300L
         private const val MASK32 = 0xFFFF_FFFFL
         private const val CB_MAX = 16
+        private const val HEX_BYTES = 16
         private val EMPTY = ByteArray(0)
 
         /** A Command Block Wrapper: LUN 0, [cb] padded to 16 bytes. */
@@ -204,6 +228,12 @@ class BulkOnlyStorage(
                 .put(0)
                 .array()
 
+        /** The first 16 of [n] bytes, in hex. */
+        private fun hex(
+            b: ByteArray,
+            n: Int,
+        ): String = (0 until minOf(n, HEX_BYTES)).joinToString(" ") { "%02x".format(b[it]) } + if (n > HEX_BYTES) " …" else ""
+
         private fun senseText(sense: ByteArray): String =
             if (sense.size >= SENSE_LEN) {
                 "sense %x/%02x/%02x".format(sense[2].toInt() and 0x0F, sense[12].toInt() and 0xFF, sense[13].toInt() and 0xFF)
@@ -237,6 +267,16 @@ internal class ByteInbox {
             lock.notifyAll()
         }
     }
+
+    /** Drop everything received so far; returns how many bytes that was. */
+    fun clear(): Int =
+        synchronized(lock) {
+            available().also {
+                pending.reset()
+                buf = ByteArray(0)
+                start = 0
+            }
+        }
 
     /** Exactly [n] bytes, or an IOException when the link closed or [timeoutMs] passed first. */
     fun read(

@@ -145,6 +145,9 @@ internal class FakeStickTransport(
 
     @Volatile var badTag = false
 
+    // What the stick still had to send when the bridge took it from the head unit's driver: sent as reading starts.
+    @Volatile var leftover: ByteArray? = null
+
     override fun setReadHandler(handler: (ByteArray, Int) -> Unit) {
         this.handler = handler
     }
@@ -155,6 +158,7 @@ internal class FakeStickTransport(
 
     override fun start() {
         running = true
+        leftover?.let { deliver(it) }
     }
 
     override fun stop() {

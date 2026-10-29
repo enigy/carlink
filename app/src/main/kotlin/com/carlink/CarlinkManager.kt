@@ -534,7 +534,11 @@ class CarlinkManager(
                         usbDevices().filter { accepts(it.vendorId, it.productId) }.map { it.deviceName }.toSet()
 
                     override fun searchAgain() {
-                        scope.launch { startIfDisconnected("looking again for the adapter or the stick the conversion waits for") }
+                        scope.launch { startIfDisconnected("looking again for the adapter the conversion waits for") }
+                    }
+
+                    override fun openStick(deviceName: String) {
+                        scope.launch(Dispatchers.IO) { openConversionStick(deviceName) }
                     }
                 },
         )
@@ -1159,8 +1163,11 @@ class CarlinkManager(
             return null
         }
         if (released) return null
-        if (stockConversion.wantsStick(dev.vendorId, dev.productId, dev.deviceName)) {
-            takeStick(dev)
+        if (stockConversion.holdsStick) {
+            // The bridge relays one session and the conversion's stick has it: opening anything would cut the stick off.
+            logInfo("[CONVERT] ${dev.deviceName} left alone: the conversion holds the bridge for its stick", tag = Logger.Tags.USB)
+            setState(State.DISCONNECTED)
+            setStatusText(STOCK_ADAPTER_STATUS)
             return null
         }
         if (StockAdapters.isStock(dev.vendorId, dev.productId)) {
@@ -1184,15 +1191,13 @@ class CarlinkManager(
 
     /**
      * The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s: the OCBM
-     * adapter, or else the stick a conversion waits for ([takeStick]; on the emulator bench it sits beside
-     * the stock adapter), or else a stock adapter on Carlinkit firmware, which [takeStockAdapter] hands to
-     * the conversion.
+     * adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the conversion.
+     * A conversion's USB stick never comes this way ([openConversionStick]).
      */
     private suspend fun awaitAdapterListed(): UsbDevice? {
         var attempts = 0
         while (attempts < USB_FIND_ATTEMPTS) {
-            val stick = usbDevices().firstOrNull { stockConversion.wantsStick(it.vendorId, it.productId, it.deviceName) }
-            (BridgeBulkTransport.findAdapter(context) ?: stick ?: StockAdapters.find(context))?.let { return it }
+            (BridgeBulkTransport.findAdapter(context) ?: StockAdapters.find(context))?.let { return it }
             attempts++
             delay(USB_WAIT_PERIOD_MS)
         }
@@ -1215,16 +1220,22 @@ class CarlinkManager(
     }
 
     /**
-     * The USB stick the conversion asked for, shared by the adapter. It is opened through the bridge like
-     * the adapter: the bridge asks for permission if it has none, and claims the stick's interface with
-     * force, which takes it from the head unit's own mount while the installer goes onto it.
+     * The USB stick the conversion asked for, shared by the adapter, opened through the bridge as its one
+     * session and handed back. This is apart from the adapter's connect path, which leaves the bridge alone
+     * while the conversion holds the stick. The bridge asks for permission if it has none, and claims the
+     * stick's interface with force, which takes it from the head unit's own mount while the installer goes on.
      */
-    private suspend fun takeStick(dev: UsbDevice) {
-        logInfo("[CONVERT] ${StockAdapters.usbId(dev.vendorId, dev.productId)} at ${dev.deviceName}: the stick the conversion asked for", tag = Logger.Tags.USB)
-        cancelReconnect()
-        if (stockConversion.takeStick(dev.deviceName)) stockConversion.stickOpened(openThroughBridge(dev.deviceName))
-        setState(State.DISCONNECTED)
-        setStatusText(STOCK_ADAPTER_STATUS)
+    private suspend fun openConversionStick(name: String) {
+        if (released) return
+        val bridge = bindRawStreamBridge()
+        val t = bridge?.takeIf { awaitBridgePermission(it, name) }?.let { BridgeBulkTransport.open(it, name, usbLog) }
+        if (t == null) {
+            val why = bridge?.let { b -> runCatching { b.status }.getOrNull() } ?: "no bridge"
+            logWarn("[CONVERT] the stick $name didn't open — $why", tag = Logger.Tags.USB)
+        } else {
+            logInfo("[CONVERT] the stick $name is open: ${t.bridgeStatus()}", tag = Logger.Tags.USB)
+        }
+        stockConversion.stickOpened(t)
     }
 
     /** Bind the bridge and require the raw-stream API; reports the failure and returns null otherwise. */
@@ -1316,13 +1327,12 @@ class CarlinkManager(
         name: String,
     ): RawBulkTransport? {
         setStatusText("Adapter found — opening...")
-        val stream = runCatching { bridge.open(name) }.getOrNull()
-        if (stream == null) {
+        val t = BridgeBulkTransport.open(bridge, name, usbLog)
+        if (t == null) {
             logError("[BRIDGE] open failed — ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
             handleFailedStart("USB bridge could not open the adapter")
             return null
         }
-        val t = BridgeBulkTransport(bridge, stream, name, usbLog)
         if (released) {
             logWarn("[LIFECYCLE] released during bridge open — closing and abandoning", tag = Logger.Tags.ADAPTR)
             t.stop()

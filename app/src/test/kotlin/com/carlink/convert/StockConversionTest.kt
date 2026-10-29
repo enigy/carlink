@@ -20,6 +20,7 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
 
@@ -29,9 +30,17 @@ class StockConversionTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val images = FakeImages(Random(11).nextBytes(120_000))
     private val usb = FakeUsb()
-    private val timing = StockConversion.Timing(readMs = 400, heartbeatMs = 50, deadlineMs = 700, searchMs = 200, pollMs = 20)
+    private val timing = StockConversion.Timing(readMs = 400, heartbeatMs = 50, deadlineMs = 700, searchMs = 200, pollMs = 20, openDelayMs = 30)
     private val conversion = StockConversion(images, conversionOn = true, scope = scope, usb = usb, timing = timing, benchStick = false)
     private val adapter = FakeTransport()
+
+    // The sticks on USB by device name, and the bridge sessions the manager opened for them.
+    private val sticks = ConcurrentHashMap<String, MemoryStick>()
+    private val bridges = ConcurrentHashMap<String, FakeStickTransport>()
+
+    init {
+        usb.onOpen = ::openForTest
+    }
 
     @After
     fun tearDown() {
@@ -128,7 +137,8 @@ class StockConversionTest {
     @Test
     fun `convert gets the installer, then asks for the stick, holding the adapter meanwhile`() {
         toWaitingForStick()
-        assertEquals("a bench stick may be there already", 1, usb.searches.get())
+        Thread.sleep(100)
+        assertEquals("the adapter's connect path never looks for the stick", 0, usb.searches.get())
         assertFalse("no other stock adapter is opened", conversion.claim("1314:1520"))
         assertFalse("the adapter's heartbeat goes on", quietAfter(adapter))
     }
@@ -142,7 +152,10 @@ class StockConversionTest {
         conversion.convert()
         awaitPhase<ConversionPhase.WaitingForStick>()
         assertFalse("on USB before Convert: someone else's", conversion.wantsStick(0x1d6b, 0xa4a5, EARLIER))
-        assertFalse(conversion.takeStick(EARLIER))
+        conversion.stickAttached(0x1d6b, 0xa4a5, EARLIER)
+        Thread.sleep(3 * timing.pollMs + 50) // and the conversion's own look passes it over too
+        assertTrue("nothing opened: ${usb.opened}", usb.opened.isEmpty())
+        assertEquals(ConversionPhase.WaitingForStick, conversion.phase.value)
         assertTrue(conversion.wantsStick(0x1d6b, 0xa4a5, STICK))
         assertFalse("not a shared stick", conversion.wantsStick(0x0781, 0x5567, STICK))
         assertFalse("the emulator's stick only in debug builds", conversion.wantsStick(0x46f4, 0x0001, STICK))
@@ -160,6 +173,8 @@ class StockConversionTest {
         bench.convert()
         waitUntil(1_000) { bench.phase.value == ConversionPhase.WaitingForStick }
         assertTrue(bench.wantsStick(0x46f4, 0x0001, EARLIER))
+        waitUntil(1_000) { EARLIER in usb.opened } // found by looking: no attach broadcast for a stick plugged in first
+        assertEquals(ConversionPhase.ReadingStick, bench.phase.value)
         bench.reset()
     }
 
@@ -175,9 +190,9 @@ class StockConversionTest {
         toWaitingForStick()
         adapter.killLink()
         val stick = MemoryStick.partitioned(64)
-        val bridge = plugStick(stick, STICK)
+        plugStick(stick, STICK)
         awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
-        assertFalse("the stick is let go", bridge.running)
+        assertFalse("the stick is let go", bridges.getValue(STICK).running)
         val fs = fat32(stick)
         assertEquals(listOf(StickFiles.IMAGE), names(fs))
         assertEquals(InstallerImage.sha256Hex(images.image!!), InstallerImage.sha256Hex(read(fs, StickFiles.IMAGE)))
@@ -186,6 +201,56 @@ class StockConversionTest {
         assertNull(awaitPhase<ConversionPhase.InstallingFromStick>().hint)
         conversion.reset() // the manager found it back as 1314:2d00
         assertEquals(ConversionPhase.Idle, conversion.phase.value)
+    }
+
+    @Test
+    fun `a stick missed by its attach broadcast is found by looking`() {
+        toWaitingForStick()
+        adapter.killLink()
+        sticks[STICK] = MemoryStick.superfloppy(64)
+        usb.devices[STICK] = ADAPTER_STICK
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        assertEquals(listOf(STICK), usb.opened)
+    }
+
+    @Test
+    fun `the stock adapter's link is let go before the stick is opened`() {
+        toWaitingForStick()
+        val writesWhileOpening = AtomicInteger(-1)
+        usb.onOpen = { name ->
+            adapter.written.clear()
+            Thread.sleep(150) // three heartbeats' time, were the link still up
+            writesWhileOpening.set(adapter.written.size)
+            openForTest(name)
+        }
+        plugStick(MemoryStick.superfloppy(64), STICK)
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        assertEquals("nothing but the stick's storage uses the bridge", 0, writesWhileOpening.get())
+    }
+
+    @Test
+    fun `a stick the head unit mounted, with LOST_DIR and its media folders, is written at once`() {
+        toWaitingForStick()
+        val stick = MemoryStick.superfloppy(64)
+        val folders = listOf("LOST.DIR", "Movies", "Music", "Pictures")
+        folders.forEach { fat32(stick).rootDirectory.createDirectory(it) }
+        plugStick(stick, STICK)
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        assertEquals((folders + StickFiles.IMAGE).sorted(), names(fat32(stick)).sorted())
+    }
+
+    @Test
+    fun `the conversion holds the bridge only while the stick is open`() {
+        toWaitingForStick()
+        assertFalse(conversion.holdsStick)
+        val stick = MemoryStick.superfloppy(64)
+        put(fat32(stick), StickFiles.RESULT, Reports.wrongFirmware.toByteArray())
+        plugStick(stick, STICK)
+        awaitPhase<ConversionPhase.StickReady>(timeoutMs = 5_000)
+        assertTrue(conversion.holdsStick)
+        conversion.dismiss()
+        assertFalse(conversion.holdsStick)
+        assertFalse("the stick is let go", bridges.getValue(STICK).running)
     }
 
     @Test
@@ -320,7 +385,6 @@ class StockConversionTest {
         awaitPhase<ConversionPhase.Offered>()
         conversion.convert()
         awaitPhase<ConversionPhase.WaitingForStick>()
-        waitUntil(1_000) { usb.searches.get() >= 1 } // the look for a bench stick, after the phase is set
     }
 
     /** Through the write and the replug: the adapter is away installing. Returns the stick it took. */
@@ -335,16 +399,22 @@ class StockConversionTest {
         return stick
     }
 
-    /** The stick shows up on USB as [name]; the conversion takes it, as the manager would, and gets it open. */
+    /** The stick shows up on USB as [name], with its attach broadcast: the conversion takes it and the manager opens it. */
     private fun plugStick(
         stick: MemoryStick,
         name: String,
-    ): FakeStickTransport {
+    ) {
+        sticks[name] = stick
         usb.devices[name] = ADAPTER_STICK
         assertTrue("wanted: $name in ${conversion.phase.value}", conversion.wantsStick(0x1d6b, 0xa4a5, name))
-        assertTrue(conversion.takeStick(name))
-        assertEquals(ConversionPhase.ReadingStick, conversion.phase.value)
-        return FakeStickTransport(stick).also { conversion.stickOpened(it) }
+        conversion.stickAttached(0x1d6b, 0xa4a5, name)
+    }
+
+    /** The manager's side of [ConversionUsb.openStick]: the stick's bridge session, handed back. */
+    private fun openForTest(name: String) {
+        val bridge = sticks[name]?.let(::FakeStickTransport)
+        bridge?.let { bridges[name] = it }
+        conversion.stickOpened(bridge)
     }
 
     /** True once nothing more is written to [t]: its heartbeat stopped, so the link was let go. */
@@ -446,12 +516,20 @@ class StockConversionTest {
     private class FakeUsb : ConversionUsb {
         val devices = ConcurrentHashMap<String, Pair<Int, Int>>()
         val searches = AtomicInteger()
+        val opened = CopyOnWriteArrayList<String>()
+
+        @Volatile var onOpen: ((String) -> Unit)? = null
 
         override fun attached(accepts: (vendorId: Int, productId: Int) -> Boolean): Set<String> =
             devices.filterValues { (vendor, product) -> accepts(vendor, product) }.keys.toSet()
 
         override fun searchAgain() {
             searches.incrementAndGet()
+        }
+
+        override fun openStick(deviceName: String) {
+            opened += deviceName
+            onOpen?.invoke(deviceName)
         }
     }
 

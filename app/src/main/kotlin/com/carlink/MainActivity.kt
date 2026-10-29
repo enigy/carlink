@@ -226,9 +226,10 @@ class MainActivity : ComponentActivity() {
                         logInfo("[USB_ATTACH] Carlinkit device attached: path=${device.deviceName}", tag = "MAIN")
                         carlinkManager?.onUsbDeviceAttached()
                     } else if (device != null && carlinkManager?.stockConversion?.wantsStick(device.vendorId, device.productId, device.deviceName) == true) {
-                        // The stick a conversion asked for, shared by the adapter: never acted on outside that flow.
+                        // The stick a conversion asked for, shared by the adapter: the conversion takes it, never
+                        // the adapter's connect path, which would open and close the bridge's one session under it.
                         logInfo("[USB_ATTACH] the stick the conversion waits for: path=${device.deviceName}", tag = "MAIN")
-                        carlinkManager?.onUsbDeviceAttached()
+                        carlinkManager?.stockConversion?.stickAttached(device.vendorId, device.productId, device.deviceName)
                     }
                 } else if (UsbManager.ACTION_USB_DEVICE_DETACHED == intent.action) {
                     device?.let {

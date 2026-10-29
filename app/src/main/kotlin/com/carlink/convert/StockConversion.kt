@@ -111,8 +111,14 @@ interface ConversionUsb {
     /** The names of the attached devices whose ids [accepts] takes; readable without USB permission. */
     fun attached(accepts: (vendorId: Int, productId: Int) -> Boolean): Set<String>
 
-    /** Look for the adapter, or the stick, again: in case an attach broadcast was missed. */
+    /** Look for the adapter again (back in its trial as 1314:2d00, or a stock one): in case an attach broadcast was missed. */
     fun searchAgain()
+
+    /**
+     * Open the stick [deviceName] through the bridge, as its one session, and hand it to
+     * [StockConversion.stickOpened]: null when it can't be opened. Not through the adapter's connect path.
+     */
+    fun openStick(deviceName: String)
 }
 
 /**
@@ -127,13 +133,16 @@ interface ConversionUsb {
  * On "Convert" the installer is obtained and checked ([ImageSupplier]) and the driver is asked for a
  * FAT32 stick in the adapter. A stock adapter with a stick and no installer on it shares the stick over
  * USB ([SharedStick]); only a shared stick that appears after "Convert" is taken ([wantsStick]), never
- * one outside this flow. The manager opens it through the bridge, which claims it from the head unit's
- * own mount, and hands it over ([stickOpened]). The conversion speaks USB mass storage to it
- * ([BulkOnlyStorage]) and writes the installer as the stock firmware's stick update ([StickFiles]): it
- * runs as ROUTE=stick, the one route that also takes the adapter's full flash backup to the stick. The
- * driver then unplugs the adapter and plugs it back in with the stick still in it. It comes back as an
- * OCBM adapter (1314:2d00) in its trial, the manager drops the conversion ([reset]) and the trial screen
- * takes over; or it comes back sharing the stick, and the installer's report on it says why.
+ * one outside this flow. The conversion also looks for it itself, in case its attach broadcast is missed.
+ * It lets go of the stock adapter's link first: the bridge relays one session, and nothing but the
+ * stick's own storage may use it from then on. The manager opens the stick through the bridge, apart
+ * from its connect path, and hands it over ([stickOpened]); the bridge claims it from the head unit's
+ * own mount. The conversion speaks USB mass storage to it ([BulkOnlyStorage]) and writes the installer
+ * as the stock firmware's stick update ([StickFiles]): it runs as ROUTE=stick, the one route that also
+ * takes the adapter's full flash backup to the stick. The driver then unplugs the adapter and plugs it
+ * back in with the stick still in it. It comes back as an OCBM adapter (1314:2d00) in its trial, the
+ * manager drops the conversion ([reset]) and the trial screen takes over; or it comes back sharing the
+ * stick, and the installer's report on it says why.
  *
  * A conversion that ends without an OCBM adapter offers none again on its own ([gaveUp]) until an OCBM
  * adapter connects or the app restarts. The stock link is held, heartbeat and all, while the adapter is
@@ -158,8 +167,13 @@ class StockConversion(
         val deadlineMs: Long = 300_000,
         /** Between searches while it is away, in case its attach broadcast is missed. */
         val searchMs: Long = 45_000,
-        /** Between looks at whether the stick has left USB, once the installer is on it. */
+        /** Between looks for the stick, and at whether it has left USB once the installer is on it. */
         val pollMs: Long = 1_000,
+        /**
+         * From a stick's attach to opening it: the head unit's own driver probes a new stick and Android mounts
+         * it, and the bridge's claim is best not made in the middle of that.
+         */
+        val openDelayMs: Long = 2_000,
     )
 
     private val phaseState = MutableStateFlow<ConversionPhase>(ConversionPhase.Idle)
@@ -180,6 +194,9 @@ class StockConversion(
 
     // The one timer running (reading, the replug or the install); only touched under [lock].
     private var wait: Job? = null
+
+    // Looks for the stick past "Convert" ([watchForStick]); only touched under [lock].
+    private var watch: Job? = null
 
     // The checked installer, from "Convert" on.
     private var image: ByteArray? = null
@@ -278,28 +295,32 @@ class StockConversion(
         deviceName: String,
     ): Boolean = synchronized(lock) { waitsForStick(phaseState.value) && deviceName !in notStick && isStick(vendorId, productId) }
 
-    /** The manager is opening the stick [wantsStick] took; false when it is no longer wanted. */
-    fun takeStick(deviceName: String): Boolean {
-        synchronized(lock) {
-            val now = phaseState.value
-            if (!waitsForStick(now) || deviceName in notStick) return false
-            notStick += deviceName
-            stickName = deviceName
-            returning = now == ConversionPhase.ReplugAdapter || now is ConversionPhase.InstallingFromStick || (now is ConversionPhase.StickProblem && returning)
-            wait?.cancel()
-            phaseState.value = ConversionPhase.ReadingStick
-        }
-        logInfo("[CONVERT] taking the stick at $deviceName${if (returning) ", back from the adapter" else ""}", tag = Logger.Tags.ADAPTR)
-        return true
+    /** A device attached (USB_DEVICE_ATTACHED): taken, off the caller's thread, when it is the stick [wantsStick] waits for. */
+    fun stickAttached(
+        vendorId: Int,
+        productId: Int,
+        deviceName: String,
+    ) {
+        if (wantsStick(vendorId, productId, deviceName)) scope.launch(Dispatchers.IO) { take(deviceName) }
     }
 
-    /** The stick [takeStick] took, opened through the bridge; null when it couldn't be (the manager logged why). */
+    /** The stick is open through the bridge, or being opened: the bridge's one session is the stick's. */
+    val holdsStick: Boolean
+        get() =
+            when (phaseState.value) {
+                ConversionPhase.ReadingStick, ConversionPhase.CheckingStick -> true
+                is ConversionPhase.StickReady, is ConversionPhase.WritingStick -> true
+                else -> false
+            }
+
+    /** The stick [take] asked the manager for, opened through the bridge; null when it couldn't be (the manager logged why). */
     fun stickOpened(transport: RawBulkTransport?) {
         if (transport == null) {
             moveOn<ConversionPhase.ReadingStick>(ConversionPhase.StickProblem(CANT_OPEN, "The USB bridge couldn't open it. $PUT_BACK"))
             return
         }
-        scope.launch(Dispatchers.IO) { readStick(BulkOnlyStorage(transport)) }
+        val trace: ((String) -> Unit)? = if (BuildConfig.DEBUG) { line -> logInfo("[STICK] $line", tag = Logger.Tags.USB) } else null
+        scope.launch(Dispatchers.IO) { readStick(BulkOnlyStorage(transport, trace = trace)) }
     }
 
     /** "Write the installer", or "Try again" after a report that this version was undone: write it, with OCBM_RETRY for a retry. */
@@ -359,6 +380,7 @@ class StockConversion(
                 notStick.clear()
                 phaseState.value = ConversionPhase.Idle
                 wait?.cancel()
+                watch?.cancel()
                 held
             }
         open?.storage?.release()
@@ -407,10 +429,50 @@ class StockConversion(
                     got.exceptionOrNull()?.let { ConversionPhase.Failed("Couldn't get the installer", it.message ?: "No reason was given.") }
                         ?: ConversionPhase.WaitingForStick
                 phaseState.value = p
+                if (p == ConversionPhase.WaitingForStick) watchForStick()
                 p
             }
         logInfo("[CONVERT] installer: ${got.getOrNull()?.let { "${it.size} B, checked" } ?: got.exceptionOrNull()?.message}; $next", tag = Logger.Tags.ADAPTR)
-        if (next == ConversionPhase.WaitingForStick) usb.searchAgain() // a bench stick may be plugged in already
+    }
+
+    /**
+     * Past "Convert", look for the stick now and then: it may have been plugged in first (the bench's), or
+     * its attach broadcast missed. Ends with the conversion. Under [lock].
+     */
+    private fun watchForStick() {
+        if (watch?.isActive == true) return
+        watch =
+            scope.launch(Dispatchers.IO) {
+                while (phaseState.value is ConversionPhase.Converting) {
+                    delay(timing.pollMs)
+                    if (!waitsForStick(phaseState.value)) continue
+                    usb.attached(::isStick).firstOrNull { name -> synchronized(lock) { name !in notStick } }?.let { take(it) }
+                }
+            }
+    }
+
+    /**
+     * The stick [deviceName] is the one asked for: let go of the stock adapter's link, then, once the head
+     * unit is done with the new stick ([Timing.openDelayMs]), have the manager open it. The bridge relays
+     * one session, so nothing but the stick's storage may use it from here.
+     */
+    private suspend fun take(deviceName: String) {
+        val dropped =
+            synchronized(lock) {
+                val now = phaseState.value
+                if (!waitsForStick(now) || deviceName in notStick) return
+                notStick += deviceName
+                stickName = deviceName
+                returning = now == ConversionPhase.ReplugAdapter || now is ConversionPhase.InstallingFromStick || (now is ConversionPhase.StickProblem && returning)
+                wait?.cancel()
+                phaseState.value = ConversionPhase.ReadingStick
+                link.also { link = null }
+            }
+        logInfo("[CONVERT] taking the stick at $deviceName${if (returning) ", back from the adapter" else ""}", tag = Logger.Tags.ADAPTR)
+        dropped?.close()
+        delay(timing.openDelayMs)
+        val still = synchronized(lock) { phaseState.value == ConversionPhase.ReadingStick && stickName == deviceName }
+        if (still) usb.openStick(deviceName)
     }
 
     /** On the bridge's thread: open the stick and see what is on it, then write to it at once when it is empty. */
@@ -435,7 +497,8 @@ class StockConversion(
 
     /**
      * Open the stick's FAT32 volume and see what is on it: the next phase, and the file system when the stick
-     * stays open for it. A stick with nothing on it to show or replace is written at once: "Convert" was the go-ahead.
+     * stays open for it. A stick with nothing on it to show or replace is written at once: "Convert" was the
+     * go-ahead. What the head unit puts on a stick it mounts (LOST.DIR, Movies, Music, Pictures) is neither.
      */
     private fun look(
         storage: BulkOnlyStorage,
@@ -503,7 +566,7 @@ class StockConversion(
 
     /**
      * The adapter is away with the stick: [Timing.deadlineMs] for it to come back as 1314:2d00, which ends
-     * this through [reset], or sharing the stick, which [takeStick] reads. The manager searches now and
+     * this through [reset], or sharing the stick, which [take] reads. The manager searches now and
      * then, in case an attach broadcast is missed. At the deadline the app gives up on this conversion.
      */
     private suspend fun awaitInstall() {

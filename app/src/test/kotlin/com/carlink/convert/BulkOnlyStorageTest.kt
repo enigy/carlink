@@ -48,6 +48,18 @@ class BulkOnlyStorageTest {
     }
 
     @Test
+    fun `the rest of an answer the head unit's driver was getting is dropped before the first command`() {
+        val bridge = FakeStickTransport(MemoryStick(4096))
+        bridge.leftover = ByteArray(16) { 7 } + ByteArray(13) // the end of a data phase, then its status
+        val lines = mutableListOf<String>()
+        val storage = BulkOnlyStorage(bridge, timeoutMs = 2_000, trace = { synchronized(lines) { lines += it } })
+        storage.init()
+        assertEquals(4096L, storage.blocks)
+        assertTrue(lines.toString(), lines.contains("dropped 29 B the stick had left from before the claim"))
+        assertTrue(lines.toString(), lines.any { it.startsWith("CBW tag 1 op 0x12, 36 B in: sent") })
+    }
+
+    @Test
     fun `a failed command says which, with its sense`() {
         val bridge = FakeStickTransport(MemoryStick(4096))
         val storage = BulkOnlyStorage(bridge, timeoutMs = 2_000)

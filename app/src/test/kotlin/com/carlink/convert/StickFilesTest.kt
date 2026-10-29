@@ -41,6 +41,20 @@ class StickFilesTest {
     }
 
     @Test
+    fun `what the head unit puts on a stick it mounts is neither a report nor an image, and stays`() {
+        val stick = MemoryStick.partitioned(64)
+        val folders = listOf("LOST.DIR", "Movies", "Music", "Pictures") // truck test, 29 Oct
+        folders.forEach { fat32(stick).rootDirectory.createDirectory(it) }
+        val contents = StickFiles.inspect(fat32(stick))
+        assertNull(contents.report)
+        assertFalse(contents.hasImage)
+        assertEquals(0L, contents.reclaimableBytes)
+        assertFalse(StickFiles.tooFull(contents, image.size))
+        StickFiles.write(fat32(stick), image, sha, retry = false) { _, _ -> }
+        assertEquals((folders + StickFiles.IMAGE).sorted(), names(fat32(stick)).sorted())
+    }
+
+    @Test
     fun `a stick with a partition table is written in its FAT32 partition`() {
         val stick = MemoryStick.partitioned(64)
         StickFiles.write(fat32(stick), image, sha, retry = false) { _, _ -> }

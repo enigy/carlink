@@ -24,8 +24,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * read handler. EOF or an IOException means the bridge closed the session
  * (device detached, bridge restarted): the dead handler fires once, off the read thread.
  * Outbound: [writeBulk] is one Binder call per ≤16 KiB chunk, matching the adapter's bulk chunking.
+ *
+ * The bridge relays ONE session: its open() supersedes the session before, and its write() and close()
+ * act on whichever session is open, whoever calls them. So only the transport opened last ([open]) may
+ * write or close. One that was superseded must not reach a session that now belongs to another device:
+ * on the bench (29 Oct) the stock adapter's link, ending because the conversion's USB stick took the
+ * bridge, closed the stick's session 1 ms after it opened.
  */
-class BridgeBulkTransport(
+class BridgeBulkTransport private constructor(
     private val bridge: ICarlinkBridge,
     private val stream: ParcelFileDescriptor,
     val deviceName: String,
@@ -39,6 +45,22 @@ class BridgeBulkTransport(
         /** The OCBM adapter: CPC200-CCPA running the OCBM userspace (accessory gadget). */
         const val VID_CARLINKIT = 0x1314
         const val PID_OCBM = 0x2d00
+
+        // The transport that owns the bridge's one session, and the lock its opens, writes and close take.
+        private val owner = Any()
+
+        @Volatile private var current: BridgeBulkTransport? = null
+
+        /** Open [deviceName] through [bridge], superseding any session before it; null when the bridge would not. */
+        fun open(
+            bridge: ICarlinkBridge,
+            deviceName: String,
+            log: com.carlink.logging.ProbeLog.Logger,
+        ): BridgeBulkTransport? =
+            synchronized(owner) {
+                val stream = runCatching { bridge.open(deviceName) }.getOrNull() ?: return null
+                BridgeBulkTransport(bridge, stream, deviceName, log).also { current = it }
+            }
 
         /** The OCBM adapter if attached, by VID/PID — readable without USB permission. */
         fun findAdapter(context: Context): UsbDevice? {
@@ -58,7 +80,8 @@ class BridgeBulkTransport(
     @Volatile private var handler: ((ByteArray, Int) -> Unit)? = null
 
     @Volatile private var onDead: (() -> Unit)? = null
-    private val writeLock = Object()
+
+    @Volatile private var supersededLogged = false
 
     @Volatile var bytesRead: Long = 0
         private set
@@ -119,8 +142,14 @@ class BridgeBulkTransport(
     }
 
     override fun writeBulk(data: ByteArray): Boolean {
-        synchronized(writeLock) {
+        synchronized(owner) {
             if (!running.get()) return false
+            if (current !== this) {
+                lastError = "superseded: the bridge's session belongs to another device now"
+                if (!supersededLogged) log.w("write refused on $deviceName: $lastError")
+                supersededLogged = true
+                return false
+            }
             var off = 0
             while (off < data.size) {
                 val len = minOf(WRITE_CHUNK, data.size - off)
@@ -158,8 +187,16 @@ class BridgeBulkTransport(
             Thread.currentThread().interrupt()
         }
         readThread = null
-        runCatching { bridge.close() }
-        log.i("bridge transport closed")
+        val mine =
+            synchronized(owner) {
+                (current === this).also {
+                    if (it) {
+                        current = null
+                        runCatching { bridge.close() }
+                    }
+                }
+            }
+        log.i("bridge transport closed${if (mine) "" else " (superseded: the bridge's session was left alone)"}")
     }
 
     /** One-line diagnostics from the bridge process (handler config, permission, counters). */
