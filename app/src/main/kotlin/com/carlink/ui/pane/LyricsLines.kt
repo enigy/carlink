@@ -17,11 +17,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,46 +47,56 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import com.carlink.car.DrivingState
 import com.carlink.logging.logInfo
 import com.carlink.media.LrcLib
+import com.carlink.media.LyricsDiskCache
 import com.carlink.media.LyricsKey
 import com.carlink.media.NowPlayingInfo
 import com.carlink.media.NowPlayingState
 import com.carlink.media.SyncedLyrics
 import com.carlink.ui.components.withGlowRoom
+import com.carlink.ui.settings.CarPlayLimitStore
 import com.carlink.ui.settings.MusicStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
- * The playing song's timed lyrics ([LrcLib]), or null while none are known or the card's lyrics
- * button ([LyricsToggle]) is off; looked up either way, and asked again until LRCLIB answers. A song
- * looked up before shows at once; a new one waits [LOOKUP_SETTLE_MS], because a skip's title, length
- * and album land over about a second (log 10-26) and the lookup should ask for the settled song once. Call this where it stays composed (the pane's
- * host, as for the album art), so the words are ready when the driver swipes to the music.
+ * The playing song's timed lyrics ([LrcLib]), or null while none are known, the card's lyrics button
+ * ([LyricsToggle]) is off, or they are held back while the vehicle moves ([rememberLyricsHeldBack]).
+ * Looked up either way, from the head unit's own copies first ([LyricsDiskCache]), and asked again until
+ * LRCLIB answers. A song looked up before shows at once; a new one waits [LOOKUP_SETTLE_MS], because a
+ * skip's title, length and album land over about a second (log 10-26) and the lookup should ask for the
+ * settled song once. Turning the lyrics on asks again at once, a "none" too: before, turning them off and
+ * on was the only way to get lyrics LRCLIB had failed to give (owner, 10-29). Call this where it stays
+ * composed (the pane's host, as for the album art), so the words are ready when the driver swipes to the music.
  */
 @Composable
 internal fun rememberLyrics(info: NowPlayingInfo): SyncedLyrics? {
     val context = LocalContext.current
     val on by remember { MusicStore.get(context) }.lyricsFlow.collectAsState()
+    val heldBack = rememberLyricsHeldBack()
+    val disk = remember { LyricsDiskCache.get(context) }
     val key = LyricsKey.of(info)
     var lyrics by remember { mutableStateOf<SyncedLyrics?>(null) }
     // Looked up whether the lyrics show or not, so turning them on finds them ready (owner, 10-28).
-    LaunchedEffect(key) {
+    LaunchedEffect(key, on) {
         lyrics = null
         if (key == null) return@LaunchedEffect
-        LrcLib.cached(key)?.let {
+        LrcLib.cached(key)?.takeIf { it.lyrics != null || !on }?.let {
             lyrics = it.lyrics
             return@LaunchedEffect
         }
         delay(LOOKUP_SETTLE_MS)
-        // LRCLIB out of reach (the truck's data link at connect, a timeout) is tried again while the song
-        // plays, waiting longer each time (owner, 10-28: lyrics missing for 30 s+ came back on a toggle).
+        // LRCLIB out of reach (the truck's data link at connect, a timeout, its HTTP 503s) is tried again
+        // while the song plays, waiting longer each time up to [RETRY_MAX_MS] (owner, 10-28 and 10-29).
         var wait = RETRY_FIRST_MS
         while (true) {
-            val answer = withContext(Dispatchers.IO) { LrcLib.find(key) }
+            val answer = withContext(Dispatchers.IO) { LrcLib.find(key, disk, askAgain = on) }
             if (answer != null) {
                 lyrics = answer.lyrics
                 break
@@ -92,7 +105,20 @@ internal fun rememberLyrics(info: NowPlayingInfo): SyncedLyrics? {
             wait = (wait * 2).coerceAtMost(RETRY_MAX_MS)
         }
     }
-    return if (on) lyrics else null
+    return if (on && !heldBack) lyrics else null
+}
+
+/**
+ * Whether the lyrics are held back now: Settings › Display › Limit features while driving is on (the
+ * active iPhone's choice, [CarPlayLimitStore]) and the vehicle moves ([DrivingState]). Parked, they show
+ * (owner, 10-29).
+ */
+@Composable
+internal fun rememberLyricsHeldBack(): Boolean {
+    val context = LocalContext.current
+    val limit by remember { CarPlayLimitStore.get(context) }.flow.collectAsState()
+    val moving by DrivingState.moving.collectAsState()
+    return limit && moving
 }
 
 /** How a count of lyric lines ([MusicStore.lyricLinesFlow]) splits around the sung one: the odd one out goes ahead. */
@@ -262,26 +288,72 @@ private fun Modifier.lineCountDrag(music: MusicStore): Modifier {
  * the pane itself, not in Settings). On: a lit disc, and the song's words show over the title. Off: a
  * dim icon, and the words are hidden; they are still looked up, so turning them on shows them at once.
  * The choice is kept across drives ([MusicStore]).
+ *
+ * While the lyrics are held back ([rememberLyricsHeldBack]: the vehicle moves with Limit features while
+ * driving on) the button stays, dimmed, and a tap shows a bubble saying why instead of switching
+ * (owner, 10-29).
  */
 @Composable
 internal fun LyricsToggle(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val music = remember { MusicStore.get(context) }
     val on by music.lyricsFlow.collectAsState()
+    val heldBack = rememberLyricsHeldBack()
+    var bubble by remember { mutableStateOf(false) }
     val content = LocalContentColor.current
-    PaneButton(
-        Icons.Default.Lyrics,
-        if (on) "Hide lyrics" else "Show lyrics",
-        onClick = {
-            logInfo("[UI_ACTION] Pane: lyrics ${if (on) "off" else "on"}", tag = "UI")
-            music.setLyrics(!on)
-        },
-        modifier = modifier,
-        size = 56.dp,
-        iconSize = 30.dp,
-        fill = if (on) content.copy(alpha = LIT_ALPHA) else Color.Transparent,
-        tint = content.copy(alpha = if (on) 1f else OFF_ALPHA),
-    )
+    val lit = on && !heldBack
+    Box(modifier = modifier) {
+        PaneButton(
+            Icons.Default.Lyrics,
+            when {
+                heldBack -> "Lyrics are off while driving"
+                on -> "Hide lyrics"
+                else -> "Show lyrics"
+            },
+            onClick = {
+                if (heldBack) {
+                    logInfo("[UI_ACTION] Pane: lyrics tapped while driving (Limit features while driving)", tag = "UI")
+                    bubble = true
+                } else {
+                    logInfo("[UI_ACTION] Pane: lyrics ${if (on) "off" else "on"}", tag = "UI")
+                    music.setLyrics(!on)
+                }
+            },
+            size = 56.dp,
+            iconSize = 30.dp,
+            fill = if (lit) content.copy(alpha = LIT_ALPHA) else Color.Transparent,
+            tint = content.copy(alpha = if (lit) 1f else OFF_ALPHA),
+        )
+        if (bubble && heldBack) LimitBubble(onDismiss = { bubble = false })
+    }
+}
+
+/** "Lyrics are off while driving", under the lyrics button, until a tap elsewhere or [BUBBLE_MS]. */
+@Composable
+private fun LimitBubble(onDismiss: () -> Unit) {
+    val below = with(LocalDensity.current) { BUBBLE_DROP.roundToPx() }
+    LaunchedEffect(Unit) {
+        delay(BUBBLE_MS)
+        onDismiss()
+    }
+    Popup(alignment = Alignment.TopEnd, offset = IntOffset(0, below), onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            shadowElevation = 8.dp,
+            modifier = Modifier.widthIn(max = 420.dp),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 22.dp, vertical = 16.dp)) {
+                Text("Lyrics are off while driving", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Limit features while driving is on. Lyrics show again when the vehicle stops, or turn the limit off in Settings › Display.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
+    }
 }
 
 private const val NOTE = "♪"
@@ -291,7 +363,13 @@ private const val LOOKUP_SETTLE_MS = 1_500L
 
 /** The first wait before LRCLIB is asked again after it could not be reached, doubling up to [RETRY_MAX_MS]. */
 private const val RETRY_FIRST_MS = 5_000L
-private const val RETRY_MAX_MS = 60_000L
+
+/** At most this between tries: a song is three or four minutes, and a minute's wait lost most of one (10-29). */
+private const val RETRY_MAX_MS = 30_000L
+
+/** How long the "off while driving" bubble stays, and how far under the button's top it hangs. */
+private const val BUBBLE_MS = 5_000L
+private val BUBBLE_DROP = 64.dp
 
 // Room around a line for its blur: a layer draws offscreen at its own bounds and would cut it off.
 private val GLOW_ROOM = 16.dp
