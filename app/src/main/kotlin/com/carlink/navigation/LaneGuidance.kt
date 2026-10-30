@@ -47,12 +47,18 @@ object LaneGuidance {
      * A lane to be in points the way the route goes from it (its highlighted direction), with its
      * other directions kept to draw beside it.
      *
-     * A lone 0 beside a turn is a placeholder, not a straight-ahead direction: preferred lanes almost
-     * always arrive as `laneAngles=[0]` with the real direction only in `laneAngleHighlight` (153 of
-     * the preferred records in the 2026-10-21/22 drives, e.g. `[0]` + 90), and CarPlay draws such a
-     * lane as the turn alone where the cluster drew a straight arrow beside it. So a lone 0 with a
-     * turn highlight, or a 0 highlight with a lone turn, leaves just the turn. A lane that lists 0
-     * among other directions really does go straight as well, and keeps it.
+     * The highlight is the way to go, always. A lone 0 beside a turn is a placeholder, not a
+     * straight-ahead direction: preferred lanes almost always arrive as `laneAngles=[0]` with the real
+     * direction only in `laneAngleHighlight` (153 of the preferred records in the 2026-10-21/22 drives,
+     * e.g. `[0]` + 90), and CarPlay draws such a lane as the turn alone. So a lone 0 with a turn
+     * highlight leaves just the turn. A lane that lists 0 among other directions really does go straight
+     * as well, and keeps it.
+     *
+     * The reverse, a lone turn with a 0 highlight, is straight ahead: the turn is drawn beside it, not
+     * highlighted. The 2026-10-29 drive had it twice, and both times the iPhone meant straight on and the
+     * cluster, taking the turn instead, showed the opposite of CarPlay: approaching I-575 exit 7 (block
+     * `[0]`+0, `[45]`+0, `[45]`: stay in the left two lanes) and the intersection before the right turn
+     * onto Jiles Rd (`[0]`, `[90]`+0: keep right, straight on), whose turn came as the next block.
      */
     fun fromRecords(records: Collection<LaneRecord>): List<LaneHint> {
         val ordered = records.sortedBy { it.lane }
@@ -62,12 +68,7 @@ object LaneGuidance {
             val angles = r.angles.distinct()
             val lone = angles.singleOrNull()
             val highlight = r.highlight
-            val main =
-                when {
-                    !recommended -> r.angle
-                    highlight == 0 && lone != null && lone != 0 -> lone
-                    else -> highlight ?: r.angle
-                }
+            val main = if (recommended) highlight ?: r.angle else r.angle
             val placeholderZero = recommended && lone == 0 && main != 0
             val others = if (placeholderZero) emptyList() else angles.filter { it != main }
             LaneHint(main, recommended, others)
