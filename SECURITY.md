@@ -10,7 +10,7 @@ Only the newest release gets security fixes. Update to it before reporting, if y
 
 | Component | Supported | Where it comes from |
 | --- | --- | --- |
-| Carlink app (`com.enigy.carlink3`) | The newest release (2.03 today) | Google Play, or the APK on the GitHub release |
+| Carlink app (`com.enigy.carlink3`) | The newest release (2.04 today) | Google Play, or the APK on the GitHub release |
 | Carlink USB Bridge | The version the newest release ships (1.0.6 today) | `app/carlink_bridge.apk` in this repo, and the GitHub release |
 | OCBM adapter software | Reported to its own repo, [enigy/ocbm](https://github.com/enigy/ocbm) | The adapter's one-file install |
 | Older app and bridge versions | No |  |
