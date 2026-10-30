@@ -74,19 +74,23 @@ import kotlinx.coroutines.withContext
  * settled song once. Turning the lyrics on asks again at once, a "none" too: before, turning them off and
  * on was the only way to get lyrics LRCLIB had failed to give (owner, 10-29). Call this where it stays
  * composed (the pane's host, as for the album art), so the words are ready when the driver swipes to the music.
+ * With Settings' Look up lyrics off ([MusicStore.lookUpFlow]) nothing is looked up, anywhere, and none show.
  */
 @Composable
 internal fun rememberLyrics(info: NowPlayingInfo): SyncedLyrics? {
     val context = LocalContext.current
-    val on by remember { MusicStore.get(context) }.lyricsFlow.collectAsState()
+    val music = remember { MusicStore.get(context) }
+    val on by music.lyricsFlow.collectAsState()
+    val lookUp by music.lookUpFlow.collectAsState()
     val heldBack = rememberLyricsHeldBack()
     val disk = remember { LyricsDiskCache.get(context) }
     val key = LyricsKey.of(info)
     var lyrics by remember { mutableStateOf<SyncedLyrics?>(null) }
-    // Looked up whether the lyrics show or not, so turning them on finds them ready (owner, 10-28).
-    LaunchedEffect(key, on) {
+    // Looked up whether the lyrics show or not, so turning them on finds them ready (owner, 10-28); not at all
+    // with Look up lyrics off (owner, 10-30).
+    LaunchedEffect(key, on, lookUp) {
         lyrics = null
-        if (key == null) return@LaunchedEffect
+        if (key == null || !lookUp) return@LaunchedEffect
         LrcLib.cached(key)?.takeIf { it.lyrics != null || !on }?.let {
             lyrics = it.lyrics
             return@LaunchedEffect
@@ -105,7 +109,7 @@ internal fun rememberLyrics(info: NowPlayingInfo): SyncedLyrics? {
             wait = (wait * 2).coerceAtMost(RETRY_MAX_MS)
         }
     }
-    return if (on && !heldBack) lyrics else null
+    return if (on && lookUp && !heldBack) lyrics else null
 }
 
 /**
@@ -291,12 +295,14 @@ private fun Modifier.lineCountDrag(music: MusicStore): Modifier {
  *
  * While the lyrics are held back ([rememberLyricsHeldBack]: the vehicle moves with Limit features while
  * driving on) the button stays, dimmed, and a tap shows a bubble saying why instead of switching
- * (owner, 10-29).
+ * (owner, 10-29). With Settings' Look up lyrics off there is no button at all.
  */
 @Composable
 internal fun LyricsToggle(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val music = remember { MusicStore.get(context) }
+    val lookUp by music.lookUpFlow.collectAsState()
+    if (!lookUp) return
     val on by music.lyricsFlow.collectAsState()
     val heldBack = rememberLyricsHeldBack()
     var bubble by remember { mutableStateOf(false) }

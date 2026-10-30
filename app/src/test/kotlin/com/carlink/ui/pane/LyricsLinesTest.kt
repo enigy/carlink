@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
@@ -17,12 +18,16 @@ import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
+import com.carlink.media.LrcLib
 import com.carlink.media.LyricLine
+import com.carlink.media.LyricsKey
 import com.carlink.media.NowPlayingInfo
 import com.carlink.media.NowPlayingState
 import com.carlink.media.SyncedLyrics
 import com.carlink.ui.settings.MusicStore
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -112,6 +117,36 @@ class LyricsLinesTest {
         compose.onNodeWithText("line 3").assertExists()
         compose.mainClock.advanceTimeBy(SETTLE_MS)
         compose.onNodeWithText("line 3").assertDoesNotExist()
+    }
+
+    @Test
+    fun with_look_up_lyrics_off_the_card_has_no_lyrics_button_and_no_lyrics() {
+        // Owner, 10-30: Settings › Adapter and about › Look up lyrics off keeps every song on the head unit.
+        val info = NowPlayingInfo(title = "Kept Song", artist = "Band", album = "", appName = "Music", durationMs = 61_000L)
+        val key = requireNotNull(LyricsKey.of(info))
+        LrcLib.find(key, api = { path, _ -> if (path == "get-cached") """{"syncedLyrics": "[00:01.00] kept"}""" else null })
+        music.setLyrics(true)
+        music.setLookUp(true)
+        var shown: SyncedLyrics? = null
+        try {
+            compose.setContent {
+                MaterialTheme {
+                    Box(modifier = Modifier.size(480.dp, 600.dp)) {
+                        LyricsToggle()
+                        shown = rememberLyrics(info)
+                    }
+                }
+            }
+            compose.waitForIdle()
+            assertNotNull("on: the song's lyrics", shown)
+            compose.onNodeWithContentDescription("Hide lyrics").assertExists()
+            compose.runOnIdle { music.setLookUp(false) }
+            compose.waitForIdle()
+            assertNull("off: none, not even the copy already in hand", shown)
+            compose.onNodeWithContentDescription("Hide lyrics").assertDoesNotExist()
+        } finally {
+            music.setLookUp(true)
+        }
     }
 
     private companion object {

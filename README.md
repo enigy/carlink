@@ -141,7 +141,7 @@ Below them are the logs:
 
 ### Adapter and about
 
-The app version, the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. Under **Lyrics**: where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (each is kept 30 days, 500 MB in all at most), and **Clear** to delete them.
+The app version, the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (each is kept 30 days, 500 MB in all at most), and **Clear** to delete them.
 
 ## Install in four steps
 
@@ -202,6 +202,10 @@ See `NOTICE.md` for provenance.
 - **Naming a release:** the bump commit carries the summary (`[7] Connecting screen, call-audio choices`, not `Bump appVersionCode`), since it is the workflow run's title. The annotated tag's message becomes the GitHub Release title and intro (`git tag -a v7 -m "Carlink v7: …"`).
 - **Play Console, once:** create the app (`com.enigy.carlink3`), grant the existing service account release rights to it, and upload the first AAB from the workflow artifact by hand. The API only accepts drafts until an app has been rolled out once (the step then fails with `status=completed`; rerun after the first manual rollout). The bridge's caller pins are committed in `bridge/build.gradle.kts`; a `CARLINK3_CALLER_CERTS` repository variable replaces the release list.
 - **Local release builds** need a `keystore.properties` next to `settings.gradle.kts` (gitignored, same keys the workflow writes). Without it, release variants build unsigned and debug is unaffected.
+
+## Privacy
+
+Carlink collects no data: no analytics, telemetry, crash reporting, ads or accounts. What little it sends, and what it keeps on the head unit, is in [PRIVACY.md](PRIVACY.md). Security problems: [SECURITY.md](SECURITY.md).
 
 ## License
 
