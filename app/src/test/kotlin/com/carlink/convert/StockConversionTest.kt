@@ -466,8 +466,10 @@ class StockConversionTest {
         name: String,
     ) {
         sticks[name] = stick
-        usb.devices[name] = ADAPTER_STICK
+        // Asked before the stick is on USB: once it is, the conversion's own look-out (every pollMs) may take it
+        // ahead of the broadcast, and the question would race it. Either way it is taken once.
         assertTrue("wanted: $name in ${conversion.phase.value}", conversion.wantsStick(0x1d6b, 0xa4a5, name))
+        usb.devices[name] = ADAPTER_STICK
         conversion.stickAttached(0x1d6b, 0xa4a5, name)
     }
 
