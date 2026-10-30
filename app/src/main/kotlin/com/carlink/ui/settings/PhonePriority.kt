@@ -48,7 +48,7 @@ internal class PhoneListActions(
     val onSettings: (CarlinkManager.DeviceInfo) -> (() -> Unit)?,
 )
 
-/** The ranked phone list plus, when the box takes phone priority, the auto-connect switch. */
+/** The ranked phone list. The adapter always calls these phones, in this order, when the vehicle starts. */
 @Composable
 internal fun PhoneList(
     carlinkManager: CarlinkManager,
@@ -69,12 +69,6 @@ internal fun PhoneList(
                 onSettings = settingsFor,
             ),
     )
-    if (live.policySupported) {
-        AutoConnectRow(checked = live.autoConnect) { on ->
-            live.autoConnect = on
-            carlinkManager.setAutoConnectPhones(on)
-        }
-    }
 }
 
 /**
@@ -218,27 +212,6 @@ private fun MoveButton(
             imageVector = if (up) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
             contentDescription = if (up) "Move $name up" else "Move $name down",
             modifier = Modifier.size(30.dp),
-        )
-    }
-}
-
-/** On: the adapter calls the phones above, in order, when the truck starts. Off: it waits. */
-@Composable
-internal fun AutoConnectRow(
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    SettingsGroup {
-        SwitchRow(
-            title = "Connect automatically",
-            subtitle =
-                if (checked) {
-                    "The adapter calls the phones above, in order, when the vehicle starts"
-                } else {
-                    "The adapter waits for a phone to connect on its own"
-                },
-            checked = checked,
-            onCheckedChange = onCheckedChange,
         )
     }
 }

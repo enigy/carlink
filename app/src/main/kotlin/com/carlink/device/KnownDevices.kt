@@ -43,8 +43,6 @@ data class KnownDeviceSnapshot(
      * listed keep their place after the listed ones.
      */
     val priority: List<String> = emptyList(),
-    /** Whether the box pages known phones on its own when it starts. */
-    val autoConnect: Boolean = true,
 ) {
     /** The explicit order the list and the box follow: [priority], else the single [preferredMac]. */
     val order: List<String> get() = priority.ifEmpty { listOfNotNull(preferredMac) }
@@ -85,7 +83,6 @@ object KnownDeviceCodec {
                 }
                 append(']')
             }
-            if (!s.autoConnect) append(""","autoConnect":false""")
             append(""","devices":[""")
             s.devices.values.sortedBy { it.mac }.forEachIndexed { i, d ->
                 if (i > 0) append(',')
@@ -130,7 +127,7 @@ object KnownDeviceCodec {
             priority =
                 root.optJSONArray("priority")?.let { p -> (0 until p.length()).mapNotNull { p.optString(it).lowercase().ifEmpty { null } } }
                     ?: emptyList(),
-            autoConnect = root.optBoolean("autoConnect", true),
+            // An "autoConnect" a 2.01 or older wrote is ignored: the adapter always calls known phones now.
         )
     }
 }
@@ -192,14 +189,13 @@ fun mergeDeviceList(
 /**
  * The body of the box's `MGMT_SET_POLICY`: `{"autoConnect":true,"order":["AA:BB:CC:DD:EE:FF",..]}`.
  * btd keeps only the bonded addresses from [order] and tries any other bond after them, so passing
- * the whole list on screen (history-only phones included) is safe.
+ * the whole list on screen (history-only phones included) is safe. `autoConnect` is always true:
+ * the adapter calls known phones when the vehicle starts, which is what everyone expects of it, and
+ * a box that was told otherwise by an older Carlink is set back at the next session.
  */
-fun phonePolicyJson(
-    order: List<String>,
-    autoConnect: Boolean,
-): String =
+fun phonePolicyJson(order: List<String>): String =
     buildString {
-        append("""{"autoConnect":""").append(autoConnect).append(""","order":[""")
+        append("""{"autoConnect":true,"order":[""")
         order.forEachIndexed { i, mac ->
             if (i > 0) append(',')
             append(JSONObject.quote(mac.uppercase()))

@@ -12,11 +12,19 @@ class PhonePriorityTest {
     ) = KnownDevice(mac = mac, name = mac.uppercase(), firstSeenMs = 1L, lastConnectedMs = last)
 
     @Test
-    fun priorityAndAutoConnectSurviveTheCodec() {
-        val snap = KnownDeviceSnapshot(devices = mapOf("aa" to dev("aa", 5L)), priority = listOf("bb", "aa"), autoConnect = false)
+    fun prioritySurvivesTheCodec() {
+        val snap = KnownDeviceSnapshot(devices = mapOf("aa" to dev("aa", 5L)), priority = listOf("bb", "aa"))
         val back = KnownDeviceCodec.decode(KnownDeviceCodec.encode(snap))
         assertEquals(listOf("bb", "aa"), back.priority)
-        assertFalse(back.autoConnect)
+    }
+
+    @Test
+    fun anOlderDocumentWithAutoConnectOffStillReads() {
+        val old = """{"v":1,"priority":["bb","aa"],"autoConnect":false,"devices":[{"mac":"aa","firstSeenMs":1}]}"""
+        val back = KnownDeviceCodec.decode(old)
+        assertEquals(listOf("bb", "aa"), back.priority)
+        assertEquals(setOf("aa"), back.devices.keys)
+        assertFalse("written back without it", "autoConnect" in KnownDeviceCodec.encode(back))
     }
 
     @Test
@@ -42,8 +50,8 @@ class PhonePriorityTest {
     fun policyBodyIsWhatBtdParses() {
         assertEquals(
             """{"autoConnect":true,"order":["AA:BB:CC:DD:EE:01","AA:BB:CC:DD:EE:02"]}""",
-            phonePolicyJson(listOf("aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"), autoConnect = true),
+            phonePolicyJson(listOf("aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02")),
         )
-        assertEquals("""{"autoConnect":false,"order":[]}""", phonePolicyJson(emptyList(), autoConnect = false))
+        assertEquals("auto-connect is always on", """{"autoConnect":true,"order":[]}""", phonePolicyJson(emptyList()))
     }
 }
