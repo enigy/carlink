@@ -101,6 +101,20 @@ class LyricsDiskCacheTest {
     }
 
     @Test
+    fun `Settings sees how many songs are kept and their size, and Clear deletes them all`() {
+        val c = cache()
+        assertEquals(LyricsDiskCache.Usage(0, 0), c.usage())
+        c.write(song, lrc)
+        c.write(song.copy(title = "Little Talks", durationSec = 266), lrc)
+        val kept = c.usage()
+        assertEquals(2, kept.songs)
+        assertEquals(c.sizeBytes(), kept.bytes)
+        assertEquals(2, c.clear())
+        assertEquals(LyricsDiskCache.Usage(0, 0), c.usage())
+        assertNull(c.read(song))
+    }
+
+    @Test
     fun `a temp file a power loss left behind is not an entry, and is tidied away`() {
         val dir = File(tmp.root, "lyrics").apply { mkdirs() }
         File(dir, "0123.json.tmp").writeText("{\"v\":1,\"lrc\":\"[00:01.00] half")

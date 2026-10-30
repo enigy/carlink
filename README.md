@@ -98,7 +98,7 @@ A new iPhone starts from the factory settings: directions on, lane guidance on, 
 
 ### Phones
 
-The connected phone, with **Settings** and **Forget**; your other known phones and the USB port; the order the adapter calls paired phones in, plus **Connect automatically**; and **Add phone**. Once a phone is paired, a new one can pair only while Add phone holds the adapter's Bluetooth pairing open, for 2 minutes. Forgetting a phone also deletes its settings.
+The connected phone, with **Settings** and **Forget**; your other known phones and the USB port; the order the adapter calls paired phones in when the vehicle starts; and **Add phone**. Once a phone is paired, a new one can pair only while Add phone holds the adapter's Bluetooth pairing open, for 2 minutes. Forgetting a phone also deletes its settings.
 
 > ![Settings › Phones](docs/readme/settings-phones.png)
 
@@ -141,7 +141,7 @@ Below them are the logs:
 
 ### Adapter and about
 
-The app version, the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware.
+The app version, the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. Under **Lyrics**: where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (each is kept 30 days, 500 MB in all at most), and **Clear** to delete them.
 
 ## Install in four steps
 

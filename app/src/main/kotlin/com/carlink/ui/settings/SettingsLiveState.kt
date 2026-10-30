@@ -60,7 +60,6 @@ internal class SettingsLiveState(
     /** The box gates pairing behind a window (CAP_PAIR_WINDOW), and whether it says the window is open. */
     var pairWindowSupported by mutableStateOf(false)
     var pairWindowOpen by mutableStateOf(false)
-    var autoConnect by mutableStateOf(true)
 
     /** AAOS says the truck is moving: another iPhone's profile, copy and reset wait until parked. */
     var driving by mutableStateOf(false)
@@ -96,7 +95,6 @@ internal fun rememberSettingsLiveState(
             live.policySupported = carlinkManager.phonePolicySupported
             live.pairWindowSupported = carlinkManager.pairWindowSupported
             live.pairWindowOpen = carlinkManager.pairWindowOpen
-            live.autoConnect = carlinkManager.autoConnectPhones
             live.driving = carlinkManager.isDriving
             live.box =
                 BoxSnapshot(
