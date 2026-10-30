@@ -121,3 +121,4 @@ Tests live in `app/src/test/kotlin`, next to the package they test (`com.carlink
   `CallState.logLabel`, roads and instructions through `LogRedactor.place`. Do the same for anything
   personal you add to a log line.
 - Attach logs to issues only after reading them for anything private.
+- Report security problems privately, as [SECURITY.md](SECURITY.md) says, never in a public issue.
