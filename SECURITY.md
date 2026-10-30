@@ -2,6 +2,8 @@
 
 Please report security problems in Carlink privately through GitHub, never in a public issue. You will hear back within 7 days.
 
+For the privacy policy, please see: https://github.com/enigy/carlink/blob/main/PRIVACY.md
+
 ## Supported versions
 
 Only the newest release gets security fixes. Update to it before reporting, if you can.
