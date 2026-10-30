@@ -75,6 +75,11 @@ object LrcLib {
     /** The answer already in hand for [key], or null when it has not been looked up. */
     fun cached(key: LyricsKey): Answer? = synchronized(cache) { cache[key] }
 
+    /** Forget every answer this process holds (Settings' Clear, with [LyricsDiskCache.clear]). */
+    fun forget() {
+        synchronized(cache) { cache.clear() }
+    }
+
     /**
      * LRCLIB's answer for the song: its timed lyrics, or none ([Answer.lyrics] null). Null when LRCLIB
      * could not be reached or answered unreadably, which is not an answer: the caller asks again.

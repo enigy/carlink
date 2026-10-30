@@ -83,6 +83,26 @@ class LyricsDiskCache(
     /** The folder's size in bytes: what [maxBytes] is held against. */
     fun sizeBytes(): Long = synchronized(lock) { dir.listFiles()?.sumOf { it.length() } ?: 0L }
 
+    /** What Settings › Adapter and about shows: how many songs are kept, and the bytes they take. */
+    data class Usage(
+        val songs: Int,
+        val bytes: Long,
+    )
+
+    fun usage(): Usage =
+        synchronized(lock) {
+            val files = dir.listFiles().orEmpty()
+            Usage(files.count { it.name.endsWith(EXT) }, files.sumOf { it.length() })
+        }
+
+    /** Delete every kept song (Settings' Clear): each is looked up again the next time it plays. Returns how many went. */
+    fun clear(): Int =
+        synchronized(lock) {
+            val files = dir.listFiles().orEmpty()
+            files.forEach { it.delete() }
+            files.count { it.name.endsWith(EXT) }
+        }
+
     /** Entries past [maxAgeMs] and stray temp files go, then the oldest entries while the folder holds more than [maxBytes]. */
     internal fun prune() {
         synchronized(lock) {

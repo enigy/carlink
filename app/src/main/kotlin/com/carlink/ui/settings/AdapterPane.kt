@@ -29,8 +29,9 @@ import com.carlink.CarlinkManager
 import com.carlink.logging.logWarn
 
 /**
- * Adapter and about: the box's status in plain words (with the raw line kept for bug reports) and
- * the app version. The log controls live under Troubleshoot ([LogsGroup]).
+ * Adapter and about: the box's status in plain words (with the raw line kept for bug reports), the
+ * app version, and where lyrics come from and what of them the head unit keeps ([LyricsGroup]). The
+ * log controls live under Troubleshoot ([LogsGroup]).
  */
 @Composable
 internal fun AdapterPane(
@@ -49,6 +50,7 @@ internal fun AdapterPane(
                     }
                 }
                 InstallGroup(carlinkManager)
+                LyricsGroup()
             }
         }
     }
