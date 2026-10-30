@@ -84,12 +84,19 @@ android {
     // overrides it for either; turning it on for Play is a commit here and a normal tagged release.
     val stockConversion = (findProperty("carlink.stockConversion") as String?)?.toBoolean()
 
+    // Updating an adapter already on OCBM from Settings › Adapter (remote updates plan, U2): on in debug builds, which
+    // also read a bench package from the head unit, and off in release builds until the first package is published and
+    // pinned (U4/U5). -Pcarlink.adapterUpdates=true|false overrides it for either.
+    val adapterUpdates = (findProperty("carlink.adapterUpdates") as String?)?.toBoolean()
+
     buildTypes {
         debug {
             buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: true).toString())
+            buildConfigField("boolean", "ADAPTER_UPDATES", (adapterUpdates ?: true).toString())
         }
         release {
             buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: false).toString())
+            buildConfigField("boolean", "ADAPTER_UPDATES", (adapterUpdates ?: false).toString())
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true

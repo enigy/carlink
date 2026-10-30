@@ -61,6 +61,8 @@ import com.carlink.navigation.LaneActivity
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.OcbmNavigationFeed
 import com.carlink.navigation.compose.ComposedIconStore
+import com.carlink.ocbm.AdapterUpdateSession
+import com.carlink.ocbm.AdapterUpdateStore
 import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
@@ -78,6 +80,8 @@ import com.carlink.ocbm.PhoneSetup
 import com.carlink.ocbm.PixelRect
 import com.carlink.ocbm.RawBulkTransport
 import com.carlink.ocbm.SplitViewArea
+import com.carlink.ocbm.UpdateBox
+import com.carlink.ocbm.UpdateHost
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
 import com.carlink.ocbm.seam.SeamPipe
@@ -556,6 +560,23 @@ class CarlinkManager(
 
     /** The Connect press being followed, or its outcome while it stands ([PhoneConnectTracker]). */
     val connectAttempt: StateFlow<ConnectAttempt?> get() = connectTracker.attempt
+
+    /** Updating the adapter in use to a newer OCBM from Settings › Adapter (remote updates plan, U2). */
+    val adapterUpdate =
+        AdapterUpdateSession(
+            host =
+                object : UpdateHost {
+                    override fun box(): UpdateBox? = client?.let(::updateBox)
+
+                    override fun notNow(): String? = updateBlockedReason()
+
+                    override fun updated() = oneFileInstall.refreshNow()
+                },
+            packages = AdapterUpdateStore(context.applicationContext),
+            install = oneFileInstall.install,
+            scope = scope,
+            switches = AdapterUpdateSession.Switches(enabled = BuildConfig.ADAPTER_UPDATES, canConvert = BuildConfig.STOCK_CONVERSION),
+        )
 
     /** Pairing an iPhone on the connecting screen, when the adapter has no phone paired or none comes. */
     val phoneSetup =
@@ -1474,6 +1495,7 @@ class CarlinkManager(
         armBoxLogStream(c)
         syncPhonePolicyAfterSubscribe()
         oneFileInstall.onSubscribed()
+        adapterUpdate.onSubscribed()
         phoneSetup.onSubscribed()
 
         setStatusText("Waiting for phone...")
@@ -1572,6 +1594,7 @@ class CarlinkManager(
         cancelReconnect()
         OcbmNavigationFeed.clear() // Carlink: drop the route so the cluster does not show a stale trip
         oneFileInstall.reset()
+        adapterUpdate.reset()
         phoneSetup.reset()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
@@ -2897,6 +2920,33 @@ class CarlinkManager(
         callEchoMonitor?.stop()
         callEchoMonitor = null
     }
+
+    /** The adapter update's view of the client in use. */
+    private fun updateBox(c: OcbmClient): UpdateBox =
+        object : UpdateBox {
+            override val takesUpdates: Boolean get() = c.supportsUpdate
+
+            override fun info(): String? = c.mgmtGetInfo()
+
+            override fun push(
+                path: String,
+                bytes: ByteArray,
+                progress: (done: Long, total: Long) -> Unit,
+            ): Result<Unit> = c.pushFile(path, bytes, progress = progress)
+
+            override fun update(
+                sha256: String,
+                timeoutMs: Long,
+            ): Int? = c.mgmtAction(Ocbm.MGMT_UPDATE, sha256.toByteArray(Charsets.US_ASCII), timeoutMs)
+        }
+
+    /** Why the adapter can't be updated right now, or null when it can: the car parked, and no call. */
+    private fun updateBlockedReason(): String? =
+        when {
+            isDriving -> "The car is moving. Park, then update the adapter."
+            voiceRouter?.isCallActive() == true -> "A phone call is active. Update the adapter after the call."
+            else -> null
+        }
 
     /** Why the parked call-audio tests can't run right now, or null when they can. */
     fun audioTestBlockedReason(): String? =

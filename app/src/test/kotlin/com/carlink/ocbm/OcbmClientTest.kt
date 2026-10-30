@@ -10,6 +10,12 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.zip.CRC32
+import kotlin.concurrent.thread
 
 /**
  * Headless tests for the OCBM client over [FakeTransport] — no adapter, no emulator.
@@ -399,6 +405,119 @@ class OcbmClientTest {
         c2.stop()
         assertArrayEquals(byteArrayOf(Ocbm.CT_STOP), t2.awaitFrameOn(Ocbm.CH_CTRL))
         client = null
+    }
+
+    // ---- CH_FILE push (the update package, remote updates plan U2) ---------------------------------
+
+    /** `[FILE_ACK][status][crc32 u32 LE][size u32 LE]`, as ocbmd's send_file_ack writes it. */
+    private fun fileAck(
+        status: Byte,
+        crc: Long = 0,
+        size: Int = 0,
+    ): ByteArray =
+        ByteBuffer
+            .allocate(10)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .put(Ocbm.FILE_ACK)
+            .put(status)
+            .putInt(crc.toInt())
+            .putInt(size)
+            .array()
+
+    /** What a failed push said; empty for a push that succeeded or never returned. */
+    private fun failure(result: Result<Unit>?): String = result?.exceptionOrNull()?.message.orEmpty()
+
+    /** Run [push] on its own thread, as the update does (it blocks on the box's answers). */
+    private fun pushing(push: () -> Result<Unit>): () -> Result<Unit>? {
+        var result: Result<Unit>? = null
+        val t = thread { result = push() }
+        return {
+            t.join(3000)
+            result
+        }
+    }
+
+    @Test
+    fun `a push is OPEN with its mode and path, the bytes in chunks, then CLOSE with their CRC-32 and size`() {
+        val t = FakeTransport()
+        val c = newClient(t)
+        val data = ByteArray(40_000) { (it * 7).toByte() }
+        val progress = CopyOnWriteArrayList<Long>()
+        val result = pushing { c.pushFile("/tmp/ocbm-update.tgz", data, timeoutMs = 2000) { done, _ -> progress.add(done) } }
+
+        // Mode 0644, little-endian, then the path: ocbmd's FileState reads exactly this.
+        val open = t.awaitFrameOn(Ocbm.CH_FILE)
+        assertArrayEquals(byteArrayOf(Ocbm.FILE_OPEN, 0xA4.toByte(), 0x01, 0, 0) + "/tmp/ocbm-update.tgz".toByteArray(), open)
+        t.deliver(Ocbm.CH_FILE, fileAck(Ocbm.FILE_OK))
+
+        val got = ByteArrayOutputStream()
+        var close: ByteArray? = null
+        while (close == null) {
+            val f = t.awaitFrameOn(Ocbm.CH_FILE) ?: break
+            if (f[0] == Ocbm.FILE_DATA) {
+                assertTrue("a chunk fits one frame with room to spare", f.size <= 16 * 1024 + 1)
+                got.write(f, 1, f.size - 1)
+            } else {
+                close = f
+            }
+        }
+        assertArrayEquals(data, got.toByteArray())
+        val crc = CRC32().apply { update(data) }.value
+        val want =
+            ByteBuffer
+                .allocate(9)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .put(Ocbm.FILE_CLOSE)
+                .putInt(crc.toInt())
+                .putInt(data.size)
+                .array()
+
+        assertArrayEquals(want, close)
+        t.deliver(Ocbm.CH_FILE, fileAck(Ocbm.FILE_OK, crc, data.size))
+
+        assertTrue(result()?.isSuccess == true)
+        assertEquals(listOf(16_384L, 32_768L, 40_000L), progress.toList())
+    }
+
+    @Test
+    fun `a push the box won't open, or can't verify, fails and says what the box said`() {
+        val t = FakeTransport()
+        val c = newClient(t)
+        val refused = pushing { c.pushFile("/tmp/x", ByteArray(10), timeoutMs = 2000) }
+        assertNotNull(t.awaitFrameOn(Ocbm.CH_FILE))
+        t.deliver(Ocbm.CH_FILE, fileAck(Ocbm.FILE_ERR_OPEN))
+        assertTrue(failure(refused()).contains("OPEN_FAILED"))
+        assertNull("nothing follows a refused OPEN", t.awaitFrameOn(Ocbm.CH_FILE, ms = 300))
+
+        val mismatch = pushing { c.pushFile("/tmp/x", ByteArray(10), timeoutMs = 2000) }
+        assertNotNull(t.awaitFrameOn(Ocbm.CH_FILE))
+        t.deliver(Ocbm.CH_FILE, fileAck(Ocbm.FILE_OK))
+        assertEquals(Ocbm.FILE_DATA, t.awaitFrameOn(Ocbm.CH_FILE)?.get(0))
+        assertEquals(Ocbm.FILE_CLOSE, t.awaitFrameOn(Ocbm.CH_FILE)?.get(0))
+        t.deliver(Ocbm.CH_FILE, fileAck(Ocbm.FILE_ERR_VERIFY, 1, 9))
+        assertTrue(failure(mismatch()).contains("VERIFY_FAILED"))
+    }
+
+    @Test
+    fun `a write the box fails ends the push with the box's word`() {
+        val t = FakeTransport()
+        val c = newClient(t)
+        val failed = pushing { c.pushFile("/tmp/x", ByteArray(100_000), timeoutMs = 2000) }
+        assertNotNull(t.awaitFrameOn(Ocbm.CH_FILE))
+        t.deliver(Ocbm.CH_FILE, fileAck(Ocbm.FILE_OK))
+        assertEquals(Ocbm.FILE_DATA, t.awaitFrameOn(Ocbm.CH_FILE)?.get(0))
+        // ocbmd answers a chunk it could not write with FILE_ERR_WRITE and drops the transfer; the push stops at the
+        // next chunk, or takes it as CLOSE's answer if every chunk was already out.
+        t.deliver(Ocbm.CH_FILE, fileAck(Ocbm.FILE_ERR_WRITE))
+        assertTrue(failure(failed()).contains("IO_FAILED"))
+    }
+
+    @Test
+    fun `a push with no answer gives up`() {
+        val t = FakeTransport()
+        val c = newClient(t)
+        val silent = pushing { c.pushFile("/tmp/x", ByteArray(10), timeoutMs = 200) }
+        assertTrue(failure(silent()).contains("FILE_OPEN: no answer"))
     }
 
     private fun drainWritten(t: FakeTransport) {
