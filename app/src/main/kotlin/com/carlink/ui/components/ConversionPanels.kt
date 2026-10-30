@@ -256,12 +256,12 @@ private fun ConvertDialog(
 }
 
 /** "1.4 of 2.2 MB". */
-private fun megabytes(
+internal fun megabytes(
     done: Long,
     total: Long,
 ): String = "${String.format(Locale.US, "%.1f", done / BYTES_PER_MB)} of ${String.format(Locale.US, "%.1f", total / BYTES_PER_MB)} MB"
 
-private fun fraction(
+internal fun fraction(
     done: Long,
     total: Long,
 ): Float = if (total > 0) done.toFloat() / total else 0f

@@ -41,6 +41,9 @@ class OcbmClient(
     private val mgmtLock = Any()
     private val fileQ = LinkedBlockingQueue<ByteArray>()
 
+    // One CH_FILE transfer at a time: a pull and a push share [fileQ] and each takes the next FILE_ACK as its own.
+    private val fileLock = Any()
+
     @Volatile var helloAcked = false
         private set
 
@@ -86,6 +89,9 @@ class OcbmClient(
 
     /** The box is a one-file install that takes MGMT_INSTALL_CONFIRM / MGMT_GO_STOCK (enigy/ocbm 153df7f). */
     val supportsInstall: Boolean get() = (caps and Ocbm.CAP_INSTALL) != 0
+
+    /** The box takes an update package over CH_FILE and MGMT_UPDATE (enigy/ocbm f8f18c8). */
+    val supportsUpdate: Boolean get() = (caps and Ocbm.CAP_UPDATE) != 0
 
     /** Config blob last sent with CT_SUBSCRIBE; re-sent verbatim if the box drops us. */
     @Volatile private var configBlob: ByteArray = ByteArray(0)
@@ -1105,6 +1111,11 @@ class OcbmClient(
     fun pullFile(
         path: String,
         timeoutMs: Long = 30_000,
+    ): Result<ByteArray> = synchronized(fileLock) { pull(path, timeoutMs) }
+
+    private fun pull(
+        path: String,
+        timeoutMs: Long,
     ): Result<ByteArray> {
         fileQ.clear()
         val pathBytes = path.toByteArray(Charsets.US_ASCII)
@@ -1148,6 +1159,81 @@ class OcbmClient(
         }
         log.i("pull $path: ${data.size} bytes, crc32=0x%08x".format(crc))
         return Result.success(data)
+    }
+
+    /**
+     * Send a file to the box — the mirror of `ocbm-host push`: `[FILE_OPEN][mode u32 LE][path]`, which the
+     * box ACKs; the bytes as `FILE_DATA` sub-frames, not ACKed, so the pipe stays full; then
+     * `[FILE_CLOSE][crc32 u32 LE][size u32 LE]`. The box writes `<path>.ocbm.part` and renames it onto
+     * [path] only once the CRC-32 and size match, so a push that fails leaves nothing at [path]. Blocking;
+     * call off the main thread. [progress] gets the bytes sent so far after each chunk.
+     */
+    fun pushFile(
+        path: String,
+        data: ByteArray,
+        mode: Int = FILE_MODE_READABLE,
+        timeoutMs: Long = 10_000,
+        progress: (sent: Long, total: Long) -> Unit = { _, _ -> },
+    ): Result<Unit> = synchronized(fileLock) { push(path, data, mode, timeoutMs, progress) }
+
+    private fun push(
+        path: String,
+        data: ByteArray,
+        mode: Int,
+        timeoutMs: Long,
+        progress: (Long, Long) -> Unit,
+    ): Result<Unit> =
+        try {
+            fileQ.clear()
+            val pathBytes = path.toByteArray(Charsets.US_ASCII)
+            val open = ByteBuffer.allocate(1 + Int.SIZE_BYTES + pathBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+            open.put(Ocbm.FILE_OPEN).putInt(mode).put(pathBytes)
+            sendAndAck(open.array(), timeoutMs, "push $path: FILE_OPEN")
+            val crc32 = CRC32()
+            var off = 0
+            while (off < data.size) {
+                val n = minOf(FILE_CHUNK, data.size - off)
+                val chunk = ByteArray(1 + n)
+                chunk[0] = Ocbm.FILE_DATA
+                System.arraycopy(data, off, chunk, 1, n)
+                check(send(Ocbm.CH_FILE, chunk)) { "push $path: FILE_DATA send failed at $off of ${data.size} bytes" }
+                // The box answers a chunk only when it could not write it, and then the transfer is over.
+                fileQ.poll()?.takeIf { it.size >= FILE_ACK_LEN && it[0] == Ocbm.FILE_ACK }?.let {
+                    error("push $path: box says ${Ocbm.fileStatusName(it[1])} at $off of ${data.size} bytes")
+                }
+                crc32.update(data, off, n)
+                off += n
+                progress(off.toLong(), data.size.toLong())
+            }
+            val close = ByteBuffer.allocate(1 + 2 * Int.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+            close.put(Ocbm.FILE_CLOSE).putInt(crc32.value.toInt()).putInt(data.size)
+            sendAndAck(close.array(), timeoutMs, "push $path: FILE_CLOSE")
+            log.i("push $path: ${data.size} bytes, crc32=0x%08x".format(crc32.value))
+            Result.success(Unit)
+        } catch (e: IllegalStateException) {
+            Result.failure(e)
+        }
+
+    /** Send [frame] on CH_FILE and take the box's FILE_ACK to it, throwing with [what] unless it is FILE_OK. */
+    private fun sendAndAck(
+        frame: ByteArray,
+        timeoutMs: Long,
+        what: String,
+    ) {
+        check(send(Ocbm.CH_FILE, frame)) { "$what send failed" }
+        val ack = fileAck(timeoutMs) ?: error("$what: no answer")
+        check(ack[1] == Ocbm.FILE_OK) { "$what: box says ${Ocbm.fileStatusName(ack[1])}" }
+    }
+
+    /** The next FILE_ACK on CH_FILE within [timeoutMs]; null when none came. */
+    private fun fileAck(timeoutMs: Long): ByteArray? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (true) {
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0) return null
+            val pl = fileQ.poll(remaining, TimeUnit.MILLISECONDS) ?: return null
+            if (pl.size >= FILE_ACK_LEN && pl[0] == Ocbm.FILE_ACK) return pl
+        }
     }
 
     // ---- teardown -------------------------------------------------------------------------------
@@ -1221,5 +1307,11 @@ class OcbmClient(
             (lanes?.let { " ${it.statsLine()}" } ?: "")
 }
 
-/** `[FILE_ACK][status u8][crc32 u32 LE][size u32 LE]` — the terminal sub-frame of a pull. */
+/** `[FILE_ACK][status u8][crc32 u32 LE][size u32 LE]` — the terminal sub-frame of a pull, and the box's answer to a push's OPEN and CLOSE. */
 private const val FILE_ACK_LEN = 10
+
+/** Bytes per FILE_DATA sub-frame of a push: well under MAX_PAYLOAD, so touch and heartbeats interleave. */
+private const val FILE_CHUNK = 16 * 1024
+
+/** 0644: the box masks a pushed file's mode to its rwx bits and chmods the file to it. */
+private const val FILE_MODE_READABLE = 0x1A4

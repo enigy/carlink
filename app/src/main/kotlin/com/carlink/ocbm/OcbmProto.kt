@@ -288,6 +288,9 @@ object Ocbm {
     /** The box takes [MGMT_INSTALL_CONFIRM] and [MGMT_GO_STOCK] and reports `"install"` in MGMT_INFO. */
     const val CAP_INSTALL: Int = 0x0000_0100
 
+    /** The box takes [MGMT_UPDATE] and reports `"update"` and `"update_result"` in MGMT_INFO. */
+    const val CAP_UPDATE: Int = 0x0000_0200
+
     fun capsString(caps: Int): String {
         val bits = ArrayList<String>()
         if (caps and CAP_CONSOLE != 0) bits.add("CONSOLE")
@@ -299,6 +302,7 @@ object Ocbm {
         if (caps and CAP_PHONE_POLICY != 0) bits.add("PHONE_POLICY")
         if (caps and CAP_PAIR_WINDOW != 0) bits.add("PAIR_WINDOW")
         if (caps and CAP_INSTALL != 0) bits.add("INSTALL")
+        if (caps and CAP_UPDATE != 0) bits.add("UPDATE")
         return if (bits.isEmpty()) "none" else bits.joinToString("|")
     }
 
@@ -326,6 +330,14 @@ object Ocbm {
      * stock Carlinkit firmware and restarts (it returns as 1314:1520). Status 1 = nothing to go back to.
      */
     const val MGMT_GO_STOCK: Byte = 0x0B
+
+    /**
+     * `[MGMT_UPDATE][64 ASCII lower-case hex: the SHA-256 of /tmp/ocbm-update.tgz]`, after the package was
+     * pushed there over CH_FILE. ACK status 0: the box starts ocbm_update.sh, which places the update and
+     * restarts into its trial; progress and outcome are MGMT_INFO's `"update"` and `"update_result"`.
+     * Status 1 = no such package, a different SHA-256, or no update script on the box.
+     */
+    const val MGMT_UPDATE: Byte = 0x0C
     const val MGMT_INFO: Byte = 0x81.toByte()
     const val MGMT_ACK: Byte = 0x82.toByte()
 

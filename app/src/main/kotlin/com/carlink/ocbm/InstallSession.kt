@@ -46,6 +46,11 @@ class InstallSession(
         scope.launch(Dispatchers.IO) { refresh() }
     }
 
+    /** Read the install again, in the session in use: an update changed its version. */
+    fun refreshNow() {
+        scope.launch(Dispatchers.IO) { refresh() }
+    }
+
     /** The session ended: nothing is known about the next adapter yet. */
     fun reset() {
         installState.value = null

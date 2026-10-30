@@ -79,6 +79,7 @@ import com.carlink.ui.components.LoadingStatusView
 import com.carlink.ui.components.LoadingSteps
 import com.carlink.ui.components.NO_BACKGROUND_BRUSH
 import com.carlink.ui.components.PhoneSetupPanelOr
+import com.carlink.ui.components.UpdatePanelOr
 import com.carlink.ui.components.VideoSurface
 import com.carlink.ui.components.VideoSurfaceState
 import com.carlink.ui.components.rememberScene
@@ -491,18 +492,21 @@ private fun ConnectingWords(
         // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
         !bridge.installed -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
         statusText.startsWith(BRIDGE_TROUBLE_PREFIX) -> BridgeNotStartingPanel(onOpenAppInfo = onOpenAppInfo)
-        // A stock adapter's conversion, then the adapter's one-file install (its trial and way back), then
-        // pairing an iPhone, before the words; the adapter's own projection mode starts the last step: it
-        // flips to WIRELESS_CP/WIRED_CP when CarPlay really begins, ahead of "Phone connected".
+        // A stock adapter's conversion, then an adapter update in flight or just ended, then the adapter's
+        // one-file install (its trial and way back), then pairing an iPhone, before the words; the adapter's own
+        // projection mode starts the last step: it flips to WIRELESS_CP/WIRED_CP when CarPlay really begins,
+        // ahead of "Phone connected".
         else ->
             ConversionPanelOr(carlinkManager) {
-                InstallPanelOr(carlinkManager) {
-                    PhoneSetupPanelOr(carlinkManager) {
-                        LoadingStatusView(
-                            statusText = statusText,
-                            phoneConnected = LoadingSteps.projectionStarting(projectionMode),
-                            androidAuto = LoadingSteps.isAndroidAuto(projectionMode),
-                        )
+                UpdatePanelOr(carlinkManager) {
+                    InstallPanelOr(carlinkManager) {
+                        PhoneSetupPanelOr(carlinkManager) {
+                            LoadingStatusView(
+                                statusText = statusText,
+                                phoneConnected = LoadingSteps.projectionStarting(projectionMode),
+                                androidAuto = LoadingSteps.isAndroidAuto(projectionMode),
+                            )
+                        }
                     }
                 }
             }
