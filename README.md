@@ -88,7 +88,7 @@ One screen runs the whole show now. Categories sit on the left, each with a live
 
 ### Settings for each iPhone
 
-Each iPhone brings its own settings, keeping its own **Directions on cluster**, **Lane guidance**, **Turn alert** and **Limit CarPlay while driving**. Settings shows the iPhone connected now, or the last one that connected. Display mode, driver's seat, loading screen, calls, phones and logs stay shared by everyone.
+Each iPhone brings its own settings, keeping its own **Directions on cluster**, **Lane guidance**, **Turn alert** and **Limit features while driving**. Settings shows the iPhone connected now, or the last one that connected. Display mode, driver's seat, loading screen, calls, phones and logs stay shared by everyone.
 
 A new iPhone starts from the factory settings: directions on, lane guidance on, turn alert off, CarPlay limited while driving. While parked, the bar at the top of Cluster lets you switch to another iPhone's settings to change them, copy one iPhone's settings to another, or reset an iPhone to factory settings. While driving, Settings shows only the iPhone in use.
 
@@ -104,7 +104,7 @@ The connected phone, with **Settings** and **Forget**; your other known phones a
 
 ### Display
 
-Display mode, the loading screen photo, the driver's seat, and **Limit CarPlay while driving**: when it's on, CarPlay hides its keyboard and shortens lists while the truck moves.
+Display mode, the loading screen photo, the driver's seat, and **Limit features while driving**: when it's on, CarPlay hides its keyboard and shortens lists, and the music card hides its lyrics, while the truck moves. Turning it off asks you to accept that you are responsible for using those features safely.
 
 > <img src="docs/readme/settings-display-1.png" alt="Settings › Display" width="49%"> <img src="docs/readme/settings-display-2.png" alt="Display mode" width="49%"> <img src="docs/readme/settings-display-3.png" alt="Loading screen" width="49%"> <img src="docs/readme/settings-display-4.png" alt="Driver's seat and driving limits" width="49%">
 

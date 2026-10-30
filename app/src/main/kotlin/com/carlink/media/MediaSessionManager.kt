@@ -1100,8 +1100,10 @@ class MediaSessionManager(
 
             // ADDITIVE carrier: see scheduleArtUri.
             if (albumArt != null && hash != lastArtHash) scheduleArtUri(info, albumArt, hash, artBytesForNow)
+            // Album and app too: the pane's second line is "artist · album", and a wrong or missing artist
+            // there (owner, 10-29) could not be traced from title and artist alone.
             log(
-                "[MEDIA_SESSION] Metadata updated: ${info.title} - ${info.artist} " +
+                "[MEDIA_SESSION] Metadata updated: ${info.title} - ${info.artist} | album=${info.album} app=${info.appName} " +
                     "(inlineBytes=${artBytesForNow != null}, uriPending=${albumArt != null && hash != lastArtHash})",
             )
         }

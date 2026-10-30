@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Per-driver settings (scoped 2026-10-22, iPhones first): each iPhone keeps its own Turn alert, Lane
- * guidance, Directions on cluster and (2026-10-23) Limit CarPlay while driving, keyed by its
+ * guidance, Directions on cluster and (2026-10-23) Limit features while driving, keyed by its
  * `deviceID` (the BR/EDR MAC in `CT_PHONE_IDENT`, the same for a wired and a wireless connection).
  * The truck's own settings (display mode, driver's seat, loading screen, calls, phones, logs) stay
  * shared.

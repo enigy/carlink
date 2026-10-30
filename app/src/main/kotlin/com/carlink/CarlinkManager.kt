@@ -25,6 +25,7 @@ import com.carlink.callui.CallRoster
 import com.carlink.callui.CallState
 import com.carlink.car.AppFocusClaimer
 import com.carlink.car.DriveStateMonitor
+import com.carlink.car.DrivingState
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.convert.BridgeStickTransport
 import com.carlink.convert.ConversionUsb
@@ -1020,7 +1021,10 @@ class CarlinkManager(
         // onSessionKeyed re-pushes the current value.
         driveMonitor =
             DriveStateMonitor(context).also { m ->
-                m.onDriveStateChanged = { driving -> setLimitedUI(driving) }
+                m.onDriveStateChanged = { driving ->
+                    DrivingState.set(driving)
+                    setLimitedUI(driving)
+                }
                 m.start()
             }
         watchCarPlayLimit()
@@ -1721,7 +1725,7 @@ class CarlinkManager(
     }
 
     /**
-     * Limit CarPlay while driving flipped mid-drive, or a different iPhone's choice loaded: push the
+     * Limit features while driving flipped mid-drive, or a different iPhone's choice loaded: push the
      * result now, not at the next gear change.
      */
     private fun watchCarPlayLimit() {
@@ -1742,7 +1746,7 @@ class CarlinkManager(
      * WHICH elements get limited is the pushed config's `limitedUIConfig`; this is only the
      * on/off. We push no `limitedUIConfig` today, so iOS applies its own defaults.
      *
-     * Settings › Display › Limit CarPlay while driving off ([CarPlayLimitStore]): never limited, so
+     * Settings › Display › Limit features while driving off ([CarPlayLimitStore]): never limited, so
      * CarPlay stays as it is when parked.
      */
     fun setLimitedUI(driving: Boolean) {
@@ -3446,6 +3450,7 @@ class CarlinkManager(
      */
     private fun processNowPlaying(obj: JSONObject) {
         val newSongName = obj.optString("title").takeIf { it.isNotEmpty() }
+        logFrameWords(obj)
 
         // Snapshot before the song-change reset so incremental updates are still detectable after
         // the caches are overwritten. Without this, an artist-only frame was silently dropped and
@@ -3516,6 +3521,18 @@ class CarlinkManager(
         lastAlbumCover = null
         lastDuration = 0L
         lastPosition = 0L
+    }
+
+    /**
+     * The words of a now-playing frame as the iPhone sent them, so a wrong or missing artist on the pane can be
+     * traced to the frames (owner, 10-29). Position ticks carry none of these and log nothing.
+     */
+    private fun logFrameWords(obj: JSONObject) {
+        if (!obj.has("title") && !obj.has("artist") && !obj.has("album")) return
+        logInfo(
+            "[MEDIA] frame: title=${obj.optString("title", "-")} artist=${obj.optString("artist", "-")} album=${obj.optString("album", "-")}",
+            tag = Logger.Tags.MEDIA_SESSION,
+        )
     }
 
     /**

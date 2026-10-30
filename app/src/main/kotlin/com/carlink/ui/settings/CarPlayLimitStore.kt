@@ -7,11 +7,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Settings › Display › Limit CarPlay while driving. On (the default): when Android says the truck is
- * being driven (UX restrictions, which GM derives from gear and speed), Carlink tells CarPlay to
- * limit its UI, and CarPlay hides the keyboard and shortens lists. Off: CarPlay is never told, so it
- * stays as it is when parked, for a passenger using it on the move (asked for 2026-10-23). Apps that
- * limit themselves while driving (Messages) still do.
+ * Settings › Display › Limit features while driving (Limit CarPlay while driving until 10-29). On (the
+ * default): when Android says the truck is being driven (UX restrictions, which GM derives from gear and
+ * speed), Carlink tells CarPlay to limit its UI, and CarPlay hides the keyboard and shortens lists; the
+ * music card holds its lyrics back too (owner, 10-29). Off: CarPlay is never told, so it stays as it is
+ * when parked, for a passenger using it on the move (asked for 2026-10-23), and lyrics show. Turning it
+ * off takes accepting a warning in Settings. Apps that limit themselves while driving (Messages) still do.
  *
  * Kept per iPhone ([DriverProfiles]), like the Cluster settings: [reload] switches to the active
  * driver's file when an iPhone identifies itself, and a new iPhone starts with the limit on.

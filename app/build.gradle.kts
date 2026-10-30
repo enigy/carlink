@@ -34,7 +34,7 @@ android {
         targetSdk = 36
         // versionCode is the single source of truth (Play requires a monotonic integer; it is also
         // the release tag vNNN). versionName is DERIVED so the two can never drift: 1 -> "0.01".
-        val appVersionCode = 201
+        val appVersionCode = 202
         versionCode = appVersionCode
         versionName = "%d.%02d".format(appVersionCode / 100, appVersionCode % 100)
 

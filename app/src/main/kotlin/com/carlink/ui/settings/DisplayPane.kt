@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +51,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.ui.components.CarlinkDialog
+import com.carlink.ui.components.DialogWeight
 import com.carlink.ui.components.OnSettingsHidden
 import com.carlink.ui.theme.LocalCarlinkColors
 
@@ -248,8 +250,10 @@ private fun ModeCard(
 }
 
 /**
- * Driver's seat (Carlink2's Drive Side): CarPlay puts its dock on this side. Next connection. Also
- * whether CarPlay is told the truck is moving ([CarPlayLimitStore]); that one applies at once.
+ * Driver's seat (Carlink2's Drive Side): CarPlay puts its dock on this side. Next connection. Also Limit
+ * features while driving ([CarPlayLimitStore]): whether CarPlay is told the truck is moving, and whether
+ * the music card holds its lyrics back then; that one applies at once. Turning it off takes accepting a
+ * warning first (owner, 10-29): the driver is responsible for using those features safely.
  */
 @Composable
 private fun DriveSideChoice() {
@@ -258,30 +262,12 @@ private fun DriveSideChoice() {
     val side by store.flow.collectAsState()
     val view by remember { DriverProfiles.view(context) }.collectAsState()
     val limitStore = remember(view.other, view.revision) { CarPlayLimitStore.of(context, view) }
-    val limit by limitStore.flow.collectAsState()
     // Per iPhone, like the Cluster settings (whose is picked there): say whose it is.
     val forWhom = view.shown?.let { "For ${it.label}${if (view.other != null) ", not in use now" else ""}. " }.orEmpty()
     // One Column, spaced like DisplayPane's, so this emits a single node (ComposeMultipleContentEmitters).
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         SectionLabel("Driving", modifier = Modifier.padding(top = 8.dp))
-        SettingsGroup(modifier = Modifier.widthIn(max = 760.dp)) {
-            SwitchRow(
-                title = "Limit CarPlay while driving",
-                subtitle =
-                    forWhom +
-                        if (limit) {
-                            "CarPlay hides its keyboard and shortens lists while the vehicle moves."
-                        } else {
-                            "Off: CarPlay keeps its keyboard and full lists on the move, for a passenger. The driver should not use them."
-                        },
-                checked = limit,
-                icon = Icons.Default.DirectionsCar,
-                onCheckedChange = {
-                    logWarn("[UI_ACTION] Limit CarPlay while driving -> $it", tag = "UI")
-                    limitStore.setLimitWhileDriving(it)
-                },
-            )
-        }
+        LimitFeaturesGroup(limitStore, forWhom)
         SectionLabel("Driver's seat", modifier = Modifier.padding(top = 8.dp))
         ChoiceRow(
             options = DriveSide.entries,
@@ -297,6 +283,62 @@ private fun DriveSideChoice() {
             style = SettingsStyle.RowSubtitle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * Limit features while driving ([CarPlayLimitStore]): on at once, off only once the driver accepts a warning
+ * that they are responsible for using the features safely (owner, 10-29).
+ */
+@Composable
+private fun LimitFeaturesGroup(
+    limitStore: CarPlayLimitStore,
+    forWhom: String,
+) {
+    val limit by limitStore.flow.collectAsState()
+    var confirmOff by remember { mutableStateOf(false) }
+    SettingsGroup(modifier = Modifier.widthIn(max = 760.dp)) {
+        SwitchRow(
+            title = "Limit features while driving",
+            subtitle =
+                forWhom +
+                    if (limit) {
+                        "While the vehicle moves, CarPlay hides its keyboard and shortens lists, and the music card hides its lyrics."
+                    } else {
+                        "Off: CarPlay keeps its keyboard and full lists, and lyrics show, on the move, for a passenger. The driver should not use them."
+                    },
+            checked = limit,
+            icon = Icons.Default.DirectionsCar,
+            onCheckedChange = {
+                if (it) {
+                    logWarn("[UI_ACTION] Limit features while driving -> true", tag = "UI")
+                    limitStore.setLimitWhileDriving(true)
+                } else {
+                    confirmOff = true
+                }
+            },
+        )
+        if (confirmOff) {
+            CarlinkDialog(
+                title = "Turn off Limit features while driving?",
+                text =
+                    "With it off, CarPlay keeps its keyboard and full lists, and the music card shows lyrics, while the " +
+                        "vehicle moves. You are responsible for using these features safely while driving. They are meant " +
+                        "for a passenger; the driver should keep their eyes on the road.",
+                confirmLabel = "Accept",
+                onConfirm = {
+                    confirmOff = false
+                    logWarn("[UI_ACTION] Limit features while driving -> false (warning accepted)", tag = "UI")
+                    limitStore.setLimitWhileDriving(false)
+                },
+                onDismiss = {
+                    confirmOff = false
+                    logInfo("[UI_ACTION] Limit features while driving: warning dismissed, stays on", tag = "UI")
+                },
+                icon = Icons.Default.Warning,
+                weight = DialogWeight.CAUTION,
+            )
+        }
     }
 }
 
