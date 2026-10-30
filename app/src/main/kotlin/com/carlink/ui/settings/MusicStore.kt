@@ -16,6 +16,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * here. On (the default): the pane shows the song's words from LRCLIB ([com.carlink.media.LrcLib]) in
  * time with it. Off: the words are hidden, though still looked up (owner, 10-28). How many lines it
  * shows is dragged on the card itself ([com.carlink.ui.pane.LyricsLines]), kept here too.
+ *
+ * Look up lyrics: Settings › Adapter and about › Lyrics ([LyricsGroup]). On (the default): lyrics are
+ * looked up as above. Off: no song is ever sent to LRCLIB, none is read from the head unit's copies,
+ * and the music card has no lyrics button (owner, 10-30, for the privacy policy).
  */
 class MusicStore private constructor(
     context: Context,
@@ -23,6 +27,7 @@ class MusicStore private constructor(
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val resume = MutableStateFlow(prefs.getBoolean(KEY_RESUME, true))
     private val lyrics = MutableStateFlow(prefs.getBoolean(KEY_LYRICS, true))
+    private val lookUp = MutableStateFlow(prefs.getBoolean(KEY_LOOK_UP, true))
     private val lyricLines = MutableStateFlow(prefs.getInt(KEY_LYRIC_LINES, DEFAULT_LYRIC_LINES).coerceIn(MIN_LYRIC_LINES, MAX_LYRIC_LINES))
 
     val resumeOnConnectFlow: StateFlow<Boolean> = resume.asStateFlow()
@@ -43,6 +48,14 @@ class MusicStore private constructor(
         lyrics.value = on
     }
 
+    /** Whether lyrics are looked up at all: off, nothing goes to LRCLIB and the music card has no lyrics. */
+    val lookUpFlow: StateFlow<Boolean> = lookUp.asStateFlow()
+
+    fun setLookUp(on: Boolean) {
+        prefs.edit().putBoolean(KEY_LOOK_UP, on).apply()
+        lookUp.value = on
+    }
+
     /** How many lyric lines the music card shows: the sung one, those before it and those after ([com.carlink.ui.pane.LyricWindow]). */
     val lyricLinesFlow: StateFlow<Int> = lyricLines.asStateFlow()
 
@@ -58,6 +71,7 @@ class MusicStore private constructor(
         private const val KEY_RESUME = "resume_on_connect"
         private const val KEY_LYRICS = "lyrics"
         private const val KEY_LYRIC_LINES = "lyric_lines"
+        private const val KEY_LOOK_UP = "lyrics_look_up"
 
         /** The sung line alone up to two before and two after it (owner, 10-27); three by default. */
         const val MIN_LYRIC_LINES = 1
