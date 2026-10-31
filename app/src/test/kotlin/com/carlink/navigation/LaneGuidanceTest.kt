@@ -177,6 +177,15 @@ class LaneGuidanceTest {
     }
 
     @Test
+    fun aLaneToBeInDrawsItsLitArrowAlone() {
+        // Owner, 2026-10-31: a grey arrow under the lit one, pointing another way, hid the way to go.
+        val straightOrRight = LaneHint(90, true, others = listOf(0))
+        assertEquals(emptyList<Int>(), straightOrRight.drawnOthers)
+        assertEquals("a lane not to be in keeps every direction", listOf(0), LaneHint(90, false, others = listOf(0)).drawnOthers)
+        assertEquals("the trail still has the whole lane", "1 lanes: 90*(+0)", LaneIconComposer.describe(listOf(straightOrRight)))
+    }
+
+    @Test
     fun linkedBlockReachesTheCurrentStep() {
         OcbmNavigationFeed.onManeuver(maneuver(4, linked = 7))
         OcbmNavigationFeed.onRouteGuidance(guidance(4))
