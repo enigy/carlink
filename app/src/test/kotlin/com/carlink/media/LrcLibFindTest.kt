@@ -3,6 +3,7 @@ package com.carlink.media
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -52,6 +53,34 @@ class LrcLibFindTest {
         assertNull(LrcLib.find(none, d, api = answering(null))?.lyrics)
         assertNull(d.read(none))
         assertNull("not an answer: asked again", LrcLib.find(song("out of reach"), d, api = unreachable))
+    }
+
+    /** The outage [LrcLib.find] reports for song [name] when LRCLIB answers each path from [answers] (an [IOException] is thrown); null when it answered. */
+    private fun outageOf(
+        name: String,
+        answers: Map<String, Any?>,
+    ): LrcLib.Outage? {
+        var why: LrcLib.Outage? = null
+        val api = LrcLib.Api { path, _ -> answers[path].let { if (it is IOException) throw it else it as String? } }
+        val answer = LrcLib.find(song(name), api = api) { why = it }
+        assertTrue("an outage is not an answer", answer == null || why == null)
+        return why
+    }
+
+    @Test
+    fun `the card hears whether LRCLIB was out of reach or reached and failing`() {
+        // The 10-31 drive: lrclib.net not found as the truck's data link came up, then HTTP 502 all afternoon.
+        val offline = IOException("Unable to resolve host \"lrclib.net\": No address associated with hostname")
+        assertEquals(LrcLib.Outage.NO_CONNECTION, outageOf("offline", mapOf("get-cached" to offline, "search" to offline, "get" to offline)))
+        val down = LrcLib.HttpError(502, "get-cached")
+        assertEquals(LrcLib.Outage.NOT_ANSWERING, outageOf("down", mapOf("get-cached" to down, "search" to down, "get" to down)))
+        // The morning: the exact lookup answered "not here", the search and the outside lookup HTTP 503.
+        val busy = LrcLib.HttpError(503, "search")
+        val struggling = outageOf("struggling", mapOf("get-cached" to null, "search" to busy, "get" to busy))
+        assertEquals("a step that answered shows LRCLIB was reached", LrcLib.Outage.NOT_ANSWERING, struggling)
+        assertEquals(LrcLib.Outage.NOT_ANSWERING, outageOf("unreadable", mapOf("get-cached" to "<html>")))
+        assertNull("found: nothing to report", outageOf("found", mapOf("get-cached" to record)))
+        assertNull("none: nothing to report", outageOf("none here", emptyMap()))
     }
 
     @Test
