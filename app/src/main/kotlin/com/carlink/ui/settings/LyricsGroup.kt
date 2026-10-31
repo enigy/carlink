@@ -101,4 +101,4 @@ internal fun usageLine(kept: Pair<Int, String>?): String =
         else -> "${kept.first} ${if (kept.first == 1) "song" else "songs"}, ${kept.second}. $KEPT"
     }
 
-private const val KEPT = "Each is kept 30 days, 500 MB in all at most."
+private const val KEPT = "Kept until they fill 100 MB, then the least played go first."

@@ -10,7 +10,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
-/** The head unit's lyrics: kept whole, found by song, aged out after 30 days, and held under its size by dropping the oldest. */
+/** The head unit's lyrics: kept whole, found by song, kept however old, and held under its size by dropping the least played. */
 class LyricsDiskCacheTest {
     @get:Rule val tmp = TemporaryFolder()
 
@@ -67,37 +67,92 @@ class LyricsDiskCacheTest {
     }
 
     @Test
-    fun `entries go after thirty days`() {
+    fun `entries are kept however old they get`() {
+        // Owner, 10-31: kept with no time limit (before, each went after 30 days).
         val c = cache()
         c.write(song, lrc)
-        now += 29 * day
-        assertEquals(lrc, c.read(song))
-        now += 2 * day
-        assertNull(c.read(song))
-        assertTrue("an old entry is deleted when read", entries().isEmpty())
-
-        val other = song.copy(title = "Little Talks", durationSec = 266)
-        c.write(other, lrc)
-        now += 31 * day
+        now += 400 * day
         c.prune()
-        assertTrue("and when the folder is tidied", entries().isEmpty())
+        assertEquals(lrc, cache().read(song))
     }
 
     @Test
-    fun `past its size the oldest entries go first`() {
+    fun `each play is counted and kept with the entry`() {
+        val c = cache()
+        c.write(song, lrc)
+        assertEquals("written, not yet played", 0, JSONObject(entries().single().readText()).getInt("uses"))
+        now += day
+        c.noteUse(song)
+        c.noteUse(song)
+        val entry = JSONObject(entries().single().readText())
+        assertEquals(2, entry.getInt("uses"))
+        assertEquals(now, entry.getLong("usedAt"))
+        assertEquals("still whole", lrc, c.read(song))
+        c.noteUse(song.copy(title = "Never Kept"))
+        assertEquals("a song not kept is not written", 1, entries().size)
+    }
+
+    @Test
+    fun `past its size the least played go first, the longest unplayed first among equals`() {
         val probe = cache(dir = File(tmp.root, "probe"))
-        probe.write(song, lrc)
-        val one = probe.sizeBytes()
+        probe.write(song.copy(title = "Song 0"), lrc)
+        val one = probe.usage().bytes
+        // Room for three; a full folder is pruned to 90 %, which also leaves three.
+        val c = cache(maxBytes = one * 3 + one / 2)
+        val s = (1..5).map { song.copy(title = "Song $it") }
+        (0..2).forEach { write(c, s[it]) }
+        play(c, s[0])
+        play(c, s[0])
+        play(c, s[2])
+        write(c, s[3])
+        assertNull("never played: the first to go, though not the oldest", c.read(s[1]))
+        assertEquals("written last: kept, though never played", lrc, c.read(s[3]))
+        play(c, s[3])
+        write(c, s[4])
+        assertNull("played as often as the fourth, but longer ago", c.read(s[2]))
+        listOf(s[0], s[3], s[4]).forEach { assertEquals(lrc, c.read(it)) }
+        assertTrue(c.usage().bytes <= one * 3 + one / 2)
+    }
+
+    /** [s] written to [c] a minute before the next step. */
+    private fun write(
+        c: LyricsDiskCache,
+        s: LyricsKey,
+    ) {
+        c.write(s, lrc)
+        now += 60_000
+    }
+
+    /** [s] played once a minute before the next step. */
+    private fun play(
+        c: LyricsDiskCache,
+        s: LyricsKey,
+    ) {
+        c.noteUse(s)
+        now += 60_000
+    }
+
+    @Test
+    fun `an entry kept before plays were counted counts as played once`() {
+        val probe = cache(dir = File(tmp.root, "probe"))
+        probe.write(song.copy(title = "Song 0"), lrc)
+        val one = probe.usage().bytes
         val c = cache(maxBytes = one * 2 + one / 2)
-        val songs = (1..3).map { song.copy(title = "Song $it") }
-        songs.forEach {
-            c.write(it, lrc)
-            now += 60_000
-        }
-        assertNull("the first written went to make room", c.read(songs[0]))
-        assertEquals(lrc, c.read(songs[1]))
-        assertEquals(lrc, c.read(songs[2]))
-        assertTrue(c.sizeBytes() <= one * 2 + one / 2)
+        val old = song.copy(title = "Song 1")
+        c.write(old, lrc)
+        // As 2.02-2.04 wrote it: no plays, no last play.
+        val file = entries().single()
+        val entry = JSONObject(file.readText())
+        entry.remove("uses")
+        entry.remove("usedAt")
+        file.writeText(entry.toString())
+        now += day
+        val fresh = song.copy(title = "Song 2")
+        c.write(fresh, lrc)
+        now += 60_000
+        c.write(song.copy(title = "Song 3"), lrc)
+        assertNull("never played since it was written: goes before the older entry", c.read(fresh))
+        assertEquals(lrc, c.read(old))
     }
 
     @Test
@@ -108,7 +163,7 @@ class LyricsDiskCacheTest {
         c.write(song.copy(title = "Little Talks", durationSec = 266), lrc)
         val kept = c.usage()
         assertEquals(2, kept.songs)
-        assertEquals(c.sizeBytes(), kept.bytes)
+        assertEquals(File(tmp.root, "lyrics").listFiles()!!.sumOf { it.length() }, kept.bytes)
         assertEquals(2, c.clear())
         assertEquals(LyricsDiskCache.Usage(0, 0), c.usage())
         assertNull(c.read(song))

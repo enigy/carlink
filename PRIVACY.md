@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective October 30, 2026.
+Effective October 31, 2026.
 
 Carlink collects no data about you. It has no analytics, no telemetry, no crash reporting, no ads and no accounts, and nothing you do in it is sent to the developer. This policy covers the Carlink app (`com.enigy.carlink3`) and the Carlink USB Bridge.
 
@@ -23,7 +23,7 @@ Carlink keeps a few things on the head unit so it works the next time you drive.
 | --- | --- | --- |
 | Your settings, including each iPhone's own settings | So each driver gets their choices back | Until you change them or uninstall |
 | Phones the adapter has seen: name, model, Bluetooth address, when last connected | The Phones list, and the order phones connect in | Until you tap Forget on the phone, or uninstall |
-| Song lyrics | So songs heard before show their lyrics without going online | 30 days each, 500 MB in all at most; Settings › Adapter and about › Clear |
+| Song lyrics | So songs heard before show their lyrics without going online | Until they fill 100 MB; then the songs played least, and longest ago, are deleted first. Settings › Adapter and about › Clear deletes them all. |
 | Album art | So covers show again quickly | In the app's cache; the system or Clear cache removes it |
 | Logs | To diagnose problems, and only if you tap Save Logs or turn on Record drive logs (off by default) | In Downloads/Carlink on the head unit; drive logs are deleted after 7 days. Logs hide phone names, Bluetooth addresses, callers and places. They leave the head unit only if you copy them off. |
 

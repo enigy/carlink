@@ -15,38 +15,28 @@ import java.security.MessageDigest
  * deletes what fails. Only found lyrics are kept; "none" stays in memory ([LrcLib]), so a song LRCLIB
  * lacks today is asked again on a later drive.
  *
- * An entry goes [maxAgeMs] after it was written (30 days); past [maxBytes] (500 MB) the oldest go first.
- * The folder is tidied the first time it is used in a process and after each write. Blocking file IO:
- * call off the main thread.
+ * Entries are kept with no time limit until the folder holds more than [maxBytes] (100 MB, some 25,000
+ * songs); then the least played go first, the longest unplayed first among equals, until it is back to
+ * [LOW_WATER_PERCENT] of that (owner, 10-31: before, each went after 30 days, 500 MB at most). Each play
+ * counts ([noteUse]). The folder is tidied the first time it is used in a process and after each write.
+ * Blocking file IO: call off the main thread.
  */
 class LyricsDiskCache(
     private val dir: File,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val maxAgeMs: Long = MAX_AGE_MS,
     private val maxBytes: Long = MAX_BYTES,
 ) {
     private val lock = Any()
     private var tidied = false
 
-    /** The words kept for [key]: a whole entry for this song, younger than [maxAgeMs]. Null otherwise, and a bad entry is deleted. */
+    /** The words kept for [key]: a whole entry for this song. Null otherwise, and a bad entry is deleted. */
     fun read(key: LyricsKey): String? =
         synchronized(lock) {
             tidyOnce()
-            val file = fileFor(key)
-            if (!file.isFile) return null
-            val lrc =
-                try {
-                    whole(JSONObject(file.readText()), key)
-                } catch (_: IOException) {
-                    null
-                } catch (_: JSONException) {
-                    null
-                }
-            if (lrc == null) file.delete()
-            lrc
+            entryFor(key)?.optString("lrc")
         }
 
-    /** Keep [lrc] for [key]; false when it could not be written (and nothing half-written is left). */
+    /** Keep [lrc] for [key], played no times yet; false when it could not be written (and nothing half-written is left). */
     fun write(
         key: LyricsKey,
         lrc: String,
@@ -61,29 +51,29 @@ class LyricsDiskCache(
                     .put("artist", key.artist)
                     .put("durationSec", key.durationSec)
                     .put("fetchedAt", now)
+                    .put("uses", 0)
+                    .put("usedAt", now)
                     .put("sha256", sha256(lrc))
                     .put("lrc", lrc)
-            val file = fileFor(key)
-            val tmp = File(dir, file.name + TMP)
-            val written =
-                try {
-                    dir.mkdirs()
-                    tmp.writeText(entry.toString())
-                    val moved = tmp.renameTo(file)
-                    if (moved) file.setLastModified(now)
-                    moved
-                } catch (_: IOException) {
-                    false
-                }
-            if (!written) tmp.delete()
-            prune()
+            val written = save(fileFor(key), entry, now)
+            prune(keep = fileFor(key))
             written
         }
 
-    /** The folder's size in bytes: what [maxBytes] is held against. */
-    fun sizeBytes(): Long = synchronized(lock) { dir.listFiles()?.sumOf { it.length() } ?: 0L }
+    /**
+     * One play of [key]'s song with its lyrics: counted, and the time noted, so the songs played most and
+     * latest are kept longest. Nothing when the song is not kept.
+     */
+    fun noteUse(key: LyricsKey) {
+        synchronized(lock) {
+            val entry = entryFor(key) ?: return
+            val now = clock()
+            entry.put("uses", uses(entry) + 1).put("usedAt", now)
+            save(fileFor(key), entry, now)
+        }
+    }
 
-    /** What Settings › Adapter and about shows: how many songs are kept, and the bytes they take. */
+    /** What Settings › Adapter and about shows: how many songs are kept, and the bytes they take (what [maxBytes] is held against). */
     data class Usage(
         val songs: Int,
         val bytes: Long,
@@ -103,17 +93,23 @@ class LyricsDiskCache(
             files.count { it.name.endsWith(EXT) }
         }
 
-    /** Entries past [maxAgeMs] and stray temp files go, then the oldest entries while the folder holds more than [maxBytes]. */
-    internal fun prune() {
+    /**
+     * Stray temp files go. Past [maxBytes], entries go, the least played first and the longest unplayed
+     * first among equals, until the folder is down to [LOW_WATER_PERCENT] of it, so a full folder is read
+     * through once per thousands of new songs rather than at each. [keep] (the entry just written) stays.
+     */
+    internal fun prune(keep: File? = null) {
         synchronized(lock) {
             val files = dir.listFiles()?.toMutableList() ?: return
-            val now = clock()
-            val gone = files.filter { it.name.endsWith(TMP) || now - it.lastModified() > maxAgeMs }
-            gone.forEach { it.delete() }
-            files.removeAll(gone)
+            val stray = files.filter { it.name.endsWith(TMP) }
+            stray.forEach { it.delete() }
+            files.removeAll(stray)
             var total = files.sumOf { it.length() }
-            for (f in files.sortedBy { it.lastModified() }) {
-                if (total <= maxBytes) break
+            if (total <= maxBytes) return
+            val target = maxBytes / 100 * LOW_WATER_PERCENT
+            val byPlays = files.filter { it != keep }.map { it to plays(it) }.sortedWith(compareBy({ it.second.first }, { it.second.second }))
+            for ((f, _) in byPlays) {
+                if (total <= target) break
                 total -= f.length()
                 f.delete()
             }
@@ -126,27 +122,51 @@ class LyricsDiskCache(
         prune()
     }
 
-    /** The entry's words when it is whole and current and for [key]; null otherwise. */
-    private fun whole(
+    /** [key]'s entry when it is whole and for [key]; null otherwise, and a bad file is deleted. */
+    private fun entryFor(key: LyricsKey): JSONObject? {
+        val file = fileFor(key)
+        if (!file.isFile) return null
+        val entry =
+            try {
+                JSONObject(file.readText()).takeIf { whole(it, key) }
+            } catch (_: IOException) {
+                null
+            } catch (_: JSONException) {
+                null
+            }
+        if (entry == null) file.delete()
+        return entry
+    }
+
+    /** Write [entry] to [file] whole, through a temp file; false (and no temp file left) when it could not. */
+    private fun save(
+        file: File,
         entry: JSONObject,
-        key: LyricsKey,
-    ): String? {
-        val forKey = entry.optString("title") == key.title && entry.optString("artist") == key.artist && entry.optLong("durationSec", -1) == key.durationSec
-        val current = clock() - entry.optLong("fetchedAt", 0) <= maxAgeMs
-        val lrc = entry.optString("lrc")
-        val intact = lrc.isNotEmpty() && sha256(lrc) == entry.optString("sha256")
-        val ok = entry.optInt("v") == VERSION && forKey && current && intact && SyncedLyrics.parse(lrc) != null
-        return if (ok) lrc else null
+        now: Long,
+    ): Boolean {
+        val tmp = File(dir, file.name + TMP)
+        val written =
+            try {
+                dir.mkdirs()
+                tmp.writeText(entry.toString())
+                val moved = tmp.renameTo(file)
+                if (moved) file.setLastModified(now)
+                moved
+            } catch (_: IOException) {
+                false
+            }
+        if (!written) tmp.delete()
+        return written
     }
 
     private fun fileFor(key: LyricsKey): File = File(dir, sha256("${key.title}\n${key.artist}\n${key.durationSec}") + EXT)
 
     companion object {
-        /** Thirty days, then an entry is asked for again. */
-        const val MAX_AGE_MS = 30L * 24 * 60 * 60 * 1000
+        /** 100 MB as Settings shows sizes (1 MB = 1,000,000 bytes), then the least played make room. An entry is a few KB. */
+        const val MAX_BYTES = 100L * 1000 * 1000
 
-        /** 500 MB, then the oldest entries make room. An entry is a few KB. */
-        const val MAX_BYTES = 500L * 1024 * 1024
+        /** A full folder is pruned to this share of [MAX_BYTES]. */
+        const val LOW_WATER_PERCENT = 90
 
         private const val VERSION = 1
         private const val EXT = ".json"
@@ -166,5 +186,30 @@ class LyricsDiskCache(
 
         private const val BYTE = 0xFF
         private const val HEX = 16
+
+        /** An entry's plays and last play, to order what goes first; an unreadable file goes before any. */
+        private fun plays(file: File): Pair<Int, Long> =
+            try {
+                val entry = JSONObject(file.readText())
+                uses(entry) to entry.optLong("usedAt", entry.optLong("fetchedAt", file.lastModified()))
+            } catch (_: IOException) {
+                -1 to 0L
+            } catch (_: JSONException) {
+                -1 to 0L
+            }
+
+        /** Its plays; an entry kept before they were counted (2.02 to 2.04) was played at least once. */
+        private fun uses(entry: JSONObject): Int = entry.optInt("uses", 1)
+
+        /** The entry's words are whole and for [key]. */
+        private fun whole(
+            entry: JSONObject,
+            key: LyricsKey,
+        ): Boolean {
+            val forKey = entry.optString("title") == key.title && entry.optString("artist") == key.artist && entry.optLong("durationSec", -1) == key.durationSec
+            val lrc = entry.optString("lrc")
+            val intact = lrc.isNotEmpty() && sha256(lrc) == entry.optString("sha256")
+            return entry.optInt("v") == VERSION && forKey && intact && SyncedLyrics.parse(lrc) != null
+        }
     }
 }

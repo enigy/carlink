@@ -90,14 +90,19 @@ internal fun rememberLyrics(info: NowPlayingInfo): CardLyrics {
     val key = LyricsKey.of(info)
     var lyrics by remember { mutableStateOf<SyncedLyrics?>(null) }
     var outage by remember { mutableStateOf<LrcLib.Outage?>(null) }
+    // The song [lyrics] were found for, and the last one counted as played.
+    var foundFor by remember { mutableStateOf<LyricsKey?>(null) }
+    var counted by remember { mutableStateOf<LyricsKey?>(null) }
     // Looked up whether the lyrics show or not, so turning them on finds them ready (owner, 10-28); not at all
     // with Look up lyrics off (owner, 10-30).
     LaunchedEffect(key, on, lookUp) {
         lyrics = null
+        foundFor = null
         outage = null
         if (key == null || !lookUp) return@LaunchedEffect
         LrcLib.cached(key)?.takeIf { it.lyrics != null || !on }?.let {
             lyrics = it.lyrics
+            foundFor = key.takeIf { lyrics != null }
             return@LaunchedEffect
         }
         delay(LOOKUP_SETTLE_MS)
@@ -110,6 +115,7 @@ internal fun rememberLyrics(info: NowPlayingInfo): CardLyrics {
             val answer = withContext(Dispatchers.IO) { LrcLib.find(key, disk, askAgain = on) { why = it } }
             if (answer != null) {
                 lyrics = answer.lyrics
+                foundFor = key.takeIf { lyrics != null }
                 outage = null
                 break
             }
@@ -118,6 +124,14 @@ internal fun rememberLyrics(info: NowPlayingInfo): CardLyrics {
             delay(wait)
             wait = (wait * 2).coerceAtMost(RETRY_MAX_MS)
         }
+    }
+    // Each song played with its lyrics counts once toward keeping them on the head unit (owner, 10-31:
+    // the least played go first when it is full), not again when the lyrics are turned off and on.
+    LaunchedEffect(foundFor) {
+        val played = foundFor ?: return@LaunchedEffect
+        if (played == counted) return@LaunchedEffect
+        counted = played
+        withContext(Dispatchers.IO) { disk.noteUse(played) }
     }
     val shown = on && lookUp && !heldBack
     return CardLyrics(lyrics.takeIf { shown }, outage.takeIf { shown })
