@@ -46,7 +46,7 @@ object ClusterStep {
     ) {
         lanes.forEach { lane ->
             val directions = Lane.Builder().addDirection(LaneDirection.create(LaneGuidance.shapeFor(lane.angle), lane.recommended))
-            lane.others.forEach { directions.addDirection(LaneDirection.create(LaneGuidance.shapeFor(it), false)) }
+            lane.drawnOthers.forEach { directions.addDirection(LaneDirection.create(LaneGuidance.shapeFor(it), false)) }
             builder.addLane(directions.build())
         }
     }

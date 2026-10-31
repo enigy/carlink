@@ -287,7 +287,7 @@ internal object LaneIconComposer {
         stroke: Float,
         head: Float,
     ): GlyphBox {
-        val dirs = listOf(lane.angle) + lane.others
+        val dirs = listOf(lane.angle) + lane.drawnOthers
         val span = head * BARB_SPAN
         val barb = if (dirs.any { abs(it) <= STRAIGHT_MAX }) span else 0f
         val tipBarb = if (dirs.any { abs(it) >= U_TURN_MIN }) span else 0f
@@ -334,8 +334,8 @@ internal object LaneIconComposer {
     }
 
     /**
-     * One lane's arrows: its other directions grey under its main one, so a straight-or-right lane
-     * taken right shows both arrows with the right one lit in [color].
+     * One lane's arrows: a lane to be in, its one arrow lit in [color]; any other lane, all its
+     * directions grey ([LaneHint.drawnOthers]).
      */
     private fun drawLane(
         canvas: Canvas,
@@ -352,7 +352,7 @@ internal object LaneIconComposer {
                 strokeJoin = Paint.Join.ROUND
                 this.color = LANE_OFF
             }
-        lane.others.forEach { canvas.drawPath(glyph(box, it), pen) }
+        lane.drawnOthers.forEach { canvas.drawPath(glyph(box, it), pen) }
         pen.color = if (lane.recommended) color else LANE_OFF
         canvas.drawPath(glyph(box, lane.angle), pen)
     }

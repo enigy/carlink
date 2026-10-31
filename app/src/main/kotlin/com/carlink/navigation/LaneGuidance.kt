@@ -16,7 +16,14 @@ data class LaneHint(
     val recommended: Boolean,
     /** The lane's other directions (a straight-or-right lane taken right has others = [0]). */
     val others: List<Int> = emptyList(),
-)
+) {
+    /**
+     * The other directions drawn grey beside [angle]: none on a lane to be in, so its lit arrow stands
+     * alone. A grey arrow under the lit one, pointing another way, made the way to go hard to read
+     * (owner, 2026-10-31). [others] still reaches the trail.
+     */
+    val drawnOthers: List<Int> get() = if (recommended) emptyList() else others
+}
 
 /** One lane record from the box's `kind=laneGuidance` JSON (iAP2 0x5204 LaneInformation). */
 data class LaneRecord(
@@ -44,8 +51,8 @@ object LaneGuidance {
 
     /**
      * Records of one guidance block, in lane order, to hints. "Preferred" lanes win; else "usable".
-     * A lane to be in points the way the route goes from it (its highlighted direction), with its
-     * other directions kept to draw beside it.
+     * A lane to be in points the way the route goes from it (its highlighted direction); its other
+     * directions are kept for the trail, not drawn ([LaneHint.drawnOthers]).
      *
      * The highlight is the way to go, always. A lone 0 beside a turn is a placeholder, not a
      * straight-ahead direction: preferred lanes almost always arrive as `laneAngles=[0]` with the real
