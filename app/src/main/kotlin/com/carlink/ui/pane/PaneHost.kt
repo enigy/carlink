@@ -46,7 +46,6 @@ import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
 import com.carlink.logging.logInfo
 import com.carlink.media.NowPlayingState
-import com.carlink.media.SyncedLyrics
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.ocbm.CarPlayUrls
 import kotlinx.coroutines.delay
@@ -191,8 +190,8 @@ private fun PaneHost(
     carlinkManager: CarlinkManager,
     /** The current cover, kept by the caller; shown only behind the music card. */
     art: ImageBitmap?,
-    /** The song's timed lyrics, kept by the caller like the cover; shown in the music card. */
-    lyrics: SyncedLyrics?,
+    /** The song's timed lyrics (or why there are none yet), kept by the caller like the cover; shown in the music card. */
+    lyrics: CardLyrics,
     deck: Deck,
     modifier: Modifier = Modifier,
 ) {
@@ -316,7 +315,7 @@ private fun paneTitle(
 private fun MusicCard(
     carlinkManager: CarlinkManager,
     media: NowPlayingState,
-    lyrics: SyncedLyrics?,
+    lyrics: CardLyrics,
     modifier: Modifier = Modifier,
     onWordsTop: (Float) -> Unit,
 ) {

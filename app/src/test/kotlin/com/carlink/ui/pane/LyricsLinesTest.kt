@@ -133,7 +133,7 @@ class LyricsLinesTest {
                 MaterialTheme {
                     Box(modifier = Modifier.size(480.dp, 600.dp)) {
                         LyricsToggle()
-                        shown = rememberLyrics(info)
+                        shown = rememberLyrics(info).lyrics
                     }
                 }
             }
@@ -147,6 +147,24 @@ class LyricsLinesTest {
         } finally {
             music.setLookUp(true)
         }
+    }
+
+    @Test
+    fun while_LRCLIB_is_out_of_reach_the_card_says_which_side_failed_until_it_answers() {
+        // Owner, 10-31: with LRCLIB down all afternoon, a card without lyrics didn't say whether it had none.
+        val outage = mutableStateOf<LrcLib.Outage?>(LrcLib.Outage.NOT_ANSWERING)
+        compose.setContent {
+            MaterialTheme { Box(modifier = Modifier.size(480.dp, 600.dp)) { LyricsOutageNote(outage.value) } }
+        }
+        compose.mainClock.advanceTimeBy(SETTLE_MS)
+        compose.onNodeWithText(outageLine(LrcLib.Outage.NOT_ANSWERING)).assertExists()
+        compose.runOnIdle { outage.value = LrcLib.Outage.NO_CONNECTION }
+        compose.mainClock.advanceTimeBy(SETTLE_MS)
+        compose.onNodeWithText(outageLine(LrcLib.Outage.NO_CONNECTION)).assertExists()
+        compose.runOnIdle { outage.value = null }
+        compose.mainClock.advanceTimeBy(SETTLE_MS)
+        compose.onNodeWithText(outageLine(LrcLib.Outage.NO_CONNECTION)).assertDoesNotExist()
+        assertEquals("No internet connection for lyrics. Trying again…", outageLine(LrcLib.Outage.NO_CONNECTION))
     }
 
     private companion object {

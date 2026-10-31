@@ -59,6 +59,26 @@ object LrcLib {
         val lyrics: SyncedLyrics?,
     )
 
+    /**
+     * Why a lookup got no answer, for the music card's note (owner, 10-31): [NO_CONNECTION] when no step
+     * reached LRCLIB (the head unit offline: lrclib.net not found at each start of the 10-31 drive);
+     * [NOT_ANSWERING] when LRCLIB was reached but failed (HTTP 502 for every request that afternoon) or
+     * answered unreadably.
+     */
+    enum class Outage { NO_CONNECTION, NOT_ANSWERING }
+
+    /** LRCLIB reached, answering an HTTP error rather than a body or a 404. */
+    internal class HttpError(
+        code: Int,
+        path: String,
+    ) : IOException("HTTP $code from /api/$path")
+
+    /** No step found lyrics and one could not be reached; [reached] when another, or an HTTP error, shows LRCLIB was. */
+    internal class Unreachable(
+        message: String,
+        val reached: Boolean,
+    ) : IOException(message)
+
     /** How LRCLIB is reached: the body of `GET /api/[path]?[query]`, null for a 404 (nothing found); [IOException] for anything else. */
     fun interface Api {
         fun get(
@@ -85,13 +105,15 @@ object LrcLib {
      * could not be reached or answered unreadably, which is not an answer: the caller asks again.
      *
      * Lyrics kept on the head unit ([disk]) are taken first, and found ones are kept there. [askAgain]: a
-     * "none" kept for this process is asked again, because the driver just turned the lyrics on.
+     * "none" kept for this process is asked again, because the driver just turned the lyrics on. With no
+     * answer, [onOutage] hears why.
      */
     fun find(
         key: LyricsKey,
         disk: LyricsDiskCache? = null,
         askAgain: Boolean = false,
         api: Api = Net,
+        onOutage: (Outage) -> Unit = {},
     ): Answer? {
         cached(key)?.let { if (it.lyrics != null || !askAgain) return it }
         disk?.read(key)?.let { lrc -> fromDisk(key, lrc)?.let { return it } }
@@ -99,10 +121,13 @@ object LrcLib {
             try {
                 lookUp(key, api)
             } catch (e: IOException) {
-                logWarn("[LYRICS] LRCLIB unreachable for \"${key.title}\": ${e.javaClass.simpleName}: ${e.message}", tag = Logger.Tags.MEDIA)
+                val why = if ((e as? Unreachable)?.reached == true) Outage.NOT_ANSWERING else Outage.NO_CONNECTION
+                logWarn("[LYRICS] LRCLIB unreachable for \"${key.title}\" ($why): ${e.message}", tag = Logger.Tags.MEDIA)
+                onOutage(why)
                 return null
             } catch (e: JSONException) {
                 logWarn("[LYRICS] LRCLIB answer unreadable for \"${key.title}\": ${e.message}", tag = Logger.Tags.MEDIA)
+                onOutage(Outage.NOT_ANSWERING)
                 return null
             }
         val answer = Answer(lrc?.let(SyncedLyrics::parse))
@@ -125,7 +150,7 @@ object LrcLib {
 
     /**
      * The LRC text: from LRCLIB's own records (the exact match, else the closest search hit), else from the
-     * lookup that also asks its outside sources. Null when none has timed lyrics; [IOException] when none
+     * lookup that also asks its outside sources. Null when none has timed lyrics; [Unreachable] when none
      * had them and a step could not be reached, since that one might have.
      */
     internal fun lookUp(
@@ -134,9 +159,14 @@ object LrcLib {
     ): String? {
         val exact = listOf("track_name" to key.title, "artist_name" to key.artist, "album_name" to key.album, "duration" to key.durationSec.toString())
         val missed = mutableListOf<String>()
+        var reached = false
         val ask = { path: String, query: List<Pair<String, String>> ->
             try {
-                api.get(path, query)
+                api.get(path, query).also { reached = true }
+            } catch (e: HttpError) {
+                reached = true
+                missed += e.message ?: "/api/$path failed"
+                null
             } catch (e: IOException) {
                 missed += e.message ?: "/api/$path failed"
                 null
@@ -145,7 +175,7 @@ object LrcLib {
         ask("get-cached", exact)?.let { synced(JSONObject(it)) }?.let { return it }
         ask("search", listOf("track_name" to key.title, "artist_name" to firstArtist(key.artist)))?.let { pick(JSONArray(it), key.durationSec) }?.let { return it }
         ask("get", exact)?.let { synced(JSONObject(it)) }?.let { return it }
-        if (missed.isNotEmpty()) throw IOException(missed.joinToString("; "))
+        if (missed.isNotEmpty()) throw Unreachable(missed.joinToString("; "), reached)
         return null
     }
 
@@ -191,7 +221,7 @@ object LrcLib {
                 return when (val code = conn.responseCode) {
                     HttpURLConnection.HTTP_OK -> conn.inputStream.bufferedReader().use { it.readText() }
                     HttpURLConnection.HTTP_NOT_FOUND -> null
-                    else -> throw IOException("HTTP $code from /api/$path")
+                    else -> throw HttpError(code, path)
                 }
             } finally {
                 conn.disconnect()

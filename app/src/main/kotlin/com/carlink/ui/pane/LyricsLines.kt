@@ -75,9 +75,12 @@ import kotlinx.coroutines.withContext
  * on was the only way to get lyrics LRCLIB had failed to give (owner, 10-29). Call this where it stays
  * composed (the pane's host, as for the album art), so the words are ready when the driver swipes to the music.
  * With Settings' Look up lyrics off ([MusicStore.lookUpFlow]) nothing is looked up, anywhere, and none show.
+ *
+ * While LRCLIB stays out of reach for the song ([NOTE_AFTER_MISSES] tries) the card says why instead
+ * ([CardLyrics.outage], [LyricsOutageNote]), until it answers.
  */
 @Composable
-internal fun rememberLyrics(info: NowPlayingInfo): SyncedLyrics? {
+internal fun rememberLyrics(info: NowPlayingInfo): CardLyrics {
     val context = LocalContext.current
     val music = remember { MusicStore.get(context) }
     val on by music.lyricsFlow.collectAsState()
@@ -86,30 +89,52 @@ internal fun rememberLyrics(info: NowPlayingInfo): SyncedLyrics? {
     val disk = remember { LyricsDiskCache.get(context) }
     val key = LyricsKey.of(info)
     var lyrics by remember { mutableStateOf<SyncedLyrics?>(null) }
+    var outage by remember { mutableStateOf<LrcLib.Outage?>(null) }
+    // The song [lyrics] were found for, and the last one counted as played.
+    var foundFor by remember { mutableStateOf<LyricsKey?>(null) }
+    var counted by remember { mutableStateOf<LyricsKey?>(null) }
     // Looked up whether the lyrics show or not, so turning them on finds them ready (owner, 10-28); not at all
     // with Look up lyrics off (owner, 10-30).
     LaunchedEffect(key, on, lookUp) {
         lyrics = null
+        foundFor = null
+        outage = null
         if (key == null || !lookUp) return@LaunchedEffect
         LrcLib.cached(key)?.takeIf { it.lyrics != null || !on }?.let {
             lyrics = it.lyrics
+            foundFor = key.takeIf { lyrics != null }
             return@LaunchedEffect
         }
         delay(LOOKUP_SETTLE_MS)
         // LRCLIB out of reach (the truck's data link at connect, a timeout, its HTTP 503s) is tried again
         // while the song plays, waiting longer each time up to [RETRY_MAX_MS] (owner, 10-28 and 10-29).
         var wait = RETRY_FIRST_MS
+        var misses = 0
         while (true) {
-            val answer = withContext(Dispatchers.IO) { LrcLib.find(key, disk, askAgain = on) }
+            var why: LrcLib.Outage? = null
+            val answer = withContext(Dispatchers.IO) { LrcLib.find(key, disk, askAgain = on) { why = it } }
             if (answer != null) {
                 lyrics = answer.lyrics
+                foundFor = key.takeIf { lyrics != null }
+                outage = null
                 break
             }
+            misses++
+            if (misses >= NOTE_AFTER_MISSES) outage = why
             delay(wait)
             wait = (wait * 2).coerceAtMost(RETRY_MAX_MS)
         }
     }
-    return if (on && lookUp && !heldBack) lyrics else null
+    // Each song played with its lyrics counts once toward keeping them on the head unit (owner, 10-31:
+    // the least played go first when it is full), not again when the lyrics are turned off and on.
+    LaunchedEffect(foundFor) {
+        val played = foundFor ?: return@LaunchedEffect
+        if (played == counted) return@LaunchedEffect
+        counted = played
+        withContext(Dispatchers.IO) { disk.noteUse(played) }
+    }
+    val shown = on && lookUp && !heldBack
+    return CardLyrics(lyrics.takeIf { shown }, outage.takeIf { shown })
 }
 
 /**
@@ -367,6 +392,12 @@ private const val LIT_ALPHA = 0.22f
 private const val OFF_ALPHA = 0.45f
 private const val LOOKUP_SETTLE_MS = 1_500L
 
+/**
+ * Failed tries before the card says LRCLIB is out of reach: the second comes about 7 s into a song, so a
+ * lookup that fails once as the truck's data link comes up at each start (10-31) and then works shows no note.
+ */
+private const val NOTE_AFTER_MISSES = 2
+
 /** The first wait before LRCLIB is asked again after it could not be reached, doubling up to [RETRY_MAX_MS]. */
 private const val RETRY_FIRST_MS = 5_000L
 
@@ -382,7 +413,7 @@ private val GLOW_ROOM = 16.dp
 private val LINE_GAP = 4.dp
 
 /** Between the lyrics and the title under them; folds away with the lyrics ([LyricsReveal]). */
-private val LYRICS_TO_TITLE = 24.dp
+internal val LYRICS_TO_TITLE = 24.dp
 
 private const val BEHIND_ALPHA = 0.45f
 private const val FAR_BEHIND_ALPHA = 0.3f

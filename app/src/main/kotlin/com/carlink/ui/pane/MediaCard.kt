@@ -60,7 +60,6 @@ import androidx.compose.ui.unit.isSpecified
 import com.carlink.logging.logInfo
 import com.carlink.media.MediaControl
 import com.carlink.media.NowPlayingState
-import com.carlink.media.SyncedLyrics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -197,7 +196,7 @@ private fun Modifier.frostedBand(
 
 /**
  * The music card's words and controls, over the backdrop: the song's lyrics when it has timed ones
- * ([LyricsLines]), title, artist and album, a progress bar that runs between the iPhone's position
+ * ([LyricsLines]) or a note while LRCLIB can't be asked ([LyricsOutageNote]), title, artist and album, a progress bar that runs between the iPhone's position
  * ticks, and the three transport buttons. The buttons send the same HID taps the steering wheel does.
  * No shuffle or repeat: the car can set those only for apps that take the media remote's keys (Apple
  * Music does, Spotify does not), so the owner took them out (10-28) rather than show buttons that work
@@ -208,15 +207,16 @@ internal fun MediaCard(
     state: NowPlayingState,
     onControl: (MediaControl) -> Unit,
     modifier: Modifier = Modifier,
-    /** The song's timed lyrics ([rememberLyrics]), or null for none. */
-    lyrics: SyncedLyrics? = null,
+    /** The song's timed lyrics ([rememberLyrics]), or why LRCLIB can't be asked; nothing by default. */
+    lyrics: CardLyrics = CardLyrics(),
     /** The first words' top edge (the lyrics', else the title's) in root coordinates; the pane frosts the art from there. */
     onWordsTop: (Float) -> Unit = {},
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Spacer(modifier = Modifier.weight(1f))
         Column(modifier = Modifier.onGloballyPositioned { onWordsTop(it.positionInRoot().y) }) {
-            LyricsReveal(lyrics, state)
+            LyricsReveal(lyrics.lyrics, state)
+            LyricsOutageNote(lyrics.outage)
             TrackWords(state)
         }
         ProgressRow(state)
