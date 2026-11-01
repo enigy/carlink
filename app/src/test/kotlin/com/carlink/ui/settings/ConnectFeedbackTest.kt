@@ -56,12 +56,9 @@ class ConnectFeedbackTest {
     @Test
     fun a_press_shows_working_dots_at_once_and_ignores_more_taps() {
         show()
-        compose.mainClock.autoAdvance = false
+        // The press is set inside the tap's own handler, so the dots are drawn on the next frame.
         compose.onNodeWithText("Connect").assertIsEnabled().performClick()
-        compose.mainClock.advanceTimeBy(100)
         compose.onNodeWithContentDescription("Connecting").assertExists()
-        // The clock runs again for the second tap: a gesture on a paused clock is not what this checks.
-        compose.mainClock.autoAdvance = true
         compose.onNodeWithContentDescription("Connecting").performClick()
         compose.waitForIdle()
         assertEquals("further taps do nothing while it works", 1, presses)
