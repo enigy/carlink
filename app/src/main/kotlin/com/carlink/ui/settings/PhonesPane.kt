@@ -59,11 +59,13 @@ internal fun PhonesPane(
     var deviceToRemove by remember { mutableStateOf<CarlinkManager.DeviceInfo?>(null) }
     OnSettingsHidden { deviceToRemove = null }
     val connected = live.connectedPhone
+    // The name the iPhone lists: an OCBM adapter's own, followed as it changes (polled); the manager's before the first poll.
+    val adapterName = live.adapterName.ifEmpty { carlinkManager.adapterName }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Column {
             PaneHeader(title = "Phones")
-            AdapterNameLine(carlinkManager.adapterName)
+            AdapterNameLine(adapterName)
         }
         if (connected != null) {
             ConnectedPhoneCard(
@@ -77,13 +79,13 @@ internal fun PhonesPane(
         PhoneList(carlinkManager, live, connected, onRemove = { deviceToRemove = it }, settingsFor = { settingsFor(it.btMac) })
         if (live.pairWindowSupported) {
             PairPhoneCard(
-                adapterName = carlinkManager.adapterName,
+                adapterName = adapterName,
                 boxSaysOpen = live.pairWindowOpen,
                 onOpen = { carlinkManager.setPairWindow(PAIR_WINDOW_SECONDS) },
                 onClose = { carlinkManager.setPairWindow(0) },
             )
         } else {
-            AddPhoneHint(carlinkManager.adapterName)
+            AddPhoneHint(adapterName)
         }
         ResumeMusicRow()
 

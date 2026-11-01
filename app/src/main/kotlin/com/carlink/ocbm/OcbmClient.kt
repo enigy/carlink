@@ -1056,7 +1056,10 @@ class OcbmClient(
 
     // ---- CH_MGMT --------------------------------------------------------------------------------
 
-    /** MGMT_GET_INFO → MGMT_INFO, whose payload is UTF-8 JSON running to the end of the frame. */
+    /** Hears every MGMT_INFO, whoever asked for it, so the adapter's name follows its latest answer (31 Oct). */
+    @Volatile var onInfo: ((json: String) -> Unit)? = null
+
+    /** MGMT_GET_INFO → MGMT_INFO, whose payload is UTF-8 JSON running to the end of the frame; [onInfo] hears it too. */
     fun mgmtGetInfo(timeoutMs: Long = 5000): String? =
         synchronized(mgmtLock) {
             mgmtQ.clear()
@@ -1065,7 +1068,9 @@ class OcbmClient(
             while (System.currentTimeMillis() < deadline) {
                 val pl = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
                 if (pl.isNotEmpty() && pl[0] == Ocbm.MGMT_INFO) {
-                    return String(pl, 1, pl.size - 1, Charsets.UTF_8)
+                    val json = String(pl, 1, pl.size - 1, Charsets.UTF_8)
+                    onInfo?.invoke(json)
+                    return json
                 }
             }
             null

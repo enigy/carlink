@@ -134,6 +134,9 @@ class PhoneSetup(
 
     private val lock = Any()
     private var phones: PairedPhones? = null
+
+    // The adapter's name from its latest MGMT_INFO, whoever read it ([onAdapterName]); kept across sessions.
+    private var adapterName: String? = null
     private var connected = false
     private var timer: Job? = null
 
@@ -193,7 +196,7 @@ class PhoneSetup(
                 if (connected) return@launch
                 phaseState.value = PhoneSetupPhase.Pairing(name, ends)
                 timer?.cancel()
-                timer = scope.launch { windowRunsOut(name, timing.windowSeconds * MS_PER_SECOND) }
+                timer = scope.launch { windowRunsOut(timing.windowSeconds * MS_PER_SECOND) }
             }
         }
     }
@@ -261,6 +264,18 @@ class PhoneSetup(
         }
     }
 
+    /**
+     * MGMT_INFO named the adapter, on any read (this screen's, Settings', the install's): the screen follows a name that
+     * changes during the session. On the factory adapter (31 Oct) ocbmd answered the read at SUBSCRIBE, before Wi-Fi was
+     * up, with the serial's suffix (CarLink-0264), and later reads with the name the iPhone lists (CarLink-fd6c).
+     */
+    fun onAdapterName(name: String) {
+        synchronized(lock) {
+            adapterName = name
+            phaseState.value = renamed(phaseState.value, name)
+        }
+    }
+
     /** SET_POLICY never came back 0 in its tries after SUBSCRIBE: btd isn't reachable. */
     fun onPolicyFailed(status: Int?) {
         if (status != null && status != 0) bluetoothDown("SET_POLICY", status)
@@ -277,7 +292,7 @@ class PhoneSetup(
                 phaseState.value = p
                 if (parsed?.devices?.isNotEmpty() == true) {
                     timer?.cancel()
-                    timer = scope.launch { waitForPhone(parsed.name ?: DEFAULT_NAME) }
+                    timer = scope.launch { waitForPhone() }
                 }
                 p
             }
@@ -293,22 +308,20 @@ class PhoneSetup(
         logInfo("[PAIRING] MGMT_INFO after the phone connected: ${parsed.devices?.size ?: "?"} phone(s) paired", tag = Logger.Tags.ADAPTR)
     }
 
-    private suspend fun waitForPhone(name: String) {
+    private suspend fun waitForPhone() {
         delay(timing.waitMs)
         synchronized(lock) {
             if (connected || phaseState.value != PhoneSetupPhase.None) return
-            phaseState.value = PhoneSetupPhase.Waiting(name, noPhone = false)
+            phaseState.value = PhoneSetupPhase.Waiting(nameNow(), noPhone = false)
         }
         logInfo("[PAIRING] no phone ${timing.waitMs / MS_PER_SECOND} s into the session: offering to pair a new one", tag = Logger.Tags.ADAPTR)
     }
 
-    private suspend fun windowRunsOut(
-        name: String,
-        ms: Long,
-    ) {
+    private suspend fun windowRunsOut(ms: Long) {
         delay(ms)
         synchronized(lock) {
             if (connected || phaseState.value !is PhoneSetupPhase.Pairing) return
+            val name = nameNow()
             phaseState.value = PhoneSetupPhase.NotPaired(name, NOT_PAIRED, notPairedBody(name))
         }
         logInfo("[PAIRING] the pairing window ran out with no phone", tag = Logger.Tags.ADAPTR)
@@ -338,7 +351,7 @@ class PhoneSetup(
         }
     }
 
-    private fun nameNow(): String = phones?.name ?: DEFAULT_NAME
+    private fun nameNow(): String = adapterName ?: phones?.name ?: DEFAULT_NAME
 
     companion object {
         /** How long "Pair iPhone" (and Settings' "Add phone") opens the window for. */
@@ -359,6 +372,20 @@ class PhoneSetup(
          */
         fun firstPhase(phones: PairedPhones?): PhoneSetupPhase =
             if (phones != null && phones.none) PhoneSetupPhase.Prompt(phones.name ?: DEFAULT_NAME, newPhone = false) else PhoneSetupPhase.None
+
+        /** [p] naming the adapter [name]; a phase that names none stays as it is. */
+        fun renamed(
+            p: PhoneSetupPhase,
+            name: String,
+        ): PhoneSetupPhase =
+            when (p) {
+                is PhoneSetupPhase.Prompt -> p.copy(name = name)
+                is PhoneSetupPhase.Pairing -> p.copy(name = name)
+                is PhoneSetupPhase.NotPaired -> p.copy(name = name, body = if (p.title == NOT_PAIRED) notPairedBody(name) else p.body)
+                is PhoneSetupPhase.BluetoothDown -> p.copy(name = name)
+                is PhoneSetupPhase.Waiting -> p.copy(name = name)
+                PhoneSetupPhase.None -> p
+            }
 
         /** The progress line for a BT_PHASE while pairing; null for phases with nothing to say. */
         fun progressText(phase: Byte): String? =

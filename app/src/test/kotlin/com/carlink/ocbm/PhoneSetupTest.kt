@@ -182,6 +182,22 @@ class PhoneSetupTest {
     }
 
     @Test
+    fun `the screen follows the adapter's name from a later MGMT_INFO`() {
+        // Factory adapter, 31 Oct: the read at SUBSCRIBE said CarLink-0264, the iPhone listed CarLink-fd6c.
+        box.devices = "[]"
+        setup.onSubscribed()
+        assertEquals("CarLink-9C1A", await<PhoneSetupPhase.Prompt>().name)
+        setup.onAdapterName("CarLink-fd6c")
+        assertEquals(PhoneSetupPhase.Prompt("CarLink-fd6c", newPhone = false), setup.phase.value)
+        setup.pair()
+        assertEquals("pairing names it too", "CarLink-fd6c", await<PhoneSetupPhase.Pairing>().name)
+        val notPaired = await<PhoneSetupPhase.NotPaired>(timeoutMs = 3_000)
+        assertEquals("CarLink-fd6c", notPaired.name)
+        assertTrue(notPaired.body, notPaired.body.contains("CarLink-fd6c"))
+        assertEquals(PhoneSetupPhase.None, PhoneSetup.renamed(PhoneSetupPhase.None, "CarLink-fd6c"))
+    }
+
+    @Test
     fun `the session ending clears it all`() {
         box.devices = "[]"
         setup.onSubscribed()
