@@ -57,6 +57,9 @@ internal class SettingsLiveState(
     /** The box takes phone priority (CAP_PHONE_POLICY), and the auto-connect flag the app holds. */
     var policySupported by mutableStateOf(false)
 
+    /** The box switches phones (CAP_PHONE_SWITCH): Connect works while another phone projects over Wi-Fi. */
+    var switchSupported by mutableStateOf(false)
+
     /** The box gates pairing behind a window (CAP_PAIR_WINDOW), and whether it says the window is open. */
     var pairWindowSupported by mutableStateOf(false)
     var pairWindowOpen by mutableStateOf(false)
@@ -93,6 +96,7 @@ internal fun rememberSettingsLiveState(
             live.phone = PhoneSnapshot(carlinkManager.currentPhoneType, carlinkManager.currentWifi ?: -1, carlinkManager.connectedBtMac)
             live.devices = carlinkManager.pairedDevices
             live.policySupported = carlinkManager.phonePolicySupported
+            live.switchSupported = carlinkManager.phoneSwitchSupported
             live.pairWindowSupported = carlinkManager.pairWindowSupported
             live.pairWindowOpen = carlinkManager.pairWindowOpen
             live.driving = carlinkManager.isDriving
