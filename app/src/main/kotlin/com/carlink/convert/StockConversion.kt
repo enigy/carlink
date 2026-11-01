@@ -108,7 +108,31 @@ sealed interface ConversionPhase {
      * installer refused or stopped. It renamed its image, so stock doesn't share the stick on its own; replugged
      * with the stick in, the adapter shares it, and the installer's report on it is read.
      */
-    data object NotInstalled : Converting
+    data object NotInstalled : AsksForReplug {
+        override val title = "The adapter didn't install"
+        override val body = "Unplug it and plug it back in, with the stick still in, so Carlink can read why."
+    }
+
+    /**
+     * Nothing came back on USB in the [minutes] since the adapter left with the stick: led the same way as
+     * [NotInstalled]. Replugged with the stick in, a stock adapter shares it and the installer's report is read,
+     * or OCBM starts its trial. Factory adapter, 31 Oct: after a failed update stock sometimes showed as
+     * 1314:1520 for about a second and then left USB until the next power cycle, too briefly to be seen.
+     */
+    data class NotBack(
+        val minutes: Long,
+    ) : AsksForReplug {
+        override val title get() = "The adapter hasn't come back"
+        override val body get() =
+            "It hasn't come back in the $minutes minutes since it restarted. Unplug it and plug it back in, with the stick " +
+                "still in: if it didn't install, Carlink reads why from the stick, and if it did, it starts on OCBM."
+    }
+
+    /** The install didn't go ahead, or nothing came back: the driver replugs the adapter with the stick in, so its report is read. */
+    sealed interface AsksForReplug : Converting {
+        val title: String
+        val body: String
+    }
 
     data class Failed(
         val title: String,
@@ -423,7 +447,7 @@ class StockConversion(
                     phaseState.value = ConversionPhase.Idle
                     return@synchronized false
                 }
-                if ((now is ConversionPhase.StickReady && now.returned) || now == ConversionPhase.NotInstalled) gaveUp = true
+                if ((now is ConversionPhase.StickReady && now.returned) || now is ConversionPhase.AsksForReplug) gaveUp = true
                 open = stick
                 stick = null
                 wait?.cancel()
@@ -539,7 +563,7 @@ class StockConversion(
                 notStick += deviceName
                 stickName = deviceName
                 // Taken after the installer went on: the adapter came back sharing it, and its report is read.
-                val afterInstall = now == ConversionPhase.ReplugAdapter || now is ConversionPhase.InstallingFromStick || now == ConversionPhase.NotInstalled
+                val afterInstall = now == ConversionPhase.ReplugAdapter || now is ConversionPhase.InstallingFromStick || now is ConversionPhase.AsksForReplug
                 returning = afterInstall || (now is ConversionPhase.StickProblem && returning)
                 wait?.cancel()
                 phaseState.value = ConversionPhase.ReadingStick
@@ -666,7 +690,11 @@ class StockConversion(
     /**
      * The adapter is away with the stick: [Timing.deadlineMs] for it to come back as 1314:2d00, which ends
      * this through [reset], or sharing the stick, which [take] reads. The manager searches now and
-     * then, in case an attach broadcast is missed. At the deadline the app gives up on this conversion.
+     * then, in case an attach broadcast is missed. At the deadline with nothing seen on USB the driver is led
+     * to replug it with the stick in ([ConversionPhase.NotBack]), and a stick shared after that is read as
+     * after [ConversionPhase.NotInstalled]; before, the app gave up on the adapter there, and a stock
+     * adapter that had shown for only a second (31 Oct) was never offered Try again. A stock adapter seen and
+     * still held at the deadline is reported, and nothing is offered again.
      */
     private suspend fun awaitInstall() {
         var waited = 0L
@@ -678,19 +706,28 @@ class StockConversion(
             if (waited < timing.deadlineMs) usb.searchAgain()
         }
         var dropped: StockLink? = null
-        val failed =
+        val next =
             synchronized(lock) {
                 if (phaseState.value !is ConversionPhase.InstallingFromStick) return
-                val onStock = sawStock || link != null
-                dropped = link
-                link = null
-                gaveUp = true
-                val p = if (onStock) ConversionPhase.Failed(NOT_CONVERTED, STOCK_AGAIN) else ConversionPhase.Failed(NOT_BACK, notBack())
+                val p =
+                    if (sawStock || link != null) {
+                        dropped = link
+                        link = null
+                        gaveUp = true
+                        ConversionPhase.Failed(NOT_CONVERTED, STOCK_AGAIN)
+                    } else {
+                        ConversionPhase.NotBack(timing.deadlineMs / MS_PER_MINUTE)
+                    }
                 phaseState.value = p
                 p
             }
         dropped?.let { l -> scope.launch(Dispatchers.IO) { l.close() } }
-        logWarn("[CONVERT] ${failed.title}: ${timing.deadlineMs / MS_PER_SECOND} s after it left with the stick; no conversion is offered again", tag = Logger.Tags.ADAPTR)
+        val after = "${timing.deadlineMs / MS_PER_SECOND} s after it left with the stick"
+        if (next is ConversionPhase.Failed) {
+            logWarn("[CONVERT] ${next.title}: $after; no conversion is offered again", tag = Logger.Tags.ADAPTR)
+        } else {
+            logWarn("[CONVERT] nothing on USB $after: asking for a replug with the stick in", tag = Logger.Tags.ADAPTR)
+        }
     }
 
     /** The link ended: the adapter unplugged, or a stick put into it, which takes it off USB as the adapter. */
@@ -713,7 +750,7 @@ class StockConversion(
     private fun waitsForStick(p: ConversionPhase): Boolean =
         when (p) {
             ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter -> true
-            is ConversionPhase.StickProblem, is ConversionPhase.InstallingFromStick, ConversionPhase.NotInstalled -> true
+            is ConversionPhase.StickProblem, is ConversionPhase.InstallingFromStick, is ConversionPhase.AsksForReplug -> true
             else -> false
         }
 
@@ -727,7 +764,7 @@ class StockConversion(
         when (p) {
             is ConversionPhase.Offered, is ConversionPhase.StickOnly, is ConversionPhase.Failed, is ConversionPhase.StickInFirst -> true
             is ConversionPhase.StickProblem, is ConversionPhase.StickReady -> true
-            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter, ConversionPhase.NotInstalled -> true
+            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter, is ConversionPhase.AsksForReplug -> true
             else -> false
         }
 
@@ -757,10 +794,6 @@ class StockConversion(
         wait = scope.launch { block() }
     }
 
-    private fun notBack(): String =
-        "It hasn't come back as an OCBM adapter in the ${timing.deadlineMs / MS_PER_MINUTE} minutes since it restarted with the stick. " +
-            "Give it a few more minutes. If it still doesn't come back, unplug it and read OCBM_RESULT.txt on the stick with a computer."
-
     private companion object {
         const val NANOS_PER_MS = 1_000_000L
         const val MS_PER_SECOND = 1_000L
@@ -777,7 +810,6 @@ class StockConversion(
         const val CANT_READ = "Carlink couldn't read the stick"
         const val WRITE_FAILED = "The installer didn't go onto the stick"
         const val NOT_CONVERTED = "The adapter didn't convert"
-        const val NOT_BACK = "The adapter hasn't come back"
         const val STOCK_AGAIN = "It came back on its Carlinkit firmware instead of OCBM. The installer's report, OCBM_RESULT.txt, is on the stick: read it with a computer."
         const val NOT_STARTED =
             "It came back sharing the stick instead of installing from it. Take the stick out of the adapter and put it back in, " +

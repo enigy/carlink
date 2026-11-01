@@ -125,10 +125,16 @@ internal fun pairSteps(name: String): String =
         "Settings › General › CarPlay if it is there.\n" +
         "3. Tap Pair iPhone, then pick $name on the iPhone."
 
-/** What the one-file flow's stick needs said, on the welcome and the pairing screens. */
+/**
+ * What the one-file flow's stick needs said, on the welcome and the pairing screens. Only the first install dumps
+ * the factory flash: onto a cleared or different stick a later install backs up the adapter as it is then (the
+ * truck, 10-29, where the factory dump survived only on the Mac), so the first stick is the only copy. Says it
+ * as the installer's own result file does (enigy/ocbm a6d7a6c, ccpa/installer/finish.sh).
+ */
 internal const val STICK_OUT =
-    "Take the USB stick out of the adapter and keep it. It holds the adapter's flash backup, including its Wi-Fi password " +
-        "and Bluetooth keys, so keep it private."
+    "Take the USB stick out of the adapter and keep it. From the adapter's first install it holds the adapter's " +
+        "factory flash, and the only copy of it: keep that stick, or copy its OCBM_BACKUP folder to a computer. The " +
+        "backup holds the adapter's Wi-Fi password and Bluetooth keys, so keep it private."
 
 /** Seconds until [endsAtMs] (elapsedRealtime), ticking; null with no end. */
 @Composable

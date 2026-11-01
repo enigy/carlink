@@ -229,7 +229,9 @@ class StickFilesTest {
         assertTrue(installed.installed)
         assertFalse(installed.undone)
         assertEquals("INSTALLED (trial)", installed.headline)
-        assertTrue(installed.paragraphs[1].startsWith("A full flash backup is in OCBM_BACKUP/651e on this stick. It holds the adapter's Wi-Fi password"))
+        // As ccpa/installer/finish.sh words it since enigy/ocbm a6d7a6c: the first install's backup is the only factory copy.
+        assertTrue(installed.paragraphs[1].startsWith("A full flash backup is in OCBM_BACKUP/651e on this stick. From the adapter's first install it"))
+        assertTrue(installed.paragraphs[1].endsWith("keep the stick private."))
 
         val back = reportOf(Reports.backToStock)
         assertEquals(StickReport.BACK_TO_STOCK, back.headline)

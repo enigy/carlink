@@ -364,15 +364,40 @@ class StockConversionTest {
     }
 
     @Test
-    fun `an adapter that never comes back is reported at the deadline, and nothing is offered again`() {
-        toInstalling()
+    fun `an adapter that never comes back is asked for a replug with the stick in, and the stick shared after is read`() {
+        // Factory adapter, 31 Oct: after a failed update stock showed for about a second, then left USB until a power cycle.
+        val stick = toInstalling()
         val before = usb.searches.get()
-        val failed = awaitPhase<ConversionPhase.Failed>(timeoutMs = 2_000)
-        assertEquals("The adapter hasn't come back", failed.title)
+        awaitPhase<ConversionPhase.NotBack>(timeoutMs = 2_000)
         assertTrue("searched while waiting", usb.searches.get() - before >= 2)
+        // Replugged with the stick in: stock shares it, with the installer's report and the image renamed .refused.
+        val fs = fat32(stick)
+        put(fs, StickFiles.RESULT, Reports.undone.toByteArray())
+        fs.rootDirectory.search(StickFiles.IMAGE)!!.name = "${StickFiles.IMAGE}.refused"
+        plugStick(stick, AGAIN)
+        val ready = awaitPhase<ConversionPhase.StickReady>(timeoutMs = 5_000)
+        assertTrue("read as after the install, not ignored", ready.returned)
+        assertTrue("Try again", ready.retry)
+    }
+
+    @Test
+    fun `closing the hasn't-come-back panel offers no conversion again`() {
+        toInstalling()
+        awaitPhase<ConversionPhase.NotBack>(timeoutMs = 2_000)
         conversion.dismiss()
         assertEquals(ConversionPhase.Declined, conversion.phase.value)
         assertFalse(conversion.claim("1314:1520"))
+    }
+
+    @Test
+    fun `a stock adapter seen for only a second still means the install didn't go ahead`() {
+        // The other 31 Oct case: 1314:1520 for about a second, then off USB. Its one attach is enough.
+        toInstalling()
+        assertFalse("not opened", conversion.claim("1314:1520"))
+        usb.devices.remove("1314:1520")
+        awaitPhase<ConversionPhase.NotInstalled>()
+        Thread.sleep(timing.deadlineMs)
+        assertEquals("not the hasn't-come-back path", ConversionPhase.NotInstalled, conversion.phase.value)
     }
 
     @Test
