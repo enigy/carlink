@@ -177,8 +177,15 @@ class CarlinkManager(
 ) {
     private var config: AdapterConfig = initialConfig
 
-    /** Configured WiFi/Bluetooth name the adapter advertises (shown on the dashboard). */
-    val adapterName: String get() = config.boxName
+    /** The name an OCBM adapter's Bluetooth advertises: MGMT_INFO's "name", from its latest read; null until one has said. */
+    @Volatile private var ocbmAdapterName: String? = null
+
+    /**
+     * The name the driver picks on the iPhone. An OCBM adapter's own ([ocbmAdapterName]): on the factory adapter (31 Oct)
+     * the iPhone listed CarLink-fd6c while Settings › Phones said "carlink", [AdapterConfig.boxName], the stock
+     * protocol's name, which an OCBM adapter never uses. That stays for a stock adapter, before any OCBM one has named itself.
+     */
+    val adapterName: String get() = ocbmAdapterName ?: config.boxName
 
     init {
         live = this
@@ -1410,6 +1417,7 @@ class CarlinkManager(
 
         transport = t
         val c = OcbmClient(t, ocbmLog)
+        c.onInfo = ::noteAdapterInfo
         // Stable for this manager's whole life, NOT per client: a reattach after a USB blip is the same
         // host and should warm-reuse the box's live session, whereas a new process must force a re-arm.
         c.instanceNonce = instanceNonce
@@ -1770,6 +1778,16 @@ class CarlinkManager(
     fun refreshDeviceList() {
         logInfo("[DEVICE_MGMT] Requesting device snapshot", tag = Logger.Tags.ADAPTR)
         scope.launch(Dispatchers.IO) { pollBoxInfo() }
+    }
+
+    /** Every MGMT_INFO, whoever asked: the adapter's name, followed when it changes, for Settings and the pairing screen. */
+    private fun noteAdapterInfo(json: String) {
+        val name = runCatching { JSONObject(json).optString("name") }.getOrNull()?.takeIf { it.isNotBlank() } ?: return
+        val was = ocbmAdapterName
+        if (name == was) return
+        ocbmAdapterName = name
+        logInfo("[PAIRING] the adapter is named $name${was?.let { " (was $it)" }.orEmpty()}", tag = Logger.Tags.ADAPTR)
+        phoneSetup.onAdapterName(name)
     }
 
     private fun pollBoxInfo() {

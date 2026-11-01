@@ -338,8 +338,10 @@ internal object Reports {
         Stock CarPlay stays on the adapter as a fallback until the Carlink session that confirms it ends.
         If OCBM fails its start-up self-test, the adapter goes back to stock CarPlay by itself.
 
-        A full flash backup is in OCBM_BACKUP/651e on this stick. It holds the adapter's Wi-Fi
-        password and Bluetooth keys: keep the stick private.
+        A full flash backup is in OCBM_BACKUP/651e on this stick. From the adapter's first install it
+        is the factory flash, and the only copy of it: keep this stick, or copy OCBM_BACKUP to a computer.
+        A later install onto another stick backs up the adapter as it is then, not as it came.
+        The backup holds the adapter's Wi-Fi password and Bluetooth keys: keep the stick private.
 
         --- log
         [ 41.2 s] backup: 3 partitions

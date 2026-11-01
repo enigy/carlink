@@ -57,6 +57,9 @@ internal class SettingsLiveState(
     /** The box takes phone priority (CAP_PHONE_POLICY), and the auto-connect flag the app holds. */
     var policySupported by mutableStateOf(false)
 
+    /** The name the driver picks on the iPhone: an OCBM adapter's own, from its latest MGMT_INFO ([CarlinkManager.adapterName]). */
+    var adapterName by mutableStateOf("")
+
     /** The box gates pairing behind a window (CAP_PAIR_WINDOW), and whether it says the window is open. */
     var pairWindowSupported by mutableStateOf(false)
     var pairWindowOpen by mutableStateOf(false)
@@ -93,6 +96,7 @@ internal fun rememberSettingsLiveState(
             live.phone = PhoneSnapshot(carlinkManager.currentPhoneType, carlinkManager.currentWifi ?: -1, carlinkManager.connectedBtMac)
             live.devices = carlinkManager.pairedDevices
             live.policySupported = carlinkManager.phonePolicySupported
+            live.adapterName = carlinkManager.adapterName
             live.pairWindowSupported = carlinkManager.pairWindowSupported
             live.pairWindowOpen = carlinkManager.pairWindowOpen
             live.driving = carlinkManager.isDriving

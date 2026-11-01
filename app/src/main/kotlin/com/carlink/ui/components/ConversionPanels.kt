@@ -96,7 +96,7 @@ private fun stickPanel(
             PanelContent(
                 title = "Put a USB stick into the adapter",
                 body = "A FAT32 stick of 16 GB or less, in the adapter's own USB port. Leave the adapter plugged in.",
-                note = KEEP_STICK,
+                note = "$FIRST_STICK $KEEP_STICK",
                 busy = true,
                 actions = listOf(cancel),
             )
@@ -124,13 +124,8 @@ private fun stickPanel(
                 note = KEEP_STICK,
                 actions = listOf(PanelAction("Close", PanelActionLook.QUIET, conversion::dismiss)),
             )
-        ConversionPhase.NotInstalled ->
-            PanelContent(
-                title = "The adapter didn't install",
-                body = "Unplug it and plug it back in, with the stick still in, so Carlink can read why.",
-                busy = true,
-                actions = listOf(PanelAction("Close", PanelActionLook.QUIET, conversion::dismiss)),
-            )
+        is ConversionPhase.AsksForReplug ->
+            PanelContent(phase.title, phase.body, busy = true, actions = listOf(PanelAction("Close", PanelActionLook.QUIET, conversion::dismiss)))
         is ConversionPhase.InstallingFromStick ->
             PanelContent(
                 title = "The adapter is installing OCBM",
@@ -246,7 +241,8 @@ private fun ConvertDialog(
         title = "Convert this adapter now?",
         text =
             "Carlink writes the installer to a FAT32 USB stick (16 GB or less) that you put into the adapter. As it installs, the " +
-                "adapter saves a full backup of its flash to the stick. $KEEP_STICK Don't turn off the car while it installs.",
+                "adapter saves a full backup of its flash to the stick. $FIRST_STICK $KEEP_STICK Don't turn off the car while it " +
+                "installs.",
         confirmLabel = "Convert",
         onConfirm = onConvert,
         onDismiss = onDismiss,
@@ -267,6 +263,18 @@ private fun fraction(
 ): Float = if (total > 0) done.toFloat() / total else 0f
 
 private const val STOCK_TITLE = "This adapter runs Carlinkit firmware"
-private const val KEEP_STICK = "Keep the stick afterwards, and keep it private: the backup holds the adapter's Wi-Fi password and Bluetooth keys."
+
+/**
+ * The stick's backup, as the installer's result file says it (enigy/ocbm a6d7a6c): from the first install it is the
+ * factory flash and the only copy, since a later install onto another stick backs up the adapter as it is then.
+ */
+private const val KEEP_STICK =
+    "From the adapter's first install, the backup on the stick is its factory flash, and the only copy of it: keep the " +
+        "stick, or copy OCBM_BACKUP to a computer. Keep it private too: the backup holds the adapter's Wi-Fi password and " +
+        "Bluetooth keys."
+
+/** An adapter converted before: the installer keeps the backup already on a stick, so the first one is the one to use. */
+private const val FIRST_STICK =
+    "Converted this adapter before? Use the stick from its first install: the installer keeps the backup already on it."
 private const val RETRY_NOTE = "Try again writes the installer with an empty OCBM_RETRY file beside it, as the report asks."
 private const val BYTES_PER_MB = 1_000_000.0
