@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carlink.CarlinkManager
+import com.carlink.logging.logInfo
 
 /** Whether the phone list shows ranking controls, and which phone is live. */
 @Immutable
@@ -34,9 +35,21 @@ internal class PhoneRanking(
     /** The box takes phone priority (CAP_PHONE_POLICY). Off: the list is the old Forget-only list. */
     val enabled: Boolean,
     val connectedMac: String?,
-    /** Any phone is projecting (USB or wireless): Connect is pointless then, the box won't interrupt it. */
+    /** Any phone is projecting (USB or wireless): a plain connect won't interrupt it. */
     val phoneConnected: Boolean,
+    /**
+     * The projecting phone is on Wi-Fi and the box switches phones (CAP_PHONE_SWITCH): Connect ends its session for
+     * the phone tapped (owner, 11-01). A phone on USB can't be ended from here.
+     */
+    val switchable: Boolean = false,
 )
+
+/** Whether a row's Connect works: a bonded phone that isn't the live one, with no phone projecting or one [PhoneRanking.switchable]. */
+internal fun connectEnabled(
+    bonded: Boolean,
+    live: Boolean,
+    ranking: PhoneRanking,
+): Boolean = bonded && !live && (!ranking.phoneConnected || ranking.switchable)
 
 /** What a row's buttons do. */
 @Immutable
@@ -60,11 +73,17 @@ internal fun PhoneList(
     KnownPhones(
         usbInUse = connected != null && !connected.wireless,
         devices = live.devices,
-        ranking = PhoneRanking(live.policySupported, connected?.device?.btMac, phoneConnected = connected != null),
+        ranking =
+            PhoneRanking(
+                live.policySupported,
+                connected?.device?.btMac,
+                phoneConnected = connected != null,
+                switchable = live.switchSupported && connected?.wireless == true,
+            ),
         actions =
             PhoneListActions(
                 onMove = { mac, delta -> carlinkManager.movePhone(mac, delta) },
-                onConnect = { carlinkManager.connectPhone(it.btMac) },
+                onConnect = { carlinkManager.connectPhone(it.btMac, switching = connected != null) },
                 onRemove = onRemove,
                 onSettings = settingsFor,
             ),
@@ -122,7 +141,7 @@ private fun PhoneRow(
             tint = if (device.bonded) colors.onSurfaceVariant else colors.tertiary,
             modifier = Modifier.weight(1f),
         ) {
-            if (ranking.enabled) RankControls(device, index, count, live, ranking.phoneConnected, actions)
+            if (ranking.enabled) RankControls(device, index, count, live, connectEnabled(device.bonded, live, ranking), actions)
             actions.onSettings(device)?.let { RowAction(label = "Settings", onClick = it) }
             RowAction(
                 label = if (device.bonded) "Forget" else "Remove",
@@ -160,7 +179,7 @@ private fun RankControls(
     index: Int,
     count: Int,
     live: Boolean,
-    phoneConnected: Boolean,
+    canConnect: Boolean,
     actions: PhoneListActions,
 ) {
     // One Row, spaced and aligned like SettingRow's trailing slot, so this emits a single node
@@ -170,8 +189,11 @@ private fun RankControls(
         MoveButton(up = false, enabled = index < count - 1, name = device.name) { actions.onMove(device.btMac, 1) }
         RowAction(
             label = if (live) "Connected" else "Connect",
-            enabled = device.bonded && !phoneConnected,
-            onClick = { actions.onConnect(device) },
+            enabled = canConnect,
+            onClick = {
+                logInfo("[UI_ACTION] Phones: Connect", tag = "UI") // no name: the logs hide phone names
+                actions.onConnect(device)
+            },
         )
     }
 }

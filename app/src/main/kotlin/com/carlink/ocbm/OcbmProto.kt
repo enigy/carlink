@@ -288,6 +288,9 @@ object Ocbm {
     /** The box takes [MGMT_INSTALL_CONFIRM] and [MGMT_GO_STOCK] and reports `"install"` in MGMT_INFO. */
     const val CAP_INSTALL: Int = 0x0000_0100
 
+    /** The box takes [MGMT_SWITCH_DEVICE]: Connect on a phone may end another phone's wireless session (enigy/ocbm, 11-01). */
+    const val CAP_PHONE_SWITCH: Int = 0x0000_0400
+
     fun capsString(caps: Int): String {
         val bits = ArrayList<String>()
         if (caps and CAP_CONSOLE != 0) bits.add("CONSOLE")
@@ -299,6 +302,7 @@ object Ocbm {
         if (caps and CAP_PHONE_POLICY != 0) bits.add("PHONE_POLICY")
         if (caps and CAP_PAIR_WINDOW != 0) bits.add("PAIR_WINDOW")
         if (caps and CAP_INSTALL != 0) bits.add("INSTALL")
+        if (caps and CAP_PHONE_SWITCH != 0) bits.add("PHONE_SWITCH")
         return if (bits.isEmpty()) "none" else bits.joinToString("|")
     }
 
@@ -326,6 +330,14 @@ object Ocbm {
      * stock Carlinkit firmware and restarts (it returns as 1314:1520). Status 1 = nothing to go back to.
      */
     const val MGMT_GO_STOCK: Byte = 0x0B
+
+    /**
+     * [ascii MAC]: make that bonded phone the projecting one. With another phone's wireless session live, the box
+     * ends it, pages this phone, and for 45 s refuses every other phone, so the one just dropped can't re-dial in
+     * first. Idle, or already that phone, it is [MGMT_CONNECT_DEVICE]. Never ends a wired session. MGMT_ACK status 1
+     * = not a MAC, not bonded, or the box's Bluetooth daemon unreachable. Only with [CAP_PHONE_SWITCH].
+     */
+    const val MGMT_SWITCH_DEVICE: Byte = 0x0D
     const val MGMT_INFO: Byte = 0x81.toByte()
     const val MGMT_ACK: Byte = 0x82.toByte()
 

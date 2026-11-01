@@ -3218,16 +3218,28 @@ class CarlinkManager(
         pushPhonePolicy("reorder")
     }
 
-    /** Ask the box to call this bonded phone now. The box never interrupts a phone that is projecting. */
-    fun connectPhone(btMac: String) {
+    /** True when the box advertises CAP_PHONE_SWITCH: Connect may end another phone's wireless session. */
+    val phoneSwitchSupported: Boolean get() = client?.supportsPhoneSwitch == true
+
+    /**
+     * Ask the box to call this bonded phone now. A plain connect never interrupts a phone that is projecting;
+     * [switching] (another phone projects over Wi-Fi) asks a box with CAP_PHONE_SWITCH to end that session and hold
+     * the adapter 45 s for this phone (owner, 11-01: a second iPhone connected and the owner's couldn't get in).
+     */
+    fun connectPhone(
+        btMac: String,
+        switching: Boolean = false,
+    ) {
         if (!phonePolicySupported) return
+        val verb = if (switching && phoneSwitchSupported) Ocbm.MGMT_SWITCH_DEVICE else Ocbm.MGMT_CONNECT_DEVICE
+        val what = if (verb == Ocbm.MGMT_SWITCH_DEVICE) "SWITCH_DEVICE" else "CONNECT_DEVICE"
         if (phoneSetup.noPhonePaired) {
-            logInfo("[DEVICE_MGMT] CONNECT_DEVICE($btMac) not sent: the adapter has no phone paired", tag = Logger.Tags.ADAPTR)
+            logInfo("[DEVICE_MGMT] $what($btMac) not sent: the adapter has no phone paired", tag = Logger.Tags.ADAPTR)
             return
         }
         scope.launch(Dispatchers.IO) {
-            val status = client?.mgmtAction(Ocbm.MGMT_CONNECT_DEVICE, btMac.uppercase().toByteArray(Charsets.US_ASCII))
-            logInfo("[DEVICE_MGMT] CONNECT_DEVICE($btMac) status=$status", tag = Logger.Tags.ADAPTR)
+            val status = client?.mgmtAction(verb, btMac.uppercase().toByteArray(Charsets.US_ASCII))
+            logInfo("[DEVICE_MGMT] $what($btMac) status=$status", tag = Logger.Tags.ADAPTR)
         }
     }
 

@@ -60,6 +60,9 @@ internal class SettingsLiveState(
     /** The name the driver picks on the iPhone: an OCBM adapter's own, from its latest MGMT_INFO ([CarlinkManager.adapterName]). */
     var adapterName by mutableStateOf("")
 
+    /** The box switches phones (CAP_PHONE_SWITCH): Connect works while another phone projects over Wi-Fi. */
+    var switchSupported by mutableStateOf(false)
+
     /** The box gates pairing behind a window (CAP_PAIR_WINDOW), and whether it says the window is open. */
     var pairWindowSupported by mutableStateOf(false)
     var pairWindowOpen by mutableStateOf(false)
@@ -97,6 +100,7 @@ internal fun rememberSettingsLiveState(
             live.devices = carlinkManager.pairedDevices
             live.policySupported = carlinkManager.phonePolicySupported
             live.adapterName = carlinkManager.adapterName
+            live.switchSupported = carlinkManager.phoneSwitchSupported
             live.pairWindowSupported = carlinkManager.pairWindowSupported
             live.pairWindowOpen = carlinkManager.pairWindowOpen
             live.driving = carlinkManager.isDriving
