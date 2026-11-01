@@ -65,12 +65,15 @@ import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.CarPlayDock
+import com.carlink.ocbm.ConnectAttempt
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.InstallSession
+import com.carlink.ocbm.LivePhone
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
 import com.carlink.ocbm.OcbmClient
 import com.carlink.ocbm.OemIcon
+import com.carlink.ocbm.PhoneConnectTracker
 import com.carlink.ocbm.PhoneSetup
 import com.carlink.ocbm.PixelRect
 import com.carlink.ocbm.RawBulkTransport
@@ -468,6 +471,20 @@ class CarlinkManager(
         synchronized(boxStatusListeners) { boxStatusListeners.remove(listener) }
     }
 
+    /**
+     * Whether the live phone is on Wi-Fi, for Settings: 1 wireless, 0 USB, null unknown. The adapter's
+     * projection mode decides when it names a transport, and MGMT_INFO's `transport` ([currentWifi]) only
+     * before then: on the 11-01 bench a fresh Carlink labelled a wireless iPhone "Wired CarPlay", marked no
+     * row connected and disabled Connect, while the adapter reported WIRELESS_CP.
+     */
+    val phoneOnWifi: Int?
+        get() =
+            when (projectionMode) {
+                Ocbm.PM_WIRELESS_CP, Ocbm.PM_WIRELESS_AA -> 1
+                Ocbm.PM_WIRED_CP, Ocbm.PM_WIRED_AA -> 0
+                else -> currentWifi
+            }
+
     /** Which transport owns the box (CT_PROJ_MODE). `PM_NONE` until told. */
     @Volatile var projectionMode: Byte = Ocbm.PM_NONE
         private set
@@ -533,6 +550,12 @@ class CarlinkManager(
 
     /** The adapter's OCBM one-file install: its trial state, the gated confirm and the way back to stock. */
     val oneFileInstall = InstallSession({ client }, scope, confirmAllowed = BuildConfig.INSTALL_CONFIRM)
+
+    /** What Settings › Phones' Connect shows after a press: working, then connected or not reached. */
+    private val connectTracker = PhoneConnectTracker(scope, { LivePhone(connectedPhoneMac, phoneIdentities) })
+
+    /** The Connect press being followed, or its outcome while it stands ([PhoneConnectTracker]). */
+    val connectAttempt: StateFlow<ConnectAttempt?> get() = connectTracker.attempt
 
     /** Pairing an iPhone on the connecting screen, when the adapter has no phone paired or none comes. */
     val phoneSetup =
@@ -637,6 +660,9 @@ class CarlinkManager(
 
     /** `deviceID` of the phone currently in session, lower-cased, or null. */
     @Volatile private var connectedPhoneMac: String? = null
+
+    // How many phone identities (CT_PHONE_IDENT) have arrived: a Connect counts as reached only through news.
+    @Volatile private var phoneIdentities = 0L
 
     /**
      * Durable known-device history. Survives process death; cleared only by the user or by clearing
@@ -3057,6 +3083,7 @@ class CarlinkManager(
         val mac = obj.optString("deviceID").lowercase()
         if (mac.isEmpty()) return
         connectedPhoneMac = mac
+        phoneIdentities++
         _connectedBtMac = mac
         if (name.isNotEmpty()) phoneNames[mac] = name
         applyDriverProfile(mac, name)
@@ -3233,13 +3260,19 @@ class CarlinkManager(
         if (!phonePolicySupported) return
         val verb = if (switching && phoneSwitchSupported) Ocbm.MGMT_SWITCH_DEVICE else Ocbm.MGMT_CONNECT_DEVICE
         val what = if (verb == Ocbm.MGMT_SWITCH_DEVICE) "SWITCH_DEVICE" else "CONNECT_DEVICE"
+        if (!connectTracker.start(btMac)) {
+            logInfo("[DEVICE_MGMT] $what($btMac) not sent: an earlier Connect is still working", tag = Logger.Tags.ADAPTR)
+            return
+        }
         if (phoneSetup.noPhonePaired) {
             logInfo("[DEVICE_MGMT] $what($btMac) not sent: the adapter has no phone paired", tag = Logger.Tags.ADAPTR)
+            connectTracker.refused(btMac)
             return
         }
         scope.launch(Dispatchers.IO) {
             val status = client?.mgmtAction(verb, btMac.uppercase().toByteArray(Charsets.US_ASCII))
             logInfo("[DEVICE_MGMT] $what($btMac) status=$status", tag = Logger.Tags.ADAPTR)
+            if (status != 0) connectTracker.refused(btMac)
         }
     }
 
