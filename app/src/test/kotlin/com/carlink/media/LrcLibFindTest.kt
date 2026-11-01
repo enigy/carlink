@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -81,6 +82,34 @@ class LrcLibFindTest {
         assertEquals(LrcLib.Outage.NOT_ANSWERING, outageOf("unreadable", mapOf("get-cached" to "<html>")))
         assertNull("found: nothing to report", outageOf("found", mapOf("get-cached" to record)))
         assertNull("none: nothing to report", outageOf("none here", emptyMap()))
+    }
+
+    @Test
+    fun `requests carry the app ID until LRCLIB refuses it, then go without`() {
+        // Owner, 11-01: Carlink registered with LRCLIB; an ID it does not know is answered HTTP 401.
+        val gate = LrcLib.AppIdGate()
+        val sent = mutableListOf<Boolean>()
+        val first =
+            gate.ask { appId ->
+                sent += appId
+                "ok"
+            }
+        assertEquals("ok", first)
+        assertEquals(listOf(true), sent)
+        val refused =
+            gate.ask { appId ->
+                sent += appId
+                if (appId) throw LrcLib.HttpError(401, "get-cached") else "without"
+            }
+        assertEquals("asked again without the ID", "without", refused)
+        gate.ask { appId -> sent += appId }
+        assertEquals("and never with it again", listOf(true, true, false, false), sent)
+        try {
+            LrcLib.AppIdGate().ask<String> { throw LrcLib.HttpError(503, "search") }
+            fail("only a 401 is taken as a refused ID")
+        } catch (e: LrcLib.HttpError) {
+            assertEquals(503, e.code)
+        }
     }
 
     @Test

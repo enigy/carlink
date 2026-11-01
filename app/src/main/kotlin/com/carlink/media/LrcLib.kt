@@ -69,7 +69,7 @@ object LrcLib {
 
     /** LRCLIB reached, answering an HTTP error rather than a body or a 404. */
     internal class HttpError(
-        code: Int,
+        val code: Int,
         path: String,
     ) : IOException("HTTP $code from /api/$path")
 
@@ -205,11 +205,25 @@ object LrcLib {
     /** Spotify joins a song's artists with commas ("Of Monsters and Men, Chris Taylor"); LRCLIB files most under the first. */
     internal fun firstArtist(artist: String): String = artist.substringBefore(", ").trim()
 
-    /** LRCLIB over HTTPS. */
+    /**
+     * LRCLIB over HTTPS, as Carlink's registered application (owner, 11-01): every request carries
+     * [APP_ID] in `Lrclib-App-Id`, which LRCLIB gives higher rate limits than an anonymous client. The
+     * ID is public by LRCLIB's design ("not a secret, so it is safe to ship in a client"). LRCLIB answers
+     * an ID it does not know with HTTP 401; then the request is asked again without it, and no later
+     * one sends it, so a revoked ID costs the head unit nothing but the higher limits.
+     */
     private object Net : Api {
+        private val gate = AppIdGate()
+
         override fun get(
             path: String,
             query: List<Pair<String, String>>,
+        ): String? = gate.ask { appId -> ask(path, query, appId) }
+
+        private fun ask(
+            path: String,
+            query: List<Pair<String, String>>,
+            appId: Boolean,
         ): String? {
             val q = query.joinToString("&") { (k, v) -> "$k=${URLEncoder.encode(v, Charsets.UTF_8.name())}" }
             val conn = URL("$BASE/$path?$q").openConnection() as HttpURLConnection
@@ -218,6 +232,7 @@ object LrcLib {
                 conn.readTimeout = TIMEOUT_MS
                 // LRCLIB asks every client to name itself.
                 conn.setRequestProperty("User-Agent", "Carlink/${BuildConfig.VERSION_NAME} (https://github.com/enigy/carlink)")
+                if (appId) conn.setRequestProperty("Lrclib-App-Id", APP_ID)
                 return when (val code = conn.responseCode) {
                     HttpURLConnection.HTTP_OK -> conn.inputStream.bufferedReader().use { it.readText() }
                     HttpURLConnection.HTTP_NOT_FOUND -> null
@@ -228,6 +243,28 @@ object LrcLib {
             }
         }
     }
+
+    /** Sends the app ID while LRCLIB takes it: after its HTTP 401 the request goes again without, and so does every later one. */
+    internal class AppIdGate {
+        @Volatile var refused = false
+            private set
+
+        fun <T> ask(request: (appId: Boolean) -> T): T {
+            if (!refused) {
+                try {
+                    return request(true)
+                } catch (e: HttpError) {
+                    if (e.code != HttpURLConnection.HTTP_UNAUTHORIZED) throw e
+                    refused = true
+                    logWarn("[LYRICS] LRCLIB refused Carlink's app ID (HTTP 401); asking without it from now on", tag = Logger.Tags.MEDIA)
+                }
+            }
+            return request(false)
+        }
+    }
+
+    /** Carlink's application ID in LRCLIB's developer portal (a client-side app; public by design). */
+    private const val APP_ID = "FAjXyVeIK6jknVkP_wgE5LEQpYMK2eT3djEhqJ-pgA8"
 
     private const val BASE = "https://lrclib.net/api"
     private const val TIMEOUT_MS = 8_000
