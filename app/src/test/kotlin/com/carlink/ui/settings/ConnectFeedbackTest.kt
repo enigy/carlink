@@ -2,12 +2,13 @@ package com.carlink.ui.settings
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import com.carlink.CarlinkManager
 import com.carlink.ocbm.ConnectAttempt
 import org.junit.Assert.assertEquals
@@ -56,10 +57,11 @@ class ConnectFeedbackTest {
     @Test
     fun a_press_shows_working_dots_at_once_and_ignores_more_taps() {
         show()
-        // The press is set inside the tap's own handler, so the dots are drawn on the next frame.
-        compose.onNodeWithText("Connect").assertIsEnabled().performClick()
+        // The press is set inside the tap's own handler, so the dots are drawn on the next frame. Taps go through
+        // the click action: the row is wider than the test's phone-sized window, which a gesture would miss.
+        compose.onNodeWithText("Connect").assertIsEnabled().performSemanticsAction(SemanticsActions.OnClick)
         compose.onNodeWithContentDescription("Connecting").assertExists()
-        compose.onNodeWithContentDescription("Connecting").performClick()
+        compose.onNodeWithContentDescription("Connecting").performSemanticsAction(SemanticsActions.OnClick)
         compose.waitForIdle()
         assertEquals("further taps do nothing while it works", 1, presses)
     }
