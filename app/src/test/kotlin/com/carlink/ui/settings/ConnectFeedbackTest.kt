@@ -60,8 +60,10 @@ class ConnectFeedbackTest {
         compose.onNodeWithText("Connect").assertIsEnabled().performClick()
         compose.mainClock.advanceTimeBy(100)
         compose.onNodeWithContentDescription("Connecting").assertExists()
+        // The clock runs again for the second tap: a gesture on a paused clock is not what this checks.
+        compose.mainClock.autoAdvance = true
         compose.onNodeWithContentDescription("Connecting").performClick()
-        compose.mainClock.advanceTimeBy(100)
+        compose.waitForIdle()
         assertEquals("further taps do nothing while it works", 1, presses)
     }
 
