@@ -141,7 +141,7 @@ Below them are the logs:
 
 ### Adapter and about
 
-The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them.
+The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them.
 
 ## Install in four steps
 
@@ -168,7 +168,7 @@ Each [GitHub Release](https://github.com/enigy/carlink/releases) also attaches t
 
 ## Under the hood
 
-**Version 2.06**, out through Google Play internal testing and tested in the truck with every release. `:app`, `:bridge` and `:bridge-api` build; ktlint, detekt, Android lint and **635 unit tests** pass.
+**Version 2.07**, out through Google Play internal testing and tested in the truck with every release. `:app`, `:bridge` and `:bridge-api` build; ktlint, detekt, Android lint and **686 unit tests** pass.
 
 ### Adapter
 

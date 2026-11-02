@@ -2,9 +2,9 @@ package com.carlink.ui.components
 
 import android.content.Context
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,8 +22,8 @@ import com.carlink.ocbm.OneFileInstall
 
 /**
  * The connecting screen's panel for the adapter's one-file install, or [otherwise] when there is
- * nothing to say. While the trial keeps stock CarPlay the panel offers the way back, and its being on
- * screen is what lets the trial be confirmed ([com.carlink.ocbm.InstallSession.wayBackShown]).
+ * nothing to say. While the trial keeps stock CarPlay the panel offers the way back. Being on screen
+ * confirms nothing: the install finishes only when the driver agrees to for an update (Scott, 1 Nov).
  */
 @Composable
 internal fun InstallPanelOr(
@@ -41,7 +41,7 @@ internal fun InstallPanelOr(
         goBack == GoBackResult.GOING ->
             InstallPanel("Restarting on stock CarPlay", "About 30 seconds. The adapter comes back on its Carlinkit firmware.")
         current != null && current.mode.stockKept && !trialSeen ->
-            TrialPanel(current, onShown = session::wayBackShown, onContinue = { trialSeen = true }, onGoBack = session::goBackToStock)
+            TrialPanel(current, onContinue = { trialSeen = true }, onGoBack = session::goBackToStock)
         current != null && current.mode == InstallMode.FINAL && !finishSeen -> {
             val acknowledge = {
                 FinishNotice.markSeen(context, current.serial)
@@ -57,19 +57,17 @@ internal fun InstallPanelOr(
     }
 }
 
-/** The trial: stock CarPlay stays until this drive ends, and the way back (asked once more in a dialog). */
+/** The trial: stock CarPlay stays as the fallback until the driver agrees to remove it, and the way back (asked once more in a dialog). */
 @Composable
 private fun TrialPanel(
     install: OneFileInstall,
-    onShown: () -> Unit,
     onContinue: () -> Unit,
     onGoBack: () -> Unit,
 ) {
     var asking by remember { mutableStateOf(false) }
-    LaunchedEffect(install.mode) { onShown() }
     InstallPanel(
         title = "Welcome to OCBM",
-        body = "${installLabel(install)}. Your adapter passed its self-test. Stock CarPlay stays on it until this drive ends.\n$STICK_OUT",
+        body = trialText(install),
         primary = "Continue" to onContinue,
         wayBack = { asking = true },
     )
@@ -102,6 +100,37 @@ internal fun GoBackToStockDialog(
         weight = DialogWeight.DANGER,
     )
 }
+
+/**
+ * "Remove stock CarPlay?" (Scott, 2 Nov): finishing deletes the copy of the Carlinkit firmware on the adapter, and the
+ * USB stick's backup is then the way back. Asked once more, as the way back is.
+ */
+@Composable
+internal fun RemoveStockDialog(
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    CarlinkDialog(
+        title = "Remove stock CarPlay?",
+        text =
+            "OCBM passed its self-test and has carried CarPlay. Removing stock CarPlay deletes the copy of the Carlinkit " +
+                "firmware on the adapter, which frees the room for updates. After that, the backup on your USB stick is the " +
+                "way back to stock. It's removed when this drive ends.",
+        confirmLabel = "Remove",
+        onConfirm = onRemove,
+        onDismiss = onDismiss,
+        icon = Icons.Default.DeleteSweep,
+        weight = DialogWeight.DANGER,
+    )
+}
+
+/**
+ * The welcome card's text for a trial (Scott, 1 Nov): stock CarPlay stays as the fallback, and Carlink asks before removing
+ * it. It was "until this drive ends", from when the trial finished on its own.
+ */
+internal fun trialText(install: OneFileInstall): String =
+    "${installLabel(install)}. Your adapter passed its self-test. Stock CarPlay stays on it as a fallback, " +
+        "and Carlink asks before removing it.\n$STICK_OUT"
 
 /** "OCBM 1.0.0 · trial": the install's version (when read) and mode, as the panels and Settings show it. */
 internal fun installLabel(install: OneFileInstall): String = "OCBM${install.version?.let { " $it" }.orEmpty()} · ${install.mode.wire}"

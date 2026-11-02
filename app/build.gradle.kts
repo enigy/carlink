@@ -34,7 +34,7 @@ android {
         targetSdk = 36
         // versionCode is the single source of truth (Play requires a monotonic integer; it is also
         // the release tag vNNN). versionName is DERIVED so the two can never drift: 1 -> "0.01".
-        val appVersionCode = 206
+        val appVersionCode = 207
         versionCode = appVersionCode
         versionName = "%d.%02d".format(appVersionCode / 100, appVersionCode % 100)
 
@@ -45,11 +45,11 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // OCBM one-file install (handoff 10-28): MGMT_INSTALL_CONFIRM lets the adapter delete the
-        // Carlinkit stack when the session ends, and there is no way back from that without an SPI
-        // programmer yet. Off until the no-programmer way back is built and proven and the owner
-        // agrees; with it off the app shows the trial and the way back but holds the confirm.
-        // -Pcarlink.installConfirm=true turns it on for a deliberate bench build.
-        val installConfirm = (findProperty("carlink.installConfirm") as String?).toBoolean()
+        // Carlinkit stack when the session ends; after that the USB stick's backup is the way back. It
+        // is sent only on the driver's Yes: "Remove stock CarPlay" in Settings, or an update that needs
+        // the room. On in every build, Play included (Scott, 2 Nov); -Pcarlink.installConfirm=false
+        // builds one that never sends it.
+        val installConfirm = (findProperty("carlink.installConfirm") as String?)?.toBoolean() ?: true
         buildConfigField("boolean", "INSTALL_CONFIRM", installConfirm.toString())
 
         vectorDrawables {
@@ -84,12 +84,19 @@ android {
     // overrides it for either; turning it on for Play is a commit here and a normal tagged release.
     val stockConversion = (findProperty("carlink.stockConversion") as String?)?.toBoolean()
 
+    // Updating an adapter already on OCBM from Settings › Adapter (remote updates plan, U2): on in debug builds, which
+    // also read a bench package from the head unit, and off in release builds until the first package is published and
+    // pinned (U4/U5). -Pcarlink.adapterUpdates=true|false overrides it for either.
+    val adapterUpdates = (findProperty("carlink.adapterUpdates") as String?)?.toBoolean()
+
     buildTypes {
         debug {
             buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: true).toString())
+            buildConfigField("boolean", "ADAPTER_UPDATES", (adapterUpdates ?: true).toString())
         }
         release {
             buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: false).toString())
+            buildConfigField("boolean", "ADAPTER_UPDATES", (adapterUpdates ?: false).toString())
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true

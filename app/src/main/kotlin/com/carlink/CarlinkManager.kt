@@ -61,12 +61,16 @@ import com.carlink.navigation.LaneActivity
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.OcbmNavigationFeed
 import com.carlink.navigation.compose.ComposedIconStore
+import com.carlink.ocbm.AdapterUpdateSession
+import com.carlink.ocbm.AdapterUpdateStore
 import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.CarPlayDock
+import com.carlink.ocbm.CarPlaySessionRecord
 import com.carlink.ocbm.ConnectAttempt
 import com.carlink.ocbm.HostInstanceNonce
+import com.carlink.ocbm.InstallMode
 import com.carlink.ocbm.InstallSession
 import com.carlink.ocbm.LivePhone
 import com.carlink.ocbm.Ocbm
@@ -78,8 +82,12 @@ import com.carlink.ocbm.PhoneSetup
 import com.carlink.ocbm.PixelRect
 import com.carlink.ocbm.RawBulkTransport
 import com.carlink.ocbm.SplitViewArea
+import com.carlink.ocbm.StockRemover
+import com.carlink.ocbm.UpdateBox
+import com.carlink.ocbm.UpdateHost
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
+import com.carlink.ocbm.finishBlocked
 import com.carlink.ocbm.seam.SeamPipe
 import com.carlink.ocbm.seam.ViewAreaRect
 import com.carlink.protocol.AdapterConfig
@@ -255,6 +263,10 @@ class CarlinkManager(
         // Refresh at half the timeout so a missed tick still leaves a full margin.
         private const val WAKE_LOCK_TIMEOUT_MS = 2 * 60 * 60 * 1000L // 2h
         private const val WAKE_LOCK_REFRESH_INTERVAL_MS = WAKE_LOCK_TIMEOUT_MS / 2
+
+        // The adapter's start-up self-test of this start (ocbm_dispatch.sh): its last line is "PASSED in N s" or "FAILED …".
+        private const val SELFTEST_FILE = "/tmp/ocbm_selftest.txt"
+        private const val SELFTEST_TIMEOUT_MS = 5_000L
 
         // How long a forgotten device's MAC is suppressed from list merges while the box
         // processes the forget (it restarts wireless, which is not instant).
@@ -556,6 +568,38 @@ class CarlinkManager(
 
     /** The Connect press being followed, or its outcome while it stands ([PhoneConnectTracker]). */
     val connectAttempt: StateFlow<ConnectAttempt?> get() = connectTracker.attempt
+
+    /** The adapters that have carried a CarPlay session in their trial: one must have before its install finishes. */
+    private val carPlaySessions = CarPlaySessionRecord(context.applicationContext)
+
+    /** Settings › Adapter's "Remove stock CarPlay": the driver finishes a proven trial on purpose (Scott, 2 Nov). */
+    val stockRemoval =
+        StockRemover(
+            proven = { finishBlocked(client?.let(::selfTestOf), carriedCarPlay()) },
+            confirm = { oneFileInstall.confirmFinish() },
+            scope = scope,
+        )
+
+    /** Updating the adapter in use to a newer OCBM from Settings › Adapter (remote updates plan, U2). */
+    val adapterUpdate =
+        AdapterUpdateSession(
+            host =
+                object : UpdateHost {
+                    override fun box(): UpdateBox? = client?.let(::updateBox)
+
+                    override fun notNow(): String? = updateBlockedReason()
+
+                    override fun updated() = oneFileInstall.refreshNow()
+
+                    override fun carriedCarPlay(): Boolean = this@CarlinkManager.carriedCarPlay()
+
+                    override fun confirmInstall(): Int? = oneFileInstall.confirmFinish()
+                },
+            packages = AdapterUpdateStore(context.applicationContext),
+            install = oneFileInstall.install,
+            scope = scope,
+            switches = AdapterUpdateSession.Switches(enabled = BuildConfig.ADAPTER_UPDATES, canFinish = BuildConfig.INSTALL_CONFIRM),
+        )
 
     /** Pairing an iPhone on the connecting screen, when the adapter has no phone paired or none comes. */
     val phoneSetup =
@@ -1474,6 +1518,7 @@ class CarlinkManager(
         armBoxLogStream(c)
         syncPhonePolicyAfterSubscribe()
         oneFileInstall.onSubscribed()
+        adapterUpdate.onSubscribed()
         phoneSetup.onSubscribed()
 
         setStatusText("Waiting for phone...")
@@ -1572,6 +1617,8 @@ class CarlinkManager(
         cancelReconnect()
         OcbmNavigationFeed.clear() // Carlink: drop the route so the cluster does not show a stale trip
         oneFileInstall.reset()
+        stockRemoval.reset()
+        adapterUpdate.reset()
         phoneSetup.reset()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
@@ -2898,6 +2945,58 @@ class CarlinkManager(
         callEchoMonitor = null
     }
 
+    /** The adapter update's view of the client in use. */
+    private fun updateBox(c: OcbmClient): UpdateBox =
+        object : UpdateBox {
+            override val takesUpdates: Boolean get() = c.supportsUpdate
+
+            override fun info(): String? = c.mgmtGetInfo()
+
+            override fun push(
+                path: String,
+                bytes: ByteArray,
+                progress: (done: Long, total: Long) -> Unit,
+            ): Result<Unit> = c.pushFile(path, bytes, progress = progress)
+
+            override fun update(
+                sha256: String,
+                timeoutMs: Long,
+            ): Int? = c.mgmtAction(Ocbm.MGMT_UPDATE, sha256.toByteArray(Charsets.US_ASCII), timeoutMs)
+
+            override fun selfTest(): String? = selfTestOf(c)
+        }
+
+    /** The last line of the adapter's start-up self-test of this start; null when it couldn't be read. Blocks. */
+    private fun selfTestOf(c: OcbmClient): String? =
+        c
+            .pullFile(SELFTEST_FILE, timeoutMs = SELFTEST_TIMEOUT_MS)
+            .getOrNull()
+            ?.toString(Charsets.UTF_8)
+            ?.lines()
+            ?.lastOrNull { it.isNotBlank() }
+
+    /** Whether the adapter in use has carried a CarPlay session in its trial ([CarPlaySessionRecord]). */
+    private fun carriedCarPlay(): Boolean {
+        noteCarPlaySession()
+        val serial = oneFileInstall.install.value?.serial ?: return false
+        return carPlaySessions.contains(serial)
+    }
+
+    /** A CarPlay session streams on a trial adapter: remember the adapter ([CarPlaySessionRecord]). */
+    private fun noteCarPlaySession() {
+        val install = oneFileInstall.install.value ?: return
+        val carPlay = projectionMode == Ocbm.PM_WIRED_CP || projectionMode == Ocbm.PM_WIRELESS_CP
+        if (state == State.STREAMING && carPlay && install.mode == InstallMode.TRIAL) carPlaySessions.add(install.serial)
+    }
+
+    /** Why the adapter can't be updated right now, or null when it can: the car parked, and no call. */
+    private fun updateBlockedReason(): String? =
+        when {
+            isDriving -> "The car is moving. Park, then update the adapter."
+            voiceRouter?.isCallActive() == true -> "A phone call is active. Update the adapter after the call."
+            else -> null
+        }
+
     /** Why the parked call-audio tests can't run right now, or null when they can. */
     fun audioTestBlockedReason(): String? =
         when {
@@ -3599,6 +3698,7 @@ class CarlinkManager(
         if (state != State.DEVICE_CONNECTED) return
         lastStreamingStartMs = SystemClock.elapsedRealtime()
         setState(State.STREAMING)
+        noteCarPlaySession()
     }
 
     /**

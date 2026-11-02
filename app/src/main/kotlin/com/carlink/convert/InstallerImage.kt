@@ -55,15 +55,16 @@ object InstallerImage {
 
     fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
 
-    /** [bytes] when their SHA-256 is [sha256] (and, if given, their size [size]); a failure that says why otherwise. */
+    /** [bytes] when their SHA-256 is [sha256] (and, if given, their size [size]); a failure that says why otherwise, naming [what] they are. */
     fun checked(
         bytes: ByteArray,
         sha256: String,
         size: Long? = null,
+        what: String = "installer",
     ): Result<ByteArray> =
         when {
-            size != null && bytes.size.toLong() != size -> Result.failure(IOException("The installer is ${bytes.size} bytes, not the $size expected."))
-            sha256Hex(bytes) != sha256.lowercase() -> Result.failure(IOException("The installer's SHA-256 does not match. Nothing was written."))
+            size != null && bytes.size.toLong() != size -> Result.failure(IOException("The $what is ${bytes.size} bytes, not the $size expected."))
+            sha256Hex(bytes) != sha256.lowercase() -> Result.failure(IOException("The $what's SHA-256 does not match. Nothing was written."))
             else -> Result.success(bytes)
         }
 }
@@ -139,31 +140,43 @@ class InstallerImageStore(
             cached.delete()
         }
         logInfo("[CONVERT] downloading installer ${p.tag} from ${p.url}", tag = Logger.Tags.ADAPTR)
-        val bytes = download(p, progress)
+        val bytes = ReleaseDownload.fetch(p.url, p.sizeBytes, progress)
         return InstallerImage.checked(bytes, p.sha256, p.sizeBytes).onSuccess {
             cached.parentFile?.mkdirs()
             runCatching { cached.writeBytes(it) }
         }
     }
 
-    private fun download(
-        p: PinnedImage,
-        progress: (Long, Long) -> Unit,
+    private companion object {
+        /** Where -Pcarlink.benchImage packs the copy in a debug APK's assets. */
+        const val PACKED_IMAGE = "ocbm/${InstallerImage.FILE_NAME}"
+    }
+}
+
+/** A pinned enigy/ocbm release asset, downloaded whole: the installer image, or an adapter update package. */
+internal object ReleaseDownload {
+    private const val TIMEOUT_MS = 20_000
+    private const val READ_BUF = 64 * 1024
+
+    /** All of [url], refusing more than [cap] bytes (the pinned size), reporting progress as it goes. */
+    fun fetch(
+        url: String,
+        cap: Long,
+        progress: (done: Long, total: Long) -> Unit,
     ): ByteArray {
-        val conn = URL(p.url).openConnection() as HttpURLConnection
+        val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = TIMEOUT_MS
             conn.readTimeout = TIMEOUT_MS
             conn.setRequestProperty("User-Agent", "Carlink/${BuildConfig.VERSION_NAME} (https://github.com/enigy/carlink)")
             val code = conn.responseCode
-            if (code != HttpURLConnection.HTTP_OK) throw IOException("HTTP $code from the image's release")
-            return conn.inputStream.use { readCapped(it, p.sizeBytes, progress) }
+            if (code != HttpURLConnection.HTTP_OK) throw IOException("HTTP $code from the release")
+            return conn.inputStream.use { readCapped(it, cap, progress) }
         } finally {
             conn.disconnect()
         }
     }
 
-    /** All of [input], refusing more than [cap] bytes (the pinned size), reporting progress as it goes. */
     private fun readCapped(
         input: InputStream,
         cap: Long,
@@ -173,18 +186,11 @@ class InstallerImageStore(
         val buf = ByteArray(READ_BUF)
         var n = input.read(buf)
         while (n >= 0) {
-            if (out.size() + n > cap) throw IOException("the download is larger than the pinned image")
+            if (out.size() + n > cap) throw IOException("the download is larger than the pinned file")
             out.write(buf, 0, n)
             progress(out.size().toLong(), cap)
             n = input.read(buf)
         }
         return out.toByteArray()
-    }
-
-    private companion object {
-        /** Where -Pcarlink.benchImage packs the copy in a debug APK's assets. */
-        const val PACKED_IMAGE = "ocbm/${InstallerImage.FILE_NAME}"
-        const val TIMEOUT_MS = 20_000
-        const val READ_BUF = 64 * 1024
     }
 }
