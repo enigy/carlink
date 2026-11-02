@@ -29,8 +29,8 @@ It builds the app and the USB bridge, then runs ktlint, detekt and the unit test
 merges only with the gate green.
 
 - **ktlint** follows `.editorconfig` (lines up to 180). Fix what it reports in the files you changed.
-  Don't reformat files you didn't touch: some are verbatim ports from Carlink2, excluded in
-  `.editorconfig` on purpose.
+  Don't reformat files you didn't touch: some are verbatim ports from Carlink-legacy (formerly
+  Carlink2), excluded in `.editorconfig` on purpose.
 - **detekt** runs `detekt.yml` against `detekt-baseline.xml`, so only new findings fail. Fix a
   finding rather than adding it to the baseline. An `@Suppress` needs a comment saying why (see
   `StockConversion` and `BulkOnlyStorage` for the pattern).

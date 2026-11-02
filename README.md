@@ -154,7 +154,7 @@ First, the adapter needs lvalen91's OCBM userspace, installed per his documentat
 
 ### About the bridge
 
-The bridge uses the same package name as Carlink2's (`android.car.usb.handler`, the name GM's head unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink2's (carlink-legacy) bridge. From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store. 1.0.6 adds a second way to open a device, for the USB stick a stock adapter shares while Carlink converts it; Carlink's connection to the adapter is unchanged, so 1.0.5 still works for everything else.
+The bridge uses the same package name as Carlink-legacy's (`android.car.usb.handler`, the name GM's head unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink-legacy's bridge. From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store. 1.0.6 adds a second way to open a device, for the USB stick a stock adapter shares while Carlink converts it; Carlink's connection to the adapter is unchanged, so 1.0.5 still works for everything else.
 
 ### Check the download
 
@@ -186,16 +186,16 @@ Removed from OCBM: `:projection` (Raspberry Pi target), `:car-system-stubs` (sys
 
 ### Engineering notes
 
-- **Transport:** the bridge relays the adapter's bulk stream raw (API 3), and the app reaches it through `BridgeBulkTransport`, an implementation of OCBM's `RawBulkTransport`; `OcbmClient` is unchanged. The bridge is required: the app has no USB access of its own (no USB permission, no USB dialog, no claim on the device), like Carlink2 since its [204]. The bridge gets USB permission silently on every attach and shows a one-tap prompt for an adapter that attached during boot.
-- **Cluster/HUD navigation:** Carlink2's Templates Host pipeline (`cluster/`, `navigation/`, the compose icon store) is the base. `navigation/OcbmNavigationFeed` turns the box's `routeGuidance` / `maneuver` JSON (`CH_METADATA`) into the `NavigationState` it renders, including the exit label ("Exit 123 · John Smith Rd") and the lanes. Junction spoke angles (`junctionAngles` / `junctionExitAngle`) are consumed when the box emits them: that is the `patches/ocbm/` change, on the fork's `route-guidance-exitinfo-angles` branch. Against an unpatched box, roundabout icons fall back to the static glyph per maneuver type.
+- **Transport:** the bridge relays the adapter's bulk stream raw (API 3), and the app reaches it through `BridgeBulkTransport`, an implementation of OCBM's `RawBulkTransport`; `OcbmClient` is unchanged. The bridge is required: the app has no USB access of its own (no USB permission, no USB dialog, no claim on the device), like Carlink-legacy since its [204]. The bridge gets USB permission silently on every attach and shows a one-tap prompt for an adapter that attached during boot.
+- **Cluster/HUD navigation:** Carlink-legacy's Templates Host pipeline (`cluster/`, `navigation/`, the compose icon store) is the base. `navigation/OcbmNavigationFeed` turns the box's `routeGuidance` / `maneuver` JSON (`CH_METADATA`) into the `NavigationState` it renders, including the exit label ("Exit 123 · John Smith Rd") and the lanes. Junction spoke angles (`junctionAngles` / `junctionExitAngle`) are consumed when the box emits them: that is the `patches/ocbm/` change, on the fork's `route-guidance-exitinfo-angles` branch. Against an unpatched box, roundabout icons fall back to the static glyph per maneuver type.
 - **CI and protocol drift:** `.github/workflows/gate.yml` runs the same gate as local on every push and PR. It first runs `tools/proto_check.py`, which compares the Kotlin `OcbmProto.kt` against the reference copy of OCBM's canonical table in `proto/` (OCBM's own checker only sees clients inside its repo). Refresh `proto/ocbm-proto.lib.rs` whenever the box is rebuilt from a newer OCBM.
-- **Style gates:** files ported byte-identical from Carlink2 are excluded from ktlint in `.editorconfig` (`ktlint = disabled` per file), and their detekt findings are baselined. Carlink2 ran ktlint with `ignoreFailures=true`, so it never shaped them. Everything written for Carlink is gated.
+- **Style gates:** files ported byte-identical from Carlink-legacy are excluded from ktlint in `.editorconfig` (`ktlint = disabled` per file), and their detekt findings are baselined. Carlink-legacy ran ktlint with `ignoreFailures=true`, so it never shaped them. Everything written for Carlink is gated.
 
 See `NOTICE.md` for provenance.
 
 ## Releasing
 
-`.github/workflows/release.yml` is Carlink2's release pipeline with the names changed. It signs the `sideloadRelease` AAB and the bridge APK with the upload key from the `CARLINK_*` secrets, uploads the AAB to Google Play (`com.enigy.carlink3`) and attaches both to a GitHub Release.
+`.github/workflows/release.yml` is Carlink-legacy's release pipeline with the names changed. It signs the `sideloadRelease` AAB and the bridge APK with the upload key from the `CARLINK_*` secrets, uploads the AAB to Google Play (`com.enigy.carlink3`) and attaches both to a GitHub Release.
 
 - **Version:** `appVersionCode` in `app/build.gradle.kts` is the only number to bump. `versionName` derives from it (100 is 1.00, 101 is 1.01), and the release tag must be `v<appVersionCode>`.
 - **Tag push `vNNN`:** build, upload to Internal testing, GitHub Release. **Manual run** from main: pick the track; untick *Upload* to build only. Runs from other branches never upload.
