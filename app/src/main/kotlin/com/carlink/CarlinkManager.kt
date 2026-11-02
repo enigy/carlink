@@ -386,6 +386,12 @@ class CarlinkManager(
          * [answerPairing]; the box waits up to 55 s and then cancels on its own. Main thread.
          */
         fun onPairingCodeChanged(code: String?) {}
+
+        /**
+         * The phone left the session on screen (`SEV_PHONE_ABSENT`): the UI covers its last frame again
+         * until a frame of the next session is drawn. Main thread.
+         */
+        fun onPhoneLeft() {}
     }
 
     /** The pairing code currently awaiting the user's Pair / Cancel, or null. */
@@ -2670,6 +2676,10 @@ class CarlinkManager(
                 // on screen with touch still live and this very status text invisible behind it.
                 // The OCBM session itself stays up by design; only the UI state reflects reality.
                 if (state == State.STREAMING) setState(State.DEVICE_CONNECTED)
+                // A session that dropped before its first media never reached STREAMING, so the line
+                // above changes nothing and the screen kept the last frame over this text (bench
+                // 2026-11-02, 11:17). Tell the screen outright.
+                callback?.onPhoneLeft()
                 setStatusText("Waiting for phone...")
             }
         }

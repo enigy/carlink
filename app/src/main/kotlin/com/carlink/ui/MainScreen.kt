@@ -39,6 +39,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -115,6 +116,9 @@ private class SessionUiState {
 
     /** True once the decoder has put a frame on the Surface in DEVICE_CONNECTED (polled; see [SessionEffects]). */
     var videoOnScreen by mutableStateOf(false)
+
+    /** Counts the phone leaving a session on screen ([CarlinkManager.Callback.onPhoneLeft]); restarts the first-frame watch. */
+    var phoneLeft by mutableIntStateOf(0)
 
     /** The wireless pairing code awaiting Pair / Cancel (CT_PAIRING_CODE), or null. */
     var pairingCode by mutableStateOf<String?>(null)
@@ -271,8 +275,9 @@ private fun SessionEffects(
     // carlink_native STREAMING edge did. Cancelled by the state change that keys it.
     // A frame rendered since entering the state, not the count so far: when the phone walks away the
     // manager drops STREAMING back to DEVICE_CONNECTED to show "Waiting for phone", and the old
-    // session's frames lifted the overlay at once over the last frozen picture (2026-10-22).
-    LaunchedEffect(ui.connectionState) {
+    // session's frames lifted the overlay at once over the last frozen picture (2026-10-22). A session
+    // that drops before STREAMING stays DEVICE_CONNECTED, so the phone leaving restarts the watch too.
+    LaunchedEffect(ui.connectionState, ui.phoneLeft) {
         ui.videoOnScreen = false
         if (ui.connectionState != CarlinkManager.State.DEVICE_CONNECTED) return@LaunchedEffect
         val (startEpoch, startFrames) = carlinkManager.videoFrameMark()
@@ -330,6 +335,13 @@ private fun SessionEffects(
 
                     override fun onPairingCodeChanged(code: String?) {
                         ui.pairingCode = code
+                    }
+
+                    override fun onPhoneLeft() {
+                        logInfo("[UI_STATE] Phone left — the last frame is covered until the next session draws one", tag = "UI")
+                        // Touch stops with the picture; pointers it never saw lift must not resurface.
+                        ui.activeTouches.clear()
+                        ui.phoneLeft++
                     }
                 },
         )
