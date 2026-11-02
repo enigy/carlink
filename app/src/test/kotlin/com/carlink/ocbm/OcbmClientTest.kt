@@ -520,6 +520,30 @@ class OcbmClientTest {
         assertTrue(failure(silent()).contains("FILE_OPEN: no answer"))
     }
 
+    @Test
+    fun `the stall snapshot names the frame the read thread is parked in`() {
+        // Bench 2026-11-02: three link stalls, and nothing said which side stopped first.
+        val t = FakeTransport()
+        val c = newClient(t)
+        assertTrue(c.stallSnapshot(), c.stallSnapshot().contains("last bytes from the adapter never"))
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        c.onBoxLog = {
+            entered.countDown()
+            release.await()
+        }
+        val feeder = thread { t.deliver(Ocbm.CH_LOG, ByteArray(1)) }
+        assertTrue(entered.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        val parked = c.stallSnapshot()
+        assertTrue(parked, parked.contains("read thread in LOG dispatch for"))
+        assertTrue(parked, parked.contains("read thread at "))
+        release.countDown()
+        feeder.join(2000)
+        val idle = c.stallSnapshot()
+        assertTrue(idle, idle.contains("read thread waiting for bytes"))
+        assertTrue(idle, idle.contains("ms ago"))
+    }
+
     private fun drainWritten(t: FakeTransport) {
         while (t.takeWritten(50) != null) Unit
     }

@@ -43,4 +43,16 @@ class OneFileInstallTest {
         assertFalse("finished", mayConfirmInstall(InstallMode.FINAL, buildAllows = true))
         assertFalse("not a one-file install", mayConfirmInstall(null, buildAllows = true))
     }
+
+    @Test
+    fun `the self-test's last line is its verdict once it has one`() {
+        // 2 Nov bench: read at the session's start, since a pull during CarPlay timed out.
+        val file = "ocbm_selftest: gadget 1314:2d00\nocbm_selftest: ocbmd up\nPASSED in 41 s\n\n"
+        assertEquals("PASSED in 41 s", OneFileInstall.selfTestOf(file))
+        assertTrue(OneFileInstall.isVerdict("PASSED in 41 s"))
+        assertTrue(OneFileInstall.isVerdict("FAILED: no ocbmd"))
+        assertFalse("still running: read it again later", OneFileInstall.isVerdict("ocbm_selftest: ocbmd up"))
+        assertFalse(OneFileInstall.isVerdict(null))
+        assertNull(OneFileInstall.selfTestOf("  \n"))
+    }
 }

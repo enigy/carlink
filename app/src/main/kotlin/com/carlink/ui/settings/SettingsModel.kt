@@ -10,6 +10,11 @@ data class PhoneSnapshot(
     /** 1 = wireless, 0 = USB, -1 = the adapter did not say. */
     val wifi: Int = -1,
     val btMac: String? = null,
+    /**
+     * False once the adapter says no phone is on it (`SEV_PHONE_ABSENT`). The session's [phoneType] outlives a
+     * wireless phone that dropped while the adapter waits for one (2 Nov bench: "iPhone · Wired CarPlay" stayed).
+     */
+    val present: Boolean = true,
 )
 
 /** The phone the box reports as connected right now, named for the Phones pane. */
@@ -53,7 +58,7 @@ object SettingsModel {
         phone: PhoneSnapshot,
         devices: List<CarlinkManager.DeviceInfo>,
     ): ConnectedPhone? {
-        val type = phone.phoneType ?: return null
+        val type = phone.phoneType?.takeIf { phone.present } ?: return null
         val wireless = phone.wifi == 1 || type == PhoneType.CARPLAY_WIRELESS
         val device = if (wireless) devices.firstOrNull { it.btMac == phone.btMac } else null
         val name =
@@ -110,8 +115,16 @@ object SettingsModel {
         lanes: Boolean = false,
     ): String = (if (on) "Directions on" else "Directions off") + if (lanes) " · Lane guidance on" else ""
 
-    /** Troubleshoot: the fixes, and the logs that now live beside them; says when a drive log is running. */
-    fun troubleshootSummary(driveLog: Boolean): String = if (driveLog) "Fixes and logs · Recording drive log" else "Fixes and logs"
+    /** Troubleshoot: the fixes, and the logs that now live beside them; says when a drive log is running, or is on and writes nothing. */
+    fun troubleshootSummary(
+        driveLog: Boolean,
+        driveLogTrouble: Boolean = false,
+    ): String =
+        when {
+            !driveLog -> "Fixes and logs"
+            driveLogTrouble -> "Fixes and logs · Drive log not recording"
+            else -> "Fixes and logs · Recording drive log"
+        }
 
     fun adapterSummary(
         adapterName: String,

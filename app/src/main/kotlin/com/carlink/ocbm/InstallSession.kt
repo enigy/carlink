@@ -108,8 +108,23 @@ class InstallSession(
                 .getOrNull()
                 ?.toString(Charsets.UTF_8)
                 ?.let(OneFileInstall::versionOf)
-        installState.value = OneFileInstall(mode, version, info.optString("serial"))
-        logInfo("[INSTALL] one-file install: ${mode.wire}, version ${version ?: "unknown"}", tag = Logger.Tags.ADAPTR)
+        // A trial's self-test, read now, while nothing streams: a pull during CarPlay timed out on the 2 Nov bench,
+        // so Remove stock CarPlay said the self-test hadn't passed when it had.
+        val selfTest =
+            if (mode != InstallMode.TRIAL) {
+                null
+            } else {
+                c
+                    .pullFile(OneFileInstall.SELFTEST_FILE, timeoutMs = VERSION_TIMEOUT_MS)
+                    .getOrNull()
+                    ?.toString(Charsets.UTF_8)
+                    ?.let(OneFileInstall::selfTestOf)
+            }
+        installState.value = OneFileInstall(mode, version, info.optString("serial"), selfTest)
+        logInfo(
+            "[INSTALL] one-file install: ${mode.wire}, version ${version ?: "unknown"}" + (selfTest?.let { ", self-test $it" } ?: ""),
+            tag = Logger.Tags.ADAPTR,
+        )
     }
 
     private fun parse(json: String): JSONObject? =

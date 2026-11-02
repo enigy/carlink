@@ -368,12 +368,17 @@ class OcbmClient(
         }
         if (!running.compareAndSet(false, true)) return
         transport.setReadHandler { data, len ->
+            readThread = Thread.currentThread()
+            lastInNs = System.nanoTime()
             bytesIn += len
             reasm.push(data, len)
             while (true) {
                 val f = reasm.next() ?: break
                 framesIn++
+                dispatchChannel = f.channel
+                dispatchSinceNs = System.nanoTime()
                 dispatch(f)
+                dispatchSinceNs = 0L
             }
         }
         transport.setDeadHandler { announceLinkDead("read loop died") }
@@ -405,6 +410,38 @@ class OcbmClient(
             Ocbm.CH_LOG -> onBoxLog?.invoke(BoxLogEntries.parse(f.payload))
             else -> dropAv(f)
         }
+    }
+
+    // ---- stall diagnosis ------------------------------------------------------------------------
+
+    @Volatile private var readThread: Thread? = null
+
+    @Volatile private var lastInNs = 0L
+
+    /** When the frame being dispatched now started, or 0 between frames. */
+    @Volatile private var dispatchSinceNs = 0L
+
+    @Volatile private var dispatchChannel = -1
+
+    /**
+     * Where the read side is, for the log when the heartbeat stops getting through. On the 2026-11-02 bench
+     * the link stalled three times and nothing said which side stopped first: the adapter blocks in its
+     * USB write when nobody reads, and then it reads nothing either. This line says whether Carlink's read
+     * thread was parked in a frame's dispatch (and where), or waiting for bytes that never came.
+     */
+    fun stallSnapshot(nowNs: Long = System.nanoTime()): String {
+        val since = dispatchSinceNs
+        val reader =
+            if (since != 0L) "in ${Ocbm.channelName(dispatchChannel)} dispatch for ${(nowNs - since) / NANOS_PER_MS} ms" else "waiting for bytes"
+        val lastIn = lastInNs.takeIf { it != 0L }?.let { "${(nowNs - it) / NANOS_PER_MS} ms ago" } ?: "never"
+        val at =
+            readThread
+                ?.stackTrace
+                ?.take(STALL_STACK_FRAMES)
+                ?.joinToString(" < ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+        val transportState = transport.diagnostics().ifEmpty { null }?.let { "; $it" } ?: ""
+        return "last bytes from the adapter $lastIn; read thread $reader; tx queue ${txQ.size}$transportState" +
+            (at?.let { "; read thread at $it" } ?: "")
     }
 
     /** The request/reply channels each park their replies on a queue the blocking caller polls. */
@@ -946,14 +983,17 @@ class OcbmClient(
                                 }
                             } else if (run {
                                     stableTicks = 0
-                                    ++writeFailures
+                                    // The first failure says where the read side is; by the fifth the
+                                    // picture may have moved (bench 2026-11-02).
+                                    if (++writeFailures == 1) log.w("!! heartbeat write failed — ${stallSnapshot()}")
+                                    writeFailures
                                 } >= 5
                             ) {
                                 // stableTicks resets here so "consecutive healthy ticks" is actually
                                 // consecutive. Without it, 29 good ticks then a burst of failures then
                                 // one good tick still reaches 30 and clears the backoff, on a link that
                                 // demonstrably glitched seconds earlier.
-                                log.e("!! heartbeat write failed ${writeFailures}x — link presumed dead")
+                                log.e("!! heartbeat write failed ${writeFailures}x — link presumed dead; ${stallSnapshot()}")
                                 // FATAL, and deliberately NOT signalled as SEV_HOST_GONE: that event means
                                 // a recoverable box-side drop the backoff above handles by itself, and a
                                 // session layer that cannot tell the two apart either tears down on a
@@ -1323,3 +1363,8 @@ private const val FILE_CHUNK = 16 * 1024
 
 /** 0644: the box masks a pushed file's mode to its rwx bits and chmods the file to it. */
 private const val FILE_MODE_READABLE = 0x1A4
+
+private const val NANOS_PER_MS = 1_000_000L
+
+/** Enough of the read thread's stack to show what it is parked in, short enough for one log line. */
+private const val STALL_STACK_FRAMES = 8

@@ -24,15 +24,29 @@ enum class InstallMode(
     }
 }
 
-/** What the app shows of the install: its [mode], the installed [version] ("1.0.0") once read, and the adapter's [serial]. */
+/**
+ * What the app shows of the install: its [mode], the installed [version] ("1.0.0") once read, and the adapter's [serial].
+ * [selfTest] is the last line of a trial's start-up self-test as the session found it ("PASSED in 41 s"); null when it
+ * wasn't read.
+ */
 data class OneFileInstall(
     val mode: InstallMode,
     val version: String? = null,
     val serial: String = "",
+    val selfTest: String? = null,
 ) {
     companion object {
+        /** The adapter's start-up self-test of this start, kept in RAM: its last line is the verdict once it has one. */
+        const val SELFTEST_FILE = "/tmp/ocbm_selftest.txt"
+
         /** `/etc/ocbm/installed_version` ("1.0.0 ocbm 153df7f") to "1.0.0"; null when empty. */
         fun versionOf(installed: String): String? = installed.trim().substringBefore(' ').takeIf { it.isNotEmpty() }
+
+        /** [SELFTEST_FILE]'s last line that isn't blank; null when it has none. */
+        fun selfTestOf(file: String): String? = file.lines().lastOrNull { it.isNotBlank() }?.trim()
+
+        /** Whether a self-test line is its verdict, which holds until the adapter restarts: PASSED or FAILED. */
+        fun isVerdict(line: String?): Boolean = line != null && (line.startsWith("PASSED") || line.startsWith("FAILED"))
     }
 }
 

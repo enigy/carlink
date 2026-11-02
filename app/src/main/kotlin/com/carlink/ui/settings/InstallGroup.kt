@@ -57,7 +57,7 @@ internal fun InstallGroup(carlinkManager: CarlinkManager) {
         SettingRow(title = "Stock CarPlay", icon = Icons.Default.SettingsBackupRestore) {
             Text(stockLine(current.mode), style = SettingsStyle.RowTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (current.mode == InstallMode.TRIAL) RemoveStockRow(carlinkManager)
+        if (carlinkManager.offersStockRemoval(current)) RemoveStockRow(carlinkManager)
         if (current.mode.stockKept) {
             GroupDivider()
             SettingRow(title = "Go back to stock CarPlay", subtitle = goBackLine(goBack), icon = Icons.AutoMirrored.Filled.Undo) {

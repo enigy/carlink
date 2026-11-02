@@ -41,6 +41,14 @@ class SettingsModelTest {
     }
 
     @Test
+    fun aPhoneTheAdapterNoLongerHasIsNotConnected() {
+        // 2 Nov bench: a wireless phone dropped, the adapter waited for one, and the card still read
+        // "iPhone · Wired CarPlay" with the USB port "In use by the connected phone".
+        val gone = PhoneSnapshot(PhoneType.CARPLAY, wifi = -1, btMac = work.btMac, present = false)
+        assertNull(SettingsModel.connectedPhone(gone, listOf(work)))
+    }
+
+    @Test
     fun wirelessPhoneWithAnUnknownMacStillReads() {
         val phone = SettingsModel.connectedPhone(PhoneSnapshot(PhoneType.CARPLAY_WIRELESS, wifi = -1, btMac = "00:00:00:00:00:00"), listOf(work))!!
         assertEquals("Wireless phone", phone.name)
@@ -107,6 +115,9 @@ class SettingsModelTest {
         assertEquals("Directions on · Lane guidance on", SettingsModel.clusterSummary(true, lanes = true))
         assertEquals("Fixes and logs", SettingsModel.troubleshootSummary(false))
         assertEquals("Fixes and logs · Recording drive log", SettingsModel.troubleshootSummary(true))
+        // 2 Nov bench: "Recording drive log" with nothing written since the day before.
+        assertEquals("Fixes and logs · Drive log not recording", SettingsModel.troubleshootSummary(true, driveLogTrouble = true))
+        assertEquals("Fixes and logs", SettingsModel.troubleshootSummary(false, driveLogTrouble = true))
     }
 
     @Test

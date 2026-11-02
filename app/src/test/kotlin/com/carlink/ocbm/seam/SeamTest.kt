@@ -3,6 +3,7 @@ package com.carlink.ocbm.seam
 import com.carlink.logging.ProbeLog
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -589,5 +590,64 @@ class SeamTest {
         assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5), got)
         pipe.close()
         assertNull(readMsg(pipe))
+    }
+
+    @Test
+    fun `a pipe whose consumer stopped sheds after the stall limit instead of parking the writer`() {
+        // Bench 2026-11-02: a stopped consumer parked the USB read thread and the link died 19 s later.
+        val pipe = SeamPipe(10, queueDepth = 8, stallLimitMs = 50)
+        assertTrue(pipe.write(ByteArray(8) { 1 }))
+        assertTrue("admitted while at or under the cap", pipe.write(ByteArray(8) { 2 }))
+        val t0 = System.nanoTime()
+        assertFalse("nobody took anything for the stall limit", pipe.write(ByteArray(8) { 3 }))
+        val waitedMs = (System.nanoTime() - t0) / 1_000_000
+        assertTrue("waited $waitedMs ms", waitedMs in 50..1_000)
+        val t1 = System.nanoTime()
+        assertFalse("still stopped: shed at once", pipe.write(ByteArray(8) { 4 }))
+        assertTrue("a shed write does not wait", (System.nanoTime() - t1) / 1_000_000 < 40)
+        assertEquals(1L, pipe.stalls.get())
+        assertEquals(2L, pipe.shed.get())
+        assertEquals(0L, pipe.dropped.get())
+
+        val got = ByteArray(16)
+        assertTrue("the consumer catches up", readFully(pipe, got))
+        assertArrayEquals(ByteArray(8) { 1 } + ByteArray(8) { 2 }, got)
+        assertTrue("and the pipe takes messages again", pipe.write(ByteArray(8) { 5 }))
+        assertEquals(1L, pipe.stalls.get())
+    }
+
+    @Test
+    fun `a closed pipe drops instead of shedding`() {
+        val pipe = SeamPipe(10, stallLimitMs = 50)
+        pipe.close()
+        assertFalse(pipe.write(ByteArray(4)))
+        assertEquals(4L, pipe.dropped.get())
+        assertEquals(0L, pipe.shed.get())
+        assertTrue(pipe.isClosed)
+    }
+
+    @Test
+    fun `a video frame shed for a stopped decoder asks for a keyframe, and so does the next one taken`() {
+        val pipe = SeamPipe(10, queueDepth = 8, stallLimitMs = 20)
+        var gaps = 0
+        val seam = VideoSeam(pipe, log) { gaps++ }
+        val key = ByteArray(32) { 0x22 }
+        seam.feed(videoMsg(SeamCrypto.MARK_KEY, key + le64(1L)))
+
+        fun frameAt(seq: Long) {
+            val hdr = videoHeader(SeamCrypto.OPCODE_FRAME, keyframe = false)
+            val body = seal(key, independentVideoNonce(seq), hdr, avccAu(byteArrayOf(0x02, 0x11, 0x12, 0x13, 0x14)))
+            seam.feed(videoMsg(SeamCrypto.MARK_FRAME, le64(seq) + hdr + body))
+        }
+
+        frameAt(0) // 4 + 4 + 5 = 13 B: over the 10 B cap once in
+        assertEquals(0, gaps)
+        frameAt(1)
+        assertEquals("shed: the decoder needs an IDR", 1, gaps)
+        assertEquals(1L, seam.framesOut.get())
+        assertTrue(readMsg(pipe) != null)
+        frameAt(2)
+        assertEquals("the first frame taken after the gap asks again", 2, gaps)
+        assertEquals(2L, seam.framesOut.get())
     }
 }
