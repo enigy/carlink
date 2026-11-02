@@ -82,10 +82,12 @@ import com.carlink.ocbm.PhoneSetup
 import com.carlink.ocbm.PixelRect
 import com.carlink.ocbm.RawBulkTransport
 import com.carlink.ocbm.SplitViewArea
+import com.carlink.ocbm.StockRemover
 import com.carlink.ocbm.UpdateBox
 import com.carlink.ocbm.UpdateHost
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
+import com.carlink.ocbm.finishBlocked
 import com.carlink.ocbm.seam.SeamPipe
 import com.carlink.ocbm.seam.ViewAreaRect
 import com.carlink.protocol.AdapterConfig
@@ -567,8 +569,16 @@ class CarlinkManager(
     /** The Connect press being followed, or its outcome while it stands ([PhoneConnectTracker]). */
     val connectAttempt: StateFlow<ConnectAttempt?> get() = connectTracker.attempt
 
-    /** The adapters that have carried a CarPlay session in their trial: one must have before its install finishes for an update. */
+    /** The adapters that have carried a CarPlay session in their trial: one must have before its install finishes. */
     private val carPlaySessions = CarPlaySessionRecord(context.applicationContext)
+
+    /** Settings › Adapter's "Remove stock CarPlay": the driver finishes a proven trial on purpose (Scott, 2 Nov). */
+    val stockRemoval =
+        StockRemover(
+            proven = { finishBlocked(client?.let(::selfTestOf), carriedCarPlay()) },
+            confirm = { oneFileInstall.confirmFinish() },
+            scope = scope,
+        )
 
     /** Updating the adapter in use to a newer OCBM from Settings › Adapter (remote updates plan, U2). */
     val adapterUpdate =
@@ -581,13 +591,9 @@ class CarlinkManager(
 
                     override fun updated() = oneFileInstall.refreshNow()
 
-                    override fun carriedCarPlay(): Boolean {
-                        noteCarPlaySession()
-                        val serial = oneFileInstall.install.value?.serial ?: return false
-                        return carPlaySessions.contains(serial)
-                    }
+                    override fun carriedCarPlay(): Boolean = this@CarlinkManager.carriedCarPlay()
 
-                    override fun confirmInstall(): Int? = oneFileInstall.confirmForUpdate()
+                    override fun confirmInstall(): Int? = oneFileInstall.confirmFinish()
                 },
             packages = AdapterUpdateStore(context.applicationContext),
             install = oneFileInstall.install,
@@ -1611,6 +1617,7 @@ class CarlinkManager(
         cancelReconnect()
         OcbmNavigationFeed.clear() // Carlink: drop the route so the cluster does not show a stale trip
         oneFileInstall.reset()
+        stockRemoval.reset()
         adapterUpdate.reset()
         phoneSetup.reset()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
@@ -2956,14 +2963,24 @@ class CarlinkManager(
                 timeoutMs: Long,
             ): Int? = c.mgmtAction(Ocbm.MGMT_UPDATE, sha256.toByteArray(Charsets.US_ASCII), timeoutMs)
 
-            override fun selfTest(): String? =
-                c
-                    .pullFile(SELFTEST_FILE, timeoutMs = SELFTEST_TIMEOUT_MS)
-                    .getOrNull()
-                    ?.toString(Charsets.UTF_8)
-                    ?.lines()
-                    ?.lastOrNull { it.isNotBlank() }
+            override fun selfTest(): String? = selfTestOf(c)
         }
+
+    /** The last line of the adapter's start-up self-test of this start; null when it couldn't be read. Blocks. */
+    private fun selfTestOf(c: OcbmClient): String? =
+        c
+            .pullFile(SELFTEST_FILE, timeoutMs = SELFTEST_TIMEOUT_MS)
+            .getOrNull()
+            ?.toString(Charsets.UTF_8)
+            ?.lines()
+            ?.lastOrNull { it.isNotBlank() }
+
+    /** Whether the adapter in use has carried a CarPlay session in its trial ([CarPlaySessionRecord]). */
+    private fun carriedCarPlay(): Boolean {
+        noteCarPlaySession()
+        val serial = oneFileInstall.install.value?.serial ?: return false
+        return carPlaySessions.contains(serial)
+    }
 
     /** A CarPlay session streams on a trial adapter: remember the adapter ([CarPlaySessionRecord]). */
     private fun noteCarPlaySession() {

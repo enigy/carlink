@@ -49,11 +49,11 @@ enum class GoBackResult {
 }
 
 /**
- * Whether the app may send MGMT_INSTALL_CONFIRM, the driver having agreed to finish the install because an
- * update needs the room ([InstallSession.confirmForUpdate], the only sender; Scott, 1 Nov). The confirm starts
- * the finish: when the session ends the adapter deletes the Carlinkit stack for good. So only a [mode] of
- * TRIAL, and only from a build allowed to send it ([buildAllows]; Play builds aren't, and a bench build that
- * is needs the owner's OK). Showing the way back confirms nothing.
+ * Whether the app may send MGMT_INSTALL_CONFIRM, the driver having agreed to finish the install: to Remove stock
+ * CarPlay (Scott, 2 Nov) or to make room for an update (1 Nov); [InstallSession.confirmFinish] is the only sender.
+ * The confirm starts the finish: when the session ends the adapter deletes the Carlinkit stack for good. So only a
+ * [mode] of TRIAL, and only from a build allowed to send it ([buildAllows]: every build, Play included, unless
+ * built with -Pcarlink.installConfirm=false). Showing the way back confirms nothing.
  */
 fun mayConfirmInstall(
     mode: InstallMode?,

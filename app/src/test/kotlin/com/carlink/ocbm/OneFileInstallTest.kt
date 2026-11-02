@@ -35,9 +35,10 @@ class OneFileInstallTest {
 
     @Test
     fun `the confirm goes only to a trial, from a build that sends it`() {
-        // Scott, 1 Nov: showing the way back confirms nothing; the driver's Yes to finishing for an update is the only sender.
+        // Scott, 1-2 Nov: showing the way back confirms nothing; the driver's Yes (Remove stock CarPlay, or an update
+        // needing the room) is the only sender, in every build unless built with -Pcarlink.installConfirm=false.
         assertTrue(mayConfirmInstall(InstallMode.TRIAL, buildAllows = true))
-        assertFalse("this build doesn't send it (Play)", mayConfirmInstall(InstallMode.TRIAL, buildAllows = false))
+        assertFalse("a build made not to send it", mayConfirmInstall(InstallMode.TRIAL, buildAllows = false))
         assertFalse("already confirmed", mayConfirmInstall(InstallMode.CONFIRMED, buildAllows = true))
         assertFalse("finished", mayConfirmInstall(InstallMode.FINAL, buildAllows = true))
         assertFalse("not a one-file install", mayConfirmInstall(null, buildAllows = true))

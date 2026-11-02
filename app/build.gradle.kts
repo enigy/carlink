@@ -46,10 +46,10 @@ android {
 
         // OCBM one-file install (handoff 10-28): MGMT_INSTALL_CONFIRM lets the adapter delete the
         // Carlinkit stack when the session ends; after that the USB stick's backup is the way back. It
-        // is sent only when the driver agrees to finish the install because an update needs the room
-        // (Scott, 1 Nov), and only from a build with this on. Off in Play builds; benching or releasing
-        // a build with it on needs the owner's OK. -Pcarlink.installConfirm=true turns it on.
-        val installConfirm = (findProperty("carlink.installConfirm") as String?).toBoolean()
+        // is sent only on the driver's Yes: "Remove stock CarPlay" in Settings, or an update that needs
+        // the room. On in every build, Play included (Scott, 2 Nov); -Pcarlink.installConfirm=false
+        // builds one that never sends it.
+        val installConfirm = (findProperty("carlink.installConfirm") as String?)?.toBoolean() ?: true
         buildConfigField("boolean", "INSTALL_CONFIRM", installConfirm.toString())
 
         vectorDrawables {

@@ -2,6 +2,7 @@ package com.carlink.ui.settings
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -17,10 +18,12 @@ import com.carlink.CarlinkManager
 import com.carlink.ocbm.GoBackResult
 import com.carlink.ocbm.InstallMode
 import com.carlink.ocbm.OneFileInstall
+import com.carlink.ocbm.StockRemoval
 import com.carlink.ocbm.UpdateOffer
 import com.carlink.ocbm.UpdatePhase
 import com.carlink.ui.components.FinishFirstDialog
 import com.carlink.ui.components.GoBackToStockDialog
+import com.carlink.ui.components.RemoveStockDialog
 import com.carlink.ui.components.UpdateDialog
 import com.carlink.ui.components.installLabel
 import com.carlink.ui.components.updateLine
@@ -54,6 +57,7 @@ internal fun InstallGroup(carlinkManager: CarlinkManager) {
         SettingRow(title = "Stock CarPlay", icon = Icons.Default.SettingsBackupRestore) {
             Text(stockLine(current.mode), style = SettingsStyle.RowTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (current.mode == InstallMode.TRIAL) RemoveStockRow(carlinkManager)
         if (current.mode.stockKept) {
             GroupDivider()
             SettingRow(title = "Go back to stock CarPlay", subtitle = goBackLine(goBack), icon = Icons.AutoMirrored.Filled.Undo) {
@@ -71,6 +75,34 @@ internal fun InstallGroup(carlinkManager: CarlinkManager) {
         )
     }
 }
+
+/**
+ * "Remove stock CarPlay" (Scott, 2 Nov): a trial that has passed its self-test and carried CarPlay can be finished on
+ * purpose, so later updates have the room. Remove checks the trial, then asks once more; a trial that hasn't proven
+ * itself says why, and nothing is sent.
+ */
+@Composable
+private fun RemoveStockRow(carlinkManager: CarlinkManager) {
+    val removal = carlinkManager.stockRemoval
+    val state by removal.state.collectAsState()
+    GroupDivider()
+    SettingRow(title = "Remove stock CarPlay", subtitle = removeStockLine(state), icon = Icons.Default.DeleteSweep) {
+        when (state) {
+            StockRemoval.Idle -> RowAction("Remove", onClick = removal::ask, weight = ActionWeight.DANGER_OUTLINE)
+            is StockRemoval.NotNow, is StockRemoval.Failed -> RowAction("OK", onClick = removal::dismiss)
+            StockRemoval.Working, StockRemoval.Asking -> Unit
+        }
+    }
+    if (state == StockRemoval.Asking) RemoveStockDialog(onRemove = removal::remove, onDismiss = removal::dismiss)
+}
+
+private fun removeStockLine(state: StockRemoval): String =
+    when (state) {
+        is StockRemoval.NotNow -> state.reason
+        is StockRemoval.Failed -> state.reason
+        StockRemoval.Working -> "Checking the adapter"
+        StockRemoval.Idle, StockRemoval.Asking -> "Frees the room for updates. The USB stick's backup is then the way back."
+    }
 
 /**
  * A newer OCBM for the adapter (remote updates plan, U2): "OCBM 1.1.0 available" with its notes and Update, which

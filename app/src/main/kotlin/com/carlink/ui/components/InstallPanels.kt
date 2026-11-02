@@ -2,6 +2,7 @@ package com.carlink.ui.components
 
 import android.content.Context
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -96,6 +97,29 @@ internal fun GoBackToStockDialog(
         onConfirm = onGoBack,
         onDismiss = onDismiss,
         icon = Icons.Default.SettingsBackupRestore,
+        weight = DialogWeight.DANGER,
+    )
+}
+
+/**
+ * "Remove stock CarPlay?" (Scott, 2 Nov): finishing deletes the copy of the Carlinkit firmware on the adapter, and the
+ * USB stick's backup is then the way back. Asked once more, as the way back is.
+ */
+@Composable
+internal fun RemoveStockDialog(
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    CarlinkDialog(
+        title = "Remove stock CarPlay?",
+        text =
+            "OCBM passed its self-test and has carried CarPlay. Removing stock CarPlay deletes the copy of the Carlinkit " +
+                "firmware on the adapter, which frees the room for updates. After that, the backup on your USB stick is the " +
+                "way back to stock. It's removed when this drive ends.",
+        confirmLabel = "Remove",
+        onConfirm = onRemove,
+        onDismiss = onDismiss,
+        icon = Icons.Default.DeleteSweep,
         weight = DialogWeight.DANGER,
     )
 }

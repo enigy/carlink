@@ -15,9 +15,9 @@ import org.json.JSONObject
 /**
  * The adapter's one-file install for the session in use ([OneFileInstall]). After each SUBSCRIBE it
  * reads the install state (MGMT_INFO) and the installed version (CH_FILE); it sends the way back
- * ([goBackToStock]); and it finishes the install only when the driver agrees to because an update needs
- * the room ([confirmForUpdate]; Scott, 1 Nov). No screen confirms the trial by being shown: a trial with
- * no update needing room stays a trial, with stock as its fallback.
+ * ([goBackToStock]); and it finishes the install only on the driver's Yes ([confirmFinish]): to Remove stock
+ * CarPlay in Settings (Scott, 2 Nov), or because an update needs the room (Scott, 1 Nov). No screen confirms
+ * the trial by being shown: until the driver says Yes, the trial keeps stock as its fallback.
  *
  * [confirmAllowed] is the build's word on sending MGMT_INSTALL_CONFIRM at all ([mayConfirmInstall]).
  */
@@ -59,17 +59,18 @@ class InstallSession(
     }
 
     /**
-     * Send MGMT_INSTALL_CONFIRM because the driver agreed to finish the install to make room for an update (Scott,
-     * 1 Nov), then read the install again: the ACK's status, or null with no answer. Blocks: call off the main
-     * thread. The one place the confirm is sent, and only when [mayConfirmInstall] allows; else 1, unsent.
+     * Send MGMT_INSTALL_CONFIRM because the driver agreed to finish the install: "Remove stock CarPlay" in Settings
+     * ([StockRemover]), or the room for an update ([AdapterUpdateSession.finish]). Then read the install again: the
+     * ACK's status, or null with no answer. Blocks: call off the main thread. The one place the confirm is sent, and
+     * only when [mayConfirmInstall] allows; else 1, unsent.
      */
-    fun confirmForUpdate(): Int? {
+    fun confirmFinish(): Int? {
         if (!mayConfirmInstall(installState.value?.mode, buildAllows = confirmAllowed)) {
-            logWarn("[INSTALL] finish for an update not sent: this build doesn't send the confirm, or the install isn't a trial", tag = Logger.Tags.ADAPTR)
+            logWarn("[INSTALL] finish not sent: this build doesn't send the confirm, or the install isn't a trial", tag = Logger.Tags.ADAPTR)
             return 1
         }
         val status = client()?.mgmtAction(Ocbm.MGMT_INSTALL_CONFIRM)
-        logWarn("[INSTALL] MGMT_INSTALL_CONFIRM (to make room for an update) status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
+        logWarn("[INSTALL] MGMT_INSTALL_CONFIRM (the driver agreed) status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
         if (status == 0) refresh()
         return status
     }
