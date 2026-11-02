@@ -96,7 +96,7 @@ internal fun rememberSettingsLiveState(
     LaunchedEffect(carlinkManager, active) { if (active) carlinkManager.refreshDeviceList() }
     LaunchedEffect(carlinkManager, connectionState, active) {
         while (active) {
-            live.phone = PhoneSnapshot(carlinkManager.currentPhoneType, carlinkManager.currentWifi ?: -1, carlinkManager.connectedBtMac)
+            live.phone = PhoneSnapshot(carlinkManager.currentPhoneType, carlinkManager.phoneOnWifi ?: -1, carlinkManager.connectedBtMac)
             live.devices = carlinkManager.pairedDevices
             live.policySupported = carlinkManager.phonePolicySupported
             live.adapterName = carlinkManager.adapterName

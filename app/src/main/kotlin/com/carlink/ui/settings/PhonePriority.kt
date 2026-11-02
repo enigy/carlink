@@ -3,7 +3,9 @@ package com.carlink.ui.settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -13,6 +15,8 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.PhoneIphone
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedIconButton
@@ -20,6 +24,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carlink.CarlinkManager
 import com.carlink.logging.logInfo
+import com.carlink.ocbm.ConnectAttempt
+import com.carlink.ui.components.WorkingDots
+import com.carlink.ui.theme.LocalCarlinkColors
 
 /** Whether the phone list shows ranking controls, and which phone is live. */
 @Immutable
@@ -42,6 +51,8 @@ internal class PhoneRanking(
      * the phone tapped (owner, 11-01). A phone on USB can't be ended from here.
      */
     val switchable: Boolean = false,
+    /** The Connect press being followed, or its outcome while it stands (owner, 11-01: show the press). */
+    val attempt: ConnectAttempt? = null,
 )
 
 /** Whether a row's Connect works: a bonded phone that isn't the live one, with no phone projecting or one [PhoneRanking.switchable]. */
@@ -49,7 +60,7 @@ internal fun connectEnabled(
     bonded: Boolean,
     live: Boolean,
     ranking: PhoneRanking,
-): Boolean = bonded && !live && (!ranking.phoneConnected || ranking.switchable)
+): Boolean = bonded && !live && (!ranking.phoneConnected || ranking.switchable) && ranking.attempt?.working != true
 
 /** What a row's buttons do. */
 @Immutable
@@ -70,6 +81,7 @@ internal fun PhoneList(
     onRemove: (CarlinkManager.DeviceInfo) -> Unit,
     settingsFor: (CarlinkManager.DeviceInfo) -> (() -> Unit)?,
 ) {
+    val attempt by carlinkManager.connectAttempt.collectAsState()
     KnownPhones(
         usbInUse = connected != null && !connected.wireless,
         devices = live.devices,
@@ -79,6 +91,7 @@ internal fun PhoneList(
                 connected?.device?.btMac,
                 phoneConnected = connected != null,
                 switchable = live.switchSupported && connected?.wireless == true,
+                attempt = attempt,
             ),
         actions =
             PhoneListActions(
@@ -132,16 +145,19 @@ private fun PhoneRow(
 ) {
     val colors = MaterialTheme.colorScheme
     val live = device.btMac == ranking.connectedMac
+    val mine = ranking.attempt?.takeIf { it.mac.equals(device.btMac, ignoreCase = true) }
     Row(modifier = Modifier.padding(start = if (ranking.enabled) 28.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
         if (ranking.enabled) RankBadge(index + 1, first = index == 0)
         SettingRow(
             title = device.name,
-            subtitle = phoneSubtitle(device, live, first = ranking.enabled && index == 0),
+            subtitle = phoneSubtitle(device, live, first = ranking.enabled && index == 0, mine),
             icon = phoneIcon(device, ranking.enabled),
             tint = if (device.bonded) colors.onSurfaceVariant else colors.tertiary,
             modifier = Modifier.weight(1f),
         ) {
-            if (ranking.enabled) RankControls(device, index, count, live, connectEnabled(device.bonded, live, ranking), actions)
+            if (ranking.enabled) {
+                RankControls(device, index, count, live, connectEnabled(device.bonded, live, ranking), mine?.working == true, actions)
+            }
             actions.onSettings(device)?.let { RowAction(label = "Settings", onClick = it) }
             RowAction(
                 label = if (device.bonded) "Forget" else "Remove",
@@ -152,13 +168,22 @@ private fun PhoneRow(
     }
 }
 
-/** "Connected now" / "Last seen …", plus "called first" on the top bonded phone. */
+/**
+ * "Connected now" / "Last seen …", plus "called first" on the top bonded phone. A Connect press on this phone
+ * that ended ([attempt]) says how, for a while: "Connected", or "Couldn't reach <phone>".
+ */
 private fun phoneSubtitle(
     device: CarlinkManager.DeviceInfo,
     live: Boolean,
     first: Boolean,
+    attempt: ConnectAttempt?,
 ): String {
-    val status = if (live) "Connected now" else SettingsModel.deviceStatus(device)
+    val status =
+        when (attempt?.outcome) {
+            ConnectAttempt.Outcome.CONNECTED -> "Connected"
+            ConnectAttempt.Outcome.NOT_REACHED -> "Couldn't reach ${device.name}"
+            null -> if (live) "Connected now" else SettingsModel.deviceStatus(device)
+        }
     return if (first && device.bonded) "$status · called first" else status
 }
 
@@ -180,6 +205,7 @@ private fun RankControls(
     count: Int,
     live: Boolean,
     canConnect: Boolean,
+    connecting: Boolean,
     actions: PhoneListActions,
 ) {
     // One Row, spaced and aligned like SettingRow's trailing slot, so this emits a single node
@@ -187,14 +213,46 @@ private fun RankControls(
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
         MoveButton(up = true, enabled = index > 0, name = device.name) { actions.onMove(device.btMac, -1) }
         MoveButton(up = false, enabled = index < count - 1, name = device.name) { actions.onMove(device.btMac, 1) }
-        RowAction(
+        ConnectButton(
             label = if (live) "Connected" else "Connect",
-            enabled = canConnect,
+            enabled = canConnect || connecting,
+            connecting = connecting,
             onClick = {
                 logInfo("[UI_ACTION] Phones: Connect", tag = "UI") // no name: the logs hide phone names
                 actions.onConnect(device)
             },
         )
+    }
+}
+
+/**
+ * Connect, styled as [RowAction]: while its press works the label becomes [WorkingDots], pulsing and waving,
+ * and further taps do nothing (owner, 11-01: with nothing on screen after a tap, the driver pressed again,
+ * then tried Forget).
+ */
+@Composable
+private fun ConnectButton(
+    label: String,
+    enabled: Boolean,
+    connecting: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val extra = LocalCarlinkColors.current
+    Button(
+        onClick = { if (!connecting) onClick() },
+        enabled = enabled,
+        modifier = Modifier.heightIn(min = SettingsStyle.ActionHeight),
+        contentPadding = PaddingValues(horizontal = 28.dp),
+        colors =
+            ButtonDefaults.buttonColors(
+                containerColor = colors.secondaryContainer,
+                contentColor = colors.onSecondaryContainer,
+                disabledContainerColor = extra.disabledFill,
+                disabledContentColor = extra.disabledText,
+            ),
+    ) {
+        if (connecting) WorkingDots(description = "Connecting", style = SettingsStyle.Action) else Text(label, style = SettingsStyle.Action)
     }
 }
 
