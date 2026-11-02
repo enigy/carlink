@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The OCBM one-file install as the app reads it, and when it may confirm the trial (handoff 10-28). */
+/** The OCBM one-file install as the app reads it, and when it may confirm the trial (handoff 10-28; Scott, 1 Nov). */
 class OneFileInstallTest {
     @Test
     fun `the adapter's three words are read and nothing else`() {
@@ -34,13 +34,12 @@ class OneFileInstallTest {
     }
 
     @Test
-    fun `only a trial, with the way back on screen, from a build that sends it, once`() {
-        assertTrue(mayConfirmInstall(InstallMode.TRIAL, wayBackShown = true, buildAllows = true, alreadyTried = false))
-        assertFalse("no way back on screen", mayConfirmInstall(InstallMode.TRIAL, wayBackShown = false, buildAllows = true, alreadyTried = false))
-        assertFalse("this build holds it back", mayConfirmInstall(InstallMode.TRIAL, wayBackShown = true, buildAllows = false, alreadyTried = false))
-        assertFalse("once a session", mayConfirmInstall(InstallMode.TRIAL, wayBackShown = true, buildAllows = true, alreadyTried = true))
-        assertFalse("already confirmed", mayConfirmInstall(InstallMode.CONFIRMED, wayBackShown = true, buildAllows = true, alreadyTried = false))
-        assertFalse("finished", mayConfirmInstall(InstallMode.FINAL, wayBackShown = true, buildAllows = true, alreadyTried = false))
-        assertFalse("not a one-file install", mayConfirmInstall(null, wayBackShown = true, buildAllows = true, alreadyTried = false))
+    fun `the confirm goes only to a trial, from a build that sends it`() {
+        // Scott, 1 Nov: showing the way back confirms nothing; the driver's Yes to finishing for an update is the only sender.
+        assertTrue(mayConfirmInstall(InstallMode.TRIAL, buildAllows = true))
+        assertFalse("this build doesn't send it (Play)", mayConfirmInstall(InstallMode.TRIAL, buildAllows = false))
+        assertFalse("already confirmed", mayConfirmInstall(InstallMode.CONFIRMED, buildAllows = true))
+        assertFalse("finished", mayConfirmInstall(InstallMode.FINAL, buildAllows = true))
+        assertFalse("not a one-file install", mayConfirmInstall(null, buildAllows = true))
     }
 }

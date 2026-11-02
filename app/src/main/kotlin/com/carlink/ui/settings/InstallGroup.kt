@@ -8,7 +8,6 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,7 +21,6 @@ import com.carlink.ocbm.UpdateOffer
 import com.carlink.ocbm.UpdatePhase
 import com.carlink.ui.components.FinishFirstDialog
 import com.carlink.ui.components.GoBackToStockDialog
-import com.carlink.ui.components.LocalSettingsVisible
 import com.carlink.ui.components.UpdateDialog
 import com.carlink.ui.components.installLabel
 import com.carlink.ui.components.updateLine
@@ -31,8 +29,8 @@ import com.carlink.ui.components.updateTitle
 /**
  * Settings › Adapter for an OCBM one-file install (handoff 10-28, plan page's mockup): the adapter's
  * firmware and a newer OCBM to update it to, whether stock CarPlay is still kept, and the way back to it
- * while it is. Shown on screen, the way back is also what lets the trial be confirmed
- * ([com.carlink.ocbm.InstallSession.wayBackShown]).
+ * while it is. Showing the way back confirms nothing: the install finishes only when the driver agrees to
+ * for an update (Scott, 1 Nov).
  */
 @Composable
 internal fun InstallGroup(carlinkManager: CarlinkManager) {
@@ -46,10 +44,7 @@ internal fun InstallGroup(carlinkManager: CarlinkManager) {
         if (updating != UpdatePhase.Idle) SettingsGroup { UpdateRow(carlinkManager, null, divider = false) }
         return
     }
-    val visible = LocalSettingsVisible.current
     var asking by remember { mutableStateOf(false) }
-    // Settings is kept composed while closed, so only a page actually on screen counts as showing it.
-    LaunchedEffect(visible, current.mode) { if (visible && current.mode.stockKept) session.wayBackShown() }
     SettingsGroup {
         SettingRow(title = "Adapter firmware", icon = Icons.Default.Memory) {
             Text(installLabel(current), style = SettingsStyle.RowTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -121,7 +116,7 @@ private fun UpdateRow(
 
 private fun stockLine(mode: InstallMode): String =
     when (mode) {
-        InstallMode.TRIAL -> "Kept until this drive ends"
+        InstallMode.TRIAL -> "Kept as a fallback"
         InstallMode.CONFIRMED -> "Removed when this drive ends"
         InstallMode.FINAL -> "Removed"
     }

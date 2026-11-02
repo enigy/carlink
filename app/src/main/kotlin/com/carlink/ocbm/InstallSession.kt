@@ -14,13 +14,12 @@ import org.json.JSONObject
 
 /**
  * The adapter's one-file install for the session in use ([OneFileInstall]). After each SUBSCRIBE it
- * reads the install state (MGMT_INFO) and the installed version (CH_FILE); while a screen shows the
- * way back it may confirm the trial ([wayBackShown], gated by [mayConfirmInstall]); and it sends the
- * way back itself ([goBackToStock]).
+ * reads the install state (MGMT_INFO) and the installed version (CH_FILE); it sends the way back
+ * ([goBackToStock]); and it finishes the install only when the driver agrees to because an update needs
+ * the room ([confirmForUpdate]; Scott, 1 Nov). No screen confirms the trial by being shown: a trial with
+ * no update needing room stays a trial, with stock as its fallback.
  *
- * [confirmAllowed] is the build's word on sending MGMT_INSTALL_CONFIRM. While it is false the confirm
- * path runs up to the send and logs that it held back, so the screens can be tested on the bench
- * without starting a finish.
+ * [confirmAllowed] is the build's word on sending MGMT_INSTALL_CONFIRM at all ([mayConfirmInstall]).
  */
 class InstallSession(
     private val client: () -> OcbmClient?,
@@ -37,11 +36,8 @@ class InstallSession(
     /** The last answer to [goBackToStock]; kept across the adapter's restart, cleared by the next session. */
     val goBack: StateFlow<GoBackResult?> = goBackState.asStateFlow()
 
-    @Volatile private var confirmTried = false
-
     /** A session is up (after CT_SUBSCRIBE): read the install, if the adapter has one. */
     fun onSubscribed() {
-        confirmTried = false
         goBackState.value = null
         scope.launch(Dispatchers.IO) { refresh() }
     }
@@ -54,7 +50,6 @@ class InstallSession(
     /** The session ended: nothing is known about the next adapter yet. */
     fun reset() {
         installState.value = null
-        confirmTried = false
     }
 
     /** A stock adapter is on USB: a go-back in flight has landed (or this is another adapter), so stop saying it is restarting. */
@@ -63,35 +58,16 @@ class InstallSession(
         goBackState.value = null
     }
 
-    /** A screen showing "Go back to stock CarPlay" is up: confirm the trial if [mayConfirmInstall] allows. */
-    fun wayBackShown() {
-        val mode = installState.value?.mode
-        if (!mayConfirmInstall(mode, wayBackShown = true, buildAllows = confirmAllowed, alreadyTried = confirmTried)) {
-            if (mode == InstallMode.TRIAL && !confirmAllowed && !confirmTried) {
-                confirmTried = true
-                logWarn("[INSTALL] the way back is on screen; MGMT_INSTALL_CONFIRM held back: this build does not send it", tag = Logger.Tags.ADAPTR)
-            }
-            return
-        }
-        confirmTried = true
-        scope.launch(Dispatchers.IO) {
-            val status = client()?.mgmtAction(Ocbm.MGMT_INSTALL_CONFIRM)
-            logWarn("[INSTALL] MGMT_INSTALL_CONFIRM status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
-            if (status == 0) refresh()
-        }
-    }
-
     /**
      * Send MGMT_INSTALL_CONFIRM because the driver agreed to finish the install to make room for an update (Scott,
      * 1 Nov), then read the install again: the ACK's status, or null with no answer. Blocks: call off the main
-     * thread. Only a TRIAL install, and only from a build that sends the confirm ([confirmAllowed]); else 1, unsent.
+     * thread. The one place the confirm is sent, and only when [mayConfirmInstall] allows; else 1, unsent.
      */
     fun confirmForUpdate(): Int? {
-        if (!confirmAllowed || installState.value?.mode != InstallMode.TRIAL) {
+        if (!mayConfirmInstall(installState.value?.mode, buildAllows = confirmAllowed)) {
             logWarn("[INSTALL] finish for an update not sent: this build doesn't send the confirm, or the install isn't a trial", tag = Logger.Tags.ADAPTR)
             return 1
         }
-        confirmTried = true
         val status = client()?.mgmtAction(Ocbm.MGMT_INSTALL_CONFIRM)
         logWarn("[INSTALL] MGMT_INSTALL_CONFIRM (to make room for an update) status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
         if (status == 0) refresh()

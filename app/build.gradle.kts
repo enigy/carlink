@@ -45,10 +45,10 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // OCBM one-file install (handoff 10-28): MGMT_INSTALL_CONFIRM lets the adapter delete the
-        // Carlinkit stack when the session ends, and there is no way back from that without an SPI
-        // programmer yet. Off until the no-programmer way back is built and proven and the owner
-        // agrees; with it off the app shows the trial and the way back but holds the confirm.
-        // -Pcarlink.installConfirm=true turns it on for a deliberate bench build.
+        // Carlinkit stack when the session ends; after that the USB stick's backup is the way back. It
+        // is sent only when the driver agrees to finish the install because an update needs the room
+        // (Scott, 1 Nov), and only from a build with this on. Off in Play builds; benching or releasing
+        // a build with it on needs the owner's OK. -Pcarlink.installConfirm=true turns it on.
         val installConfirm = (findProperty("carlink.installConfirm") as String?).toBoolean()
         buildConfigField("boolean", "INSTALL_CONFIRM", installConfirm.toString())
 
