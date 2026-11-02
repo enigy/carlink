@@ -50,9 +50,10 @@ internal class SettingsLiveState(
     var clusterOn by mutableStateOf(clusterOn)
     var verboseLogs by mutableStateOf(verboseLogs)
 
-    /** Drive logging: on, and the file it is writing (from [com.carlink.logging.DriveLog]). */
+    /** Drive logging: on, the file it is writing, and why it writes nothing when it doesn't (from [com.carlink.logging.DriveLog]). */
     var driveLog by mutableStateOf(false)
     var driveLogFile by mutableStateOf<String?>(null)
+    var driveLogTrouble by mutableStateOf<String?>(null)
 
     /** The box takes phone priority (CAP_PHONE_POLICY), and the auto-connect flag the app holds. */
     var policySupported by mutableStateOf(false)
@@ -96,7 +97,13 @@ internal fun rememberSettingsLiveState(
     LaunchedEffect(carlinkManager, active) { if (active) carlinkManager.refreshDeviceList() }
     LaunchedEffect(carlinkManager, connectionState, active) {
         while (active) {
-            live.phone = PhoneSnapshot(carlinkManager.currentPhoneType, carlinkManager.phoneOnWifi ?: -1, carlinkManager.connectedBtMac)
+            live.phone =
+                PhoneSnapshot(
+                    carlinkManager.currentPhoneType,
+                    carlinkManager.phoneOnWifi ?: -1,
+                    carlinkManager.connectedBtMac,
+                    present = carlinkManager.phoneOnAdapter,
+                )
             live.devices = carlinkManager.pairedDevices
             live.policySupported = carlinkManager.phonePolicySupported
             live.adapterName = carlinkManager.adapterName
@@ -114,6 +121,7 @@ internal fun rememberSettingsLiveState(
                 )
             live.driveLog = DriveLog.recording
             live.driveLogFile = DriveLog.currentFile
+            live.driveLogTrouble = DriveLog.trouble()
             // Directions are per driver: an iPhone connecting while Settings is open can change them.
             live.clusterOn = ClusterNavigation.isEnabled(context)
             delay(POLL_MS)

@@ -37,6 +37,9 @@ interface RawBulkTransport {
 
     /** Stop reading and release the device. Idempotent. */
     fun stop()
+
+    /** One line of the transport's own counters for a stall report ([OcbmClient.stallSnapshot]); never blocks. */
+    fun diagnostics(): String = ""
 }
 
 /**

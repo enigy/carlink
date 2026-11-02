@@ -191,6 +191,9 @@ class BridgeBulkTransport private constructor(
         log.i("bridge transport closed${if (mine) "" else " (superseded: the bridge's session was left alone)"}")
     }
 
+    /** This end's counters only: no call into the bridge, which may be the part that is stuck. */
+    override fun diagnostics(): String = "bridge socket: $reads reads, $bytesRead B, $writeFailures write failures in a row, last error ${lastError ?: "none"}"
+
     /** One-line diagnostics from the bridge process (handler config, permission, counters). */
     fun bridgeStatus(): String = runCatching { bridge.status }.getOrElse { "bridge status unavailable: ${it.message}" }
 

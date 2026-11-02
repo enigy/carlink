@@ -43,12 +43,25 @@ object DriveLog {
     private const val MAX_QUEUE = 20_000
     private const val SECONDS_PER_DAY = 86_400L
 
+    /** How often a recording with no file tries to open one again. */
+    private const val REOPEN_MS = 30_000L
+
+    /** Lines waiting this long with no write means the writer itself is stuck. */
+    private const val STALLED_MS = 10_000L
+
     @Volatile var recording = false
         private set
 
     /** Where the current file is, for the settings row ("Downloads/Carlink/…"). */
     @Volatile var currentFile: String? = null
         private set
+
+    /** Why lines are not reaching a file (none could be opened, or a write failed); null while they are. */
+    @Volatile private var problem: String? = null
+
+    /** When the writer last ran, so a writer that stopped running shows. */
+    @Volatile private var lastFlushMs = 0L
+    private var lastOpenMs = 0L
 
     /** Newest box line written per source in this process; see [BoxReplayFilter]. */
     private val newestBoxMs = HashMap<Int, Long>()
@@ -133,8 +146,24 @@ object DriveLog {
         queued.incrementAndGet()
     }
 
+    /**
+     * Why recording writes nothing, for Settings, or null while it writes (or is off). The 2 Nov bench found
+     * Troubleshoot saying "Recording drive log" with no drive log written since the day before.
+     */
+    fun trouble(nowMs: Long = System.currentTimeMillis()): String? {
+        if (!recording) return null
+        val stalledMs = nowMs - lastFlushMs
+        return problem ?: if (lastFlushMs != 0L && queued.get() > 0 && stalledMs > STALLED_MS) "the writer stopped ${stalledMs / 1000} s ago" else null
+    }
+
     private fun flushQueue() {
-        val s = sink ?: return
+        lastFlushMs = System.currentTimeMillis()
+        val s =
+            sink ?: run {
+                // Nothing could be opened: try again now and then rather than holding the switch on over nothing.
+                if (recording && lastFlushMs - lastOpenMs >= REOPEN_MS) openNext(again = true)
+                return
+            }
         val lost = dropped.getAndSet(0)
         val text = StringBuilder()
         if (lost > 0) text.append("… drive log dropped $lost line(s): writer fell behind …\n")
@@ -150,20 +179,35 @@ object DriveLog {
             s.out.flush()
             s.bytes += bytes.size
             if (++flushes % SYNC_EVERY_FLUSHES == 0) s.out.fd.sync()
-        }.onFailure { android.util.Log.w("CARLINK", "[DRIVE_LOG] write failed: ${it.message}") }
+        }.onSuccess { problem = null }
+            .onFailure {
+                problem = "writing ${s.label} failed (${it.message})"
+                android.util.Log.w("CARLINK", "[DRIVE_LOG] write failed: ${it.message}")
+            }
         if (s.bytes > MAX_FILE_BYTES) {
             closeSink()
             openNext()
         }
     }
 
-    private fun openNext() {
+    /** Open the next part; [again] retries the part that couldn't be opened rather than skipping a number. */
+    private fun openNext(again: Boolean = false) {
         val ctx = appContext ?: return
-        part++
+        lastOpenMs = System.currentTimeMillis()
+        if (!again) part++
         val name = "$PREFIX$started" + (if (part > 1) "-part$part" else "") + ".log"
-        val opened = runCatching { openInDownloads(ctx, name) }.getOrNull() ?: runCatching { openInAppFiles(ctx, name) }.getOrNull()
+        val inDownloads = runCatching { openInDownloads(ctx, name) }
+        val opened = inDownloads.getOrNull() ?: runCatching { openInAppFiles(ctx, name) }.getOrNull()
         sink = opened
         currentFile = opened?.label
+        problem =
+            if (opened == null) {
+                "no file could be opened (${inDownloads.exceptionOrNull()?.message ?: "unknown"})"
+            } else {
+                null
+            }
+        if (opened == null) android.util.Log.w("CARLINK", "[DRIVE_LOG] $problem; trying again in ${REOPEN_MS / 1000} s")
+        inDownloads.exceptionOrNull()?.let { android.util.Log.w("CARLINK", "[DRIVE_LOG] Downloads refused $name: ${it.message}") }
         opened?.let {
             val header =
                 "==== Carlink drive log ${it.label} (started $started, part $part) ====\n" +

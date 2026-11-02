@@ -77,6 +77,7 @@ import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
 import com.carlink.ocbm.OcbmClient
 import com.carlink.ocbm.OemIcon
+import com.carlink.ocbm.OneFileInstall
 import com.carlink.ocbm.PhoneConnectTracker
 import com.carlink.ocbm.PhoneSetup
 import com.carlink.ocbm.PixelRect
@@ -88,6 +89,7 @@ import com.carlink.ocbm.UpdateHost
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
 import com.carlink.ocbm.finishBlocked
+import com.carlink.ocbm.mayConfirmInstall
 import com.carlink.ocbm.seam.SeamPipe
 import com.carlink.ocbm.seam.ViewAreaRect
 import com.carlink.protocol.AdapterConfig
@@ -265,15 +267,16 @@ class CarlinkManager(
         private const val WAKE_LOCK_REFRESH_INTERVAL_MS = WAKE_LOCK_TIMEOUT_MS / 2
 
         // The adapter's start-up self-test of this start (ocbm_dispatch.sh): its last line is "PASSED in N s" or "FAILED …".
-        private const val SELFTEST_FILE = "/tmp/ocbm_selftest.txt"
-        private const val SELFTEST_TIMEOUT_MS = 5_000L
+        private const val SELFTEST_TIMEOUT_MS = 15_000L
 
         // How long a forgotten device's MAC is suppressed from list merges while the box
         // processes the forget (it restarts wireless, which is not instant).
         private const val FORGET_SUPPRESS_MS = 25_000L
 
         /** When to re-send the phone policy after SUBSCRIBE: btd comes up with the radios, a few seconds in. */
-        private val POLICY_SYNC_DELAYS_MS = longArrayOf(5_000L, 15_000L, 45_000L)
+        private const val POLICY_SYNC_FIRST_MS = 3_000L
+        private const val POLICY_SYNC_RETRY_MS = 2_000L
+        private const val POLICY_SYNC_TRIES = 30
 
         private const val INITIAL_RECONNECT_DELAY_MS = 2000L
         private const val MAX_RECONNECT_DELAY_MS = 30000L
@@ -497,6 +500,9 @@ class CarlinkManager(
                 else -> currentWifi
             }
 
+    /** The adapter says a phone is on it, over USB or Wi-Fi (`SEV_PHONE_PRESENT`); false with no session. */
+    val phoneOnAdapter: Boolean get() = client?.phonePresent == true
+
     /** Which transport owns the box (CT_PROJ_MODE). `PM_NONE` until told. */
     @Volatile var projectionMode: Byte = Ocbm.PM_NONE
         private set
@@ -579,6 +585,12 @@ class CarlinkManager(
             confirm = { oneFileInstall.confirmFinish() },
             scope = scope,
         )
+
+    /**
+     * Whether Settings offers Remove stock CarPlay for [install]: a trial, in a build that sends the confirm
+     * ([mayConfirmInstall]). In one that doesn't, Yes ended in "The adapter refused it" when the app had (2 Nov bench).
+     */
+    fun offersStockRemoval(install: OneFileInstall): Boolean = mayConfirmInstall(install.mode, buildAllows = BuildConfig.INSTALL_CONFIRM)
 
     /** Updating the adapter in use to a newer OCBM from Settings › Adapter (remote updates plan, U2). */
     val adapterUpdate =
@@ -2385,7 +2397,7 @@ class CarlinkManager(
         }
 
         val seq = videoEpochSeq.incrementAndGet()
-        val pipe = SeamPipe(VIDEO_PIPE_BYTES, VIDEO_PIPE_DEPTH)
+        val pipe = SeamPipe(VIDEO_PIPE_BYTES, VIDEO_PIPE_DEPTH, name = "cp-video", log = ocbmLog)
         val renderer =
             VideoRenderer(config.width, config.height, surface) {
                 client?.requestKeyframe()
@@ -2966,14 +2978,19 @@ class CarlinkManager(
             override fun selfTest(): String? = selfTestOf(c)
         }
 
-    /** The last line of the adapter's start-up self-test of this start; null when it couldn't be read. Blocks. */
+    /**
+     * The last line of the adapter's start-up self-test of this start; null when it couldn't be read. The verdict the
+     * session read at its start, else a read now (a pull during CarPlay can take a while: 2 Nov bench). Blocks.
+     */
     private fun selfTestOf(c: OcbmClient): String? =
-        c
-            .pullFile(SELFTEST_FILE, timeoutMs = SELFTEST_TIMEOUT_MS)
-            .getOrNull()
-            ?.toString(Charsets.UTF_8)
-            ?.lines()
-            ?.lastOrNull { it.isNotBlank() }
+        oneFileInstall.install.value
+            ?.selfTest
+            ?.takeIf(OneFileInstall::isVerdict)
+            ?: c
+                .pullFile(OneFileInstall.SELFTEST_FILE, timeoutMs = SELFTEST_TIMEOUT_MS)
+                .getOrNull()
+                ?.toString(Charsets.UTF_8)
+                ?.let(OneFileInstall::selfTestOf)
 
     /** Whether the adapter in use has carried a CarPlay session in its trial ([CarPlaySessionRecord]). */
     private fun carriedCarPlay(): Boolean {
@@ -3219,6 +3236,7 @@ class CarlinkManager(
         )
         // The list may already be on screen with a MAC for a label; rebuild it with the real name.
         rebuildDeviceList()
+        pushPhonePolicyIfChanged("phone connected")
     }
 
     /**
@@ -3384,26 +3402,55 @@ class CarlinkManager(
         val body = phonePolicyJson(_pairedDevices.map { it.btMac })
         scope.launch(Dispatchers.IO) {
             val status = client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8))
+            if (status == 0) policySent = body
             logInfo("[DEVICE_MGMT] SET_POLICY ($reason) $body status=$status", tag = Logger.Tags.ADAPTR)
         }
     }
 
+    /** The policy the box last took this session; null until the session's own sync landed. */
+    @Volatile private var policySent: String? = null
+
+    /**
+     * Send the order again when it changed since the box took it. A phone that connects moves up the list
+     * (most recent first, under any order the user set), and the box keeps the order it was given: on the
+     * 2026-11-02 bench a link stall restarted Bluetooth after a switch, and the adapter called the phone
+     * that came before the switch, whose place the box still had.
+     */
+    private fun pushPhonePolicyIfChanged(reason: String) {
+        if (!phonePolicySupported) return
+        // Before the session's sync lands, that sync sends the order as it is when it does.
+        val sent = policySent ?: return
+        if (phonePolicyJson(_pairedDevices.map { it.btMac }) != sent) pushPhonePolicy(reason)
+    }
+
     /**
      * Re-assert the policy once the session is up. btd only listens once the box has brought its
-     * radios up after SUBSCRIBE, so try a few times; every try is idempotent on the box.
+     * radios up after SUBSCRIBE, so try every [POLICY_SYNC_RETRY_MS] until it answers: btd calls a phone
+     * as soon as it is up, from the order it last took (bench 2026-11-02: the tries 5, 15 and 45 s in
+     * found it not yet listening, and it called the wrong phone). Every try is idempotent on the box.
      */
     private fun syncPhonePolicyAfterSubscribe() {
+        val c = client ?: return
+        policySent = null
         scope.launch {
+            delay(POLICY_SYNC_FIRST_MS)
             var status: Int? = null
-            for (waitMs in POLICY_SYNC_DELAYS_MS) {
-                delay(waitMs)
-                if (!phonePolicySupported) return@launch
+            for (attempt in 1..POLICY_SYNC_TRIES) {
+                if (client !== c || !phonePolicySupported) return@launch
                 val body = phonePolicyJson(_pairedDevices.map { it.btMac })
-                status = withContext(Dispatchers.IO) { client?.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8)) }
-                logInfo("[DEVICE_MGMT] SET_POLICY (session) $body status=$status", tag = Logger.Tags.ADAPTR)
-                if (status == 0) return@launch
+                status = withContext(Dispatchers.IO) { c.mgmtAction(Ocbm.MGMT_SET_POLICY, body.toByteArray(Charsets.UTF_8)) }
+                if (status == 0) {
+                    policySent = body
+                    logInfo("[DEVICE_MGMT] SET_POLICY (session, try $attempt) $body status=0", tag = Logger.Tags.ADAPTR)
+                    return@launch
+                }
+                if (attempt == 1) {
+                    logInfo("[DEVICE_MGMT] SET_POLICY (session) $body status=$status; trying again every ${POLICY_SYNC_RETRY_MS}ms", tag = Logger.Tags.ADAPTR)
+                }
+                delay(POLICY_SYNC_RETRY_MS)
             }
             // No try came back 0: btd never answered this session.
+            logInfo("[DEVICE_MGMT] SET_POLICY (session) not taken after $POLICY_SYNC_TRIES tries, status=$status", tag = Logger.Tags.ADAPTR)
             phoneSetup.onPolicyFailed(status)
         }
     }

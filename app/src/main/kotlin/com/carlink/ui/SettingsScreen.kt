@@ -276,7 +276,7 @@ private fun categorySummaries(
         SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo, layout.layout),
         SettingsCategory.CALLS to SettingsModel.callsSummary(mic, buffer),
         SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn, laneGuidance.anyOn),
-        SettingsCategory.TROUBLESHOOT to SettingsModel.troubleshootSummary(live.driveLog),
+        SettingsCategory.TROUBLESHOOT to SettingsModel.troubleshootSummary(live.driveLog, live.driveLogTrouble != null),
         SettingsCategory.ADAPTER to SettingsModel.adapterSummary(panes.carlinkManager.adapterName, live.box),
     )
 }

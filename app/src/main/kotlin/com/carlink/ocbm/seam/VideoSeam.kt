@@ -321,8 +321,22 @@ class VideoSeam(
         out[2] = ((annexB.size ushr 8) and 0xFF).toByte()
         out[3] = (annexB.size and 0xFF).toByte()
         System.arraycopy(annexB, 0, out, 4, annexB.size)
-        if (p.write(out)) framesOut.incrementAndGet()
+        if (p.write(out)) {
+            framesOut.incrementAndGet()
+            // The first frame the decoder takes after it stopped follows a gap: ask for the IDR again.
+            if (shedGap) {
+                shedGap = false
+                onGap()
+            }
+        } else if (!p.isClosed) {
+            // Shed: the decoder had stopped (SeamPipe). Every later P-frame is broken until an IDR.
+            shedGap = true
+            onGap()
+        }
     }
+
+    /** A frame was shed for a decoder that stopped; the next one taken asks for an IDR too. */
+    private var shedGap = false
 
     // ---- codec configuration records -------------------------------------------------------------
 

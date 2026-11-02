@@ -48,10 +48,10 @@ internal fun LogsGroup(
         SwitchRow(
             title = "Record drive logs",
             subtitle =
-                if (live.driveLog) {
-                    "Recording to ${live.driveLogFile ?: "Downloads/Carlink"}"
-                } else {
-                    "Writes app and adapter logs to Downloads/Carlink as you drive, kept 7 days"
+                when {
+                    !live.driveLog -> "Writes app and adapter logs to Downloads/Carlink as you drive, kept 7 days"
+                    live.driveLogTrouble != null -> "Not recording: ${live.driveLogTrouble}. Carlink keeps trying."
+                    else -> "Recording to ${live.driveLogFile ?: "Downloads/Carlink"}"
                 },
             checked = live.driveLog,
             icon = Icons.Default.FiberManualRecord,

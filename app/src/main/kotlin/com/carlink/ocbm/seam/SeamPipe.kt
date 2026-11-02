@@ -1,5 +1,6 @@
 package com.carlink.ocbm.seam
 
+import com.carlink.logging.ProbeLog
 import java.io.InputStream
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -28,6 +29,16 @@ import java.util.concurrent.atomic.AtomicLong
  * Queueing whole messages rather than bytes keeps a producer write O(1) and never splits a message
  * across two [write] calls, so a slow consumer can never observe a torn header.
  *
+ * ## Bounded wait, for a consumer that has stopped
+ *
+ * The block is for a consumer that is slow, not one that has stopped. A stopped one (a decoder that
+ * stopped giving input buffers, an audio track that stopped taking writes) used to park the read thread
+ * for good: the bridge stops reading USB, the adapter's writes block, it stops reading the heartbeat,
+ * and Carlink calls the link dead (bench 2026-11-02: three such stalls in 40 minutes, 19 s each). So a
+ * write waits at most [stallLimitMs]; past it the pipe **sheds**: that message and every later one are
+ * dropped at once, while the consumer stays behind, and the read thread keeps every other channel
+ * moving. The pipe takes messages again as soon as the consumer catches up.
+ *
  * ## Lifetime
  *
  * [close] makes pending and subsequent reads return EOF, which is what every renderer treats as "seam
@@ -43,7 +54,21 @@ class SeamPipe(
     private val capacityBytes: Int,
     /** Bounds the number of queued messages independently of their size. */
     queueDepth: Int = 512,
+    /** Names the lane in the stall lines. */
+    private val name: String = "pipe",
+    private val log: ProbeLog.Logger? = null,
+    /** The longest one [write] waits for a consumer that takes nothing; past it the pipe sheds. */
+    private val stallLimitMs: Long = STALL_LIMIT_MS,
 ) : InputStream() {
+    companion object {
+        /**
+         * Well past any decode a working consumer does (a 4K IDR, a codec reconfigure), and short of the
+         * bridge's 2 s write timeout, so the adapter, held up while it waits, still takes the heartbeat.
+         */
+        const val STALL_LIMIT_MS = 1_500L
+        private const val NANOS_PER_MS = 1_000_000L
+    }
+
     private val q = ArrayBlockingQueue<ByteArray>(queueDepth)
     private val resident = AtomicLong(0)
     private val closed = AtomicBoolean(false)
@@ -51,43 +76,82 @@ class SeamPipe(
     /** Bytes that never entered the pipe because it was closed. Nonzero after teardown is normal. */
     val dropped = AtomicLong(0)
 
+    /** Messages dropped while the consumer had stopped ([stallLimitMs]); not counted in [dropped]. */
+    val shed = AtomicLong(0)
+
+    /** Times the consumer took nothing for [stallLimitMs] and the pipe began to shed. */
+    val stalls = AtomicLong(0)
+
+    @Volatile private var shedding = false
+    private var shedThisStall = 0L
+
+    /** True after [close]. */
+    val isClosed: Boolean get() = closed.get()
+
     private var cur: ByteArray? = null
     private var curOff = 0
 
     /**
      * Offer one complete message. Blocks while the pipe is over [capacityBytes] — that block IS the
-     * backpressure. Returns false only if the pipe is closed, so a caller can stop a drain loop.
+     * backpressure — but for at most [stallLimitMs]. Returns false when the message did not enter: the
+     * pipe is closed ([isClosed]), or its consumer has stopped and the pipe is shedding.
      */
     fun write(msg: ByteArray): Boolean {
         // A zero-length message would surface from read() as a 0-return with len > 0, which every
         // renderer's readFully treats as EOF — killing the consumer and, through runConsumer's finally,
         // the whole lane. No current producer can emit one, so this is a guard against a future one.
         if (msg.isEmpty()) return true
-        if (closed.get()) {
-            dropped.addAndGet(msg.size.toLong())
-            return false
+        if (closed.get() || (shedding && full())) return refuse(msg)
+        if (shedding) {
+            shedding = false
+            log?.i("$name: consumer caught up — $shedThisStall message(s) shed while it was stopped")
         }
-        // Admission is checked before the put, then the put itself blocks on queueDepth. Waiting on a
-        // condition here would need a lock the reader also takes on the hot path; a short poll loop is
-        // simpler and only ever spins when the consumer is already the bottleneck.
+        return admit(msg, System.nanoTime() + stallLimitMs * NANOS_PER_MS) || refuse(msg)
+    }
+
+    private fun full(): Boolean = resident.get() > capacityBytes || q.remainingCapacity() == 0
+
+    /**
+     * Queue [msg] once the pipe is back under [capacityBytes]; false when it closed or [deadline] passed first.
+     *
+     * Admission is checked before the put, then the put itself blocks on queueDepth. Waiting on a condition
+     * here would need a lock the reader also takes on the hot path; a short poll loop is simpler and only ever
+     * spins when the consumer is already the bottleneck. A bounded offer rather than put(): a closed pipe with
+     * a consumer that has already returned would otherwise park the read thread forever.
+     */
+    private fun admit(
+        msg: ByteArray,
+        deadline: Long,
+    ): Boolean {
         while (resident.get() > capacityBytes) {
-            if (closed.get()) {
-                dropped.addAndGet(msg.size.toLong())
-                return false
-            }
+            if (closed.get() || System.nanoTime() >= deadline) return false
             Thread.sleep(1)
         }
         resident.addAndGet(msg.size.toLong())
-        // Bounded offer rather than put(): a closed pipe with a consumer that has already returned
-        // would otherwise park the read thread forever.
         while (!q.offer(msg, 50, TimeUnit.MILLISECONDS)) {
-            if (closed.get()) {
+            if (closed.get() || System.nanoTime() >= deadline) {
                 resident.addAndGet(-msg.size.toLong())
-                dropped.addAndGet(msg.size.toLong())
                 return false
             }
         }
         return true
+    }
+
+    /** [msg] did not enter: dropped on a closed pipe, else shed for a consumer that stopped. Always false. */
+    private fun refuse(msg: ByteArray): Boolean {
+        if (closed.get()) {
+            dropped.addAndGet(msg.size.toLong())
+            return false
+        }
+        if (!shedding) {
+            shedding = true
+            shedThisStall = 0
+            val stall = stalls.incrementAndGet()
+            log?.w("$name: consumer took nothing for $stallLimitMs ms — shedding until it catches up (stall #$stall)")
+        }
+        shed.incrementAndGet()
+        shedThisStall++
+        return false
     }
 
     /** Bytes currently queued — surfaced so a lane can report backpressure rather than hide it. */

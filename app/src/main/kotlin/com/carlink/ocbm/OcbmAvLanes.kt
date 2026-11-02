@@ -23,14 +23,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * throttles that encoder). Interposing a queue would replace a closed loop with an unbounded buffer and
  * merely move the head-of-line problem.
  *
- * That design has exactly one hazard. `VideoRenderer.consume` `break`s out of its loop on an implausible
- * seam length — a dead consumer — while the pipe is still open, and `SeamPipe.write` only returns false
- * once the pipe is **closed**. A dead consumer plus an open pipe therefore blocks the USB read thread
- * forever, taking every other channel down with it.
+ * That design has two hazards. `VideoRenderer.consume` `break`s out of its loop on an implausible seam
+ * length — a dead consumer — while the pipe is still open. A dead consumer plus an open pipe would block
+ * the USB read thread, taking every other channel down with it.
  *
  * The fix is ownership, not another thread: **whoever owns a pipe also owns its consumer thread and
  * closes the pipe in that thread's `finally`.** [runConsumer] is the only way to start a consumer here,
- * and it enforces exactly that.
+ * and it enforces exactly that. The second hazard is a consumer that is alive but takes nothing (a codec
+ * that stopped giving input buffers): [SeamPipe] waits for it at most [SeamPipe.STALL_LIMIT_MS], then sheds.
  *
  * ## Scoping
  *
@@ -58,8 +58,8 @@ class OcbmAvLanes(
     val videoSeam = VideoSeam(null, log, onKeyframeNeeded).apply { onKey = onVideoKeyed }
 
     /** ONE instance for both audio channels — the scid key and format tables are shared. */
-    val mediaPipe = SeamPipe(mediaCapacityBytes)
-    val voicePipe = SeamPipe(voiceCapacityBytes)
+    val mediaPipe = SeamPipe(mediaCapacityBytes, name = "cp-audio", log = log)
+    val voicePipe = SeamPipe(voiceCapacityBytes, name = "cp-voice", log = log)
     val audioSeam = AudioSeam(mediaPipe, voicePipe, log)
 
     val metadataSeam = MetadataSeam(log, onMetadata)
@@ -134,5 +134,5 @@ class OcbmAvLanes(
             "keys=${videoSeam.keysReceived.get()} unkeyed=${videoSeam.unkeyed.get()} " +
             "aud=${audioSeam.decryptOk.get()}/${audioSeam.decryptFail.get()}/${audioSeam.unkeyed.get()} " +
             "meta=${metadataSeam.messagesOut.get()}/${metadataSeam.resyncBytes.get()} " +
-            "pipe=${mediaPipe.residentBytes()}/${voicePipe.residentBytes()}"
+            "pipe=${mediaPipe.residentBytes()}/${voicePipe.residentBytes()} shed=${mediaPipe.shed.get()}/${voicePipe.shed.get()}"
 }
