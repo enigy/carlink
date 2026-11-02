@@ -81,6 +81,23 @@ class InstallSession(
         }
     }
 
+    /**
+     * Send MGMT_INSTALL_CONFIRM because the driver agreed to finish the install to make room for an update (Scott,
+     * 1 Nov), then read the install again: the ACK's status, or null with no answer. Blocks: call off the main
+     * thread. Only a TRIAL install, and only from a build that sends the confirm ([confirmAllowed]); else 1, unsent.
+     */
+    fun confirmForUpdate(): Int? {
+        if (!confirmAllowed || installState.value?.mode != InstallMode.TRIAL) {
+            logWarn("[INSTALL] finish for an update not sent: this build doesn't send the confirm, or the install isn't a trial", tag = Logger.Tags.ADAPTR)
+            return 1
+        }
+        confirmTried = true
+        val status = client()?.mgmtAction(Ocbm.MGMT_INSTALL_CONFIRM)
+        logWarn("[INSTALL] MGMT_INSTALL_CONFIRM (to make room for an update) status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
+        if (status == 0) refresh()
+        return status
+    }
+
     /** Send MGMT_GO_STOCK; the answer lands in [goBack]. */
     fun goBackToStock() {
         logWarn("[INSTALL] Go back to stock CarPlay confirmed in the app", tag = Logger.Tags.ADAPTR)

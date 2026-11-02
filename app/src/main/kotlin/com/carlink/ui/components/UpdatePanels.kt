@@ -1,7 +1,6 @@
 package com.carlink.ui.components
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -90,9 +89,9 @@ internal fun updateLine(
 private fun offerLine(offer: UpdateOffer): String? =
     when (offer) {
         is UpdateOffer.InPlace -> offer.pkg.notes.ifEmpty { null }
-        is UpdateOffer.RoundTrip -> "${offer.why} Updating goes back to stock CarPlay first, then converts again by USB stick."
+        is UpdateOffer.FinishFirst -> "${offer.why} Finishing the install makes the room."
         is UpdateOffer.AfterThisDrive -> "Update it after this drive: the adapter finishes its install when the drive ends."
-        is UpdateOffer.CannotTake -> "${offer.why} This adapter can't take it."
+        is UpdateOffer.CannotTake -> offer.why
         UpdateOffer.None -> null
     }
 
@@ -118,22 +117,26 @@ internal fun UpdateDialog(
     )
 }
 
-/** A trial adapter with no room for the update in place: back to stock CarPlay, then the stick conversion again. */
+/**
+ * A trial adapter without the room for the update (Scott, 1 Nov): finish the install, which deletes the copy of stock
+ * CarPlay firmware the adapter keeps, so the update can go in. Declining leaves the update uninstalled.
+ */
 @Composable
-internal fun RoundTripDialog(
-    offer: UpdateOffer.RoundTrip,
-    onGoBack: () -> Unit,
-    onDismiss: () -> Unit,
+internal fun FinishFirstDialog(
+    offer: UpdateOffer.FinishFirst,
+    onFinish: () -> Unit,
+    onDecline: () -> Unit,
 ) {
     CarlinkDialog(
-        title = "Update by going back to stock first?",
+        title = "Finish the install to make room?",
         text =
-            "${offer.why} So Carlink takes the adapter back to stock CarPlay, then converts it again with a USB stick, as the " +
-                "first time, which installs the newest OCBM it has. HiCar, Android Mirror and the web UI stay removed.",
-        confirmLabel = "Go back to stock",
-        onConfirm = onGoBack,
-        onDismiss = onDismiss,
-        icon = Icons.Default.SettingsBackupRestore,
+            "${offer.why} Finishing the install makes the room: it deletes the copy of stock CarPlay firmware on the adapter, " +
+                "and after that the backup on your USB stick is the way back to stock. The install finishes when this drive " +
+                "ends, and OCBM ${offer.pkg.version} can go in on the next one.",
+        confirmLabel = "Finish the install",
+        onConfirm = onFinish,
+        onDismiss = onDecline,
+        icon = Icons.Default.SystemUpdate,
         weight = DialogWeight.DANGER,
     )
 }

@@ -67,8 +67,10 @@ import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.CarPlayDock
+import com.carlink.ocbm.CarPlaySessionRecord
 import com.carlink.ocbm.ConnectAttempt
 import com.carlink.ocbm.HostInstanceNonce
+import com.carlink.ocbm.InstallMode
 import com.carlink.ocbm.InstallSession
 import com.carlink.ocbm.LivePhone
 import com.carlink.ocbm.Ocbm
@@ -259,6 +261,10 @@ class CarlinkManager(
         // Refresh at half the timeout so a missed tick still leaves a full margin.
         private const val WAKE_LOCK_TIMEOUT_MS = 2 * 60 * 60 * 1000L // 2h
         private const val WAKE_LOCK_REFRESH_INTERVAL_MS = WAKE_LOCK_TIMEOUT_MS / 2
+
+        // The adapter's start-up self-test of this start (ocbm_dispatch.sh): its last line is "PASSED in N s" or "FAILED …".
+        private const val SELFTEST_FILE = "/tmp/ocbm_selftest.txt"
+        private const val SELFTEST_TIMEOUT_MS = 5_000L
 
         // How long a forgotten device's MAC is suppressed from list merges while the box
         // processes the forget (it restarts wireless, which is not instant).
@@ -561,6 +567,9 @@ class CarlinkManager(
     /** The Connect press being followed, or its outcome while it stands ([PhoneConnectTracker]). */
     val connectAttempt: StateFlow<ConnectAttempt?> get() = connectTracker.attempt
 
+    /** The adapters that have carried a CarPlay session in their trial: one must have before its install finishes for an update. */
+    private val carPlaySessions = CarPlaySessionRecord(context.applicationContext)
+
     /** Updating the adapter in use to a newer OCBM from Settings › Adapter (remote updates plan, U2). */
     val adapterUpdate =
         AdapterUpdateSession(
@@ -571,11 +580,19 @@ class CarlinkManager(
                     override fun notNow(): String? = updateBlockedReason()
 
                     override fun updated() = oneFileInstall.refreshNow()
+
+                    override fun carriedCarPlay(): Boolean {
+                        noteCarPlaySession()
+                        val serial = oneFileInstall.install.value?.serial ?: return false
+                        return carPlaySessions.contains(serial)
+                    }
+
+                    override fun confirmInstall(): Int? = oneFileInstall.confirmForUpdate()
                 },
             packages = AdapterUpdateStore(context.applicationContext),
             install = oneFileInstall.install,
             scope = scope,
-            switches = AdapterUpdateSession.Switches(enabled = BuildConfig.ADAPTER_UPDATES, canConvert = BuildConfig.STOCK_CONVERSION),
+            switches = AdapterUpdateSession.Switches(enabled = BuildConfig.ADAPTER_UPDATES, canFinish = BuildConfig.INSTALL_CONFIRM),
         )
 
     /** Pairing an iPhone on the connecting screen, when the adapter has no phone paired or none comes. */
@@ -2938,7 +2955,22 @@ class CarlinkManager(
                 sha256: String,
                 timeoutMs: Long,
             ): Int? = c.mgmtAction(Ocbm.MGMT_UPDATE, sha256.toByteArray(Charsets.US_ASCII), timeoutMs)
+
+            override fun selfTest(): String? =
+                c
+                    .pullFile(SELFTEST_FILE, timeoutMs = SELFTEST_TIMEOUT_MS)
+                    .getOrNull()
+                    ?.toString(Charsets.UTF_8)
+                    ?.lines()
+                    ?.lastOrNull { it.isNotBlank() }
         }
+
+    /** A CarPlay session streams on a trial adapter: remember the adapter ([CarPlaySessionRecord]). */
+    private fun noteCarPlaySession() {
+        val install = oneFileInstall.install.value ?: return
+        val carPlay = projectionMode == Ocbm.PM_WIRED_CP || projectionMode == Ocbm.PM_WIRELESS_CP
+        if (state == State.STREAMING && carPlay && install.mode == InstallMode.TRIAL) carPlaySessions.add(install.serial)
+    }
 
     /** Why the adapter can't be updated right now, or null when it can: the car parked, and no call. */
     private fun updateBlockedReason(): String? =
@@ -3649,6 +3681,7 @@ class CarlinkManager(
         if (state != State.DEVICE_CONNECTED) return
         lastStreamingStartMs = SystemClock.elapsedRealtime()
         setState(State.STREAMING)
+        noteCarPlaySession()
     }
 
     /**

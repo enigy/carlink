@@ -56,27 +56,37 @@ class AdapterUpdateTest {
     }
 
     @Test
-    fun `a trial adapter without room takes the round trip, and is told why`() {
+    fun `a trial adapter without room finishes its install first, and is told why`() {
+        // Scott, 1 Nov: the truck's trial has 964 KB free, and an update replacing btd and carplayd needs about 2.1 MB.
         val offer = updateOffer(trial(), true, pkg, freeKb = 700)
-        assertTrue(offer is UpdateOffer.RoundTrip)
-        assertEquals("It needs about 800 KB of flash, and this adapter has 700 KB free.", (offer as UpdateOffer.RoundTrip).why)
+        assertEquals(UpdateOffer.FinishFirst(pkg, "It needs about 800 KB of flash, and this adapter has 700 KB free."), offer)
     }
 
     @Test
-    fun `a trial adapter older than the package's FROM_MIN takes the round trip too`() {
-        val offer = updateOffer(trial("0.9.0"), true, pkg, 1252)
-        assertEquals(UpdateOffer.RoundTrip(pkg, "It updates OCBM 1.0.0 or newer, and this adapter runs 0.9.0."), offer)
+    fun `from a build that doesn't send the install confirm, a trial adapter without room can't take it, and says why`() {
+        val offer = updateOffer(trial(), true, pkg, freeKb = 700, canFinish = false)
+        assertEquals(UpdateOffer.CannotTake(pkg, "It needs about 800 KB of flash, and this adapter has 700 KB free. $NO_FINISH"), offer)
     }
 
     @Test
-    fun `without the stick conversion in the build, a trial adapter that can't take it is told so instead`() {
-        assertTrue(updateOffer(trial(), true, pkg, freeKb = 700, canConvert = false) is UpdateOffer.CannotTake)
+    fun `an adapter older than the package's FROM_MIN can't take it, and finishing wouldn't help`() {
+        val reason = "It updates OCBM 1.0.0 or newer, and this adapter runs 0.9.0."
+        assertEquals(UpdateOffer.CannotTake(pkg, reason), updateOffer(trial("0.9.0"), true, pkg, 1252))
+        assertEquals(UpdateOffer.CannotTake(pkg, reason), updateOffer(trial("0.9.0"), true, pkg, freeKb = 700))
     }
 
     @Test
-    fun `a final adapter that can't take it has no round trip`() {
+    fun `a final adapter without room can't take it`() {
         val offer = updateOffer(OneFileInstall(InstallMode.FINAL, "1.0.0"), true, pkg, freeKb = 500)
-        assertTrue(offer is UpdateOffer.CannotTake)
+        assertEquals(UpdateOffer.CannotTake(pkg, "It needs about 800 KB of flash, and this adapter has 500 KB free."), offer)
+    }
+
+    @Test
+    fun `the install finishes for an update only after a passed self-test and a CarPlay session`() {
+        assertNull(finishBlocked("PASSED in 4 s", carriedCarPlay = true))
+        assertTrue(finishBlocked("FAILED after 60 s: no /dev/usb_accessory", carriedCarPlay = true).orEmpty().contains("self-test"))
+        assertTrue("unreadable counts as not passed", finishBlocked(null, carriedCarPlay = true).orEmpty().contains("self-test"))
+        assertTrue(finishBlocked("PASSED in 4 s", carriedCarPlay = false).orEmpty().contains("CarPlay"))
     }
 
     @Test

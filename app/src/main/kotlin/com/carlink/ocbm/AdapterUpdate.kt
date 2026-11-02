@@ -59,10 +59,11 @@ sealed interface UpdateOffer {
     ) : UpdateOffer
 
     /**
-     * A trial adapter the package can't go onto in place ([why]): it goes back to stock CarPlay, then converts
-     * again by USB stick with this build's installer.
+     * A trial adapter without the room for the package ([why]): finishing its install makes the room, by deleting
+     * the copy of stock CarPlay it keeps, and the update goes in once the install is final. Carlink asks the driver
+     * first, and only when the trial has proven itself (Scott, 1 Nov; [AdapterUpdateSession.askToFinish]).
      */
-    data class RoundTrip(
+    data class FinishFirst(
         override val pkg: UpdatePackage,
         val why: String,
     ) : UpdateOffer
@@ -72,7 +73,7 @@ sealed interface UpdateOffer {
         override val pkg: UpdatePackage,
     ) : UpdateOffer
 
-    /** A `final` adapter that can't take the package ([why]); with no stock left, there is no round trip. */
+    /** An adapter that can't take the package ([why]): too old for it, or without the room and no way to make it. */
     data class CannotTake(
         override val pkg: UpdatePackage,
         val why: String,
@@ -82,34 +83,61 @@ sealed interface UpdateOffer {
 /**
  * The offer for an adapter whose one-file [install] is known, which takes MGMT_UPDATE ([takesUpdates]) and has
  * [freeKb] of flash free (MGMT_INFO's `rootfs_free_kb`; null when it didn't say, and the adapter checks for
- * itself). Trial adapters update "in place, else round trip" (Scott, 29 Oct); the round trip only from a build
- * that converts stock adapters ([canConvert]).
+ * itself). A trial adapter without the room finishes its install first (Scott, 1 Nov), from a build that may
+ * send the install confirm ([canFinish]); otherwise it can't take the package.
  */
 fun updateOffer(
     install: OneFileInstall?,
     takesUpdates: Boolean,
     pkg: UpdatePackage?,
     freeKb: Int?,
-    canConvert: Boolean = true,
+    canFinish: Boolean = true,
 ): UpdateOffer {
     val have = install?.version
     if (pkg == null || have == null) return UpdateOffer.None
     if (!takesUpdates || !OcbmVersion.newer(pkg.version, have)) return UpdateOffer.None
-    val tooOld = OcbmVersion.newer(pkg.fromMin, have)
-    val noRoom = freeKb != null && pkg.needKb > freeKb
-    val why =
-        when {
-            tooOld -> "It updates OCBM ${pkg.fromMin} or newer, and this adapter runs $have."
-            noRoom -> "It needs about ${pkg.needKb} KB of flash, and this adapter has $freeKb KB free."
-            else -> null
-        }
     return when {
         install.mode == InstallMode.CONFIRMED -> UpdateOffer.AfterThisDrive(pkg)
-        why == null -> UpdateOffer.InPlace(pkg)
-        install.mode == InstallMode.TRIAL && canConvert -> UpdateOffer.RoundTrip(pkg, why)
-        else -> UpdateOffer.CannotTake(pkg, why)
+        OcbmVersion.newer(pkg.fromMin, have) -> UpdateOffer.CannotTake(pkg, "It updates OCBM ${pkg.fromMin} or newer, and this adapter runs $have.")
+        freeKb == null || pkg.needKb <= freeKb -> UpdateOffer.InPlace(pkg)
+        else -> noRoomOffer(pkg, install.mode, freeKb, canFinish)
     }
 }
+
+/** [pkg] without the room on the adapter: a trial finishes its install first, from a build that may; else it can't take it. */
+private fun noRoomOffer(
+    pkg: UpdatePackage,
+    mode: InstallMode,
+    freeKb: Int,
+    canFinish: Boolean,
+): UpdateOffer {
+    val why = "It needs about ${pkg.needKb} KB of flash, and this adapter has $freeKb KB free."
+    return when {
+        mode != InstallMode.TRIAL -> UpdateOffer.CannotTake(pkg, why)
+        canFinish -> UpdateOffer.FinishFirst(pkg, why)
+        else -> UpdateOffer.CannotTake(pkg, "$why $NO_FINISH")
+    }
+}
+
+/** Why a trial adapter without the room can't take a package from a build that doesn't send the install confirm. */
+internal const val NO_FINISH =
+    "While it keeps stock CarPlay there isn't the room, and this version of Carlink can't finish the install to make it."
+
+/**
+ * Why a trial adapter can't finish its install for an update now, or null when it may (Scott, 1 Nov): its start-up
+ * self-test passed since it last started ([selfTest], the last line of the adapter's `/tmp/ocbm_selftest.txt`; null
+ * when it couldn't be read), and it has carried a CarPlay session ([carriedCarPlay]).
+ */
+fun finishBlocked(
+    selfTest: String?,
+    carriedCarPlay: Boolean,
+): String? =
+    when {
+        selfTest?.trim()?.startsWith("PASSED") != true ->
+            "The adapter hasn't passed its start-up self-test since it started. Restart it, wait a minute, and try again."
+        !carriedCarPlay -> "Use CarPlay through this adapter at least once first, so it has proven itself before its install finishes."
+        else -> null
+    }
 
 /** MGMT_INFO's `"update"`: where the adapter's update stands. */
 enum class UpdateState(

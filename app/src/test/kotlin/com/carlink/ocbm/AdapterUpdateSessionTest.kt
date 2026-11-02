@@ -28,6 +28,11 @@ class AdapterUpdateSessionTest {
 
     @Volatile private var notNow: String? = null
     private val updated = AtomicInteger()
+
+    @Volatile private var carriedCarPlay = true
+
+    @Volatile private var confirmAck: Int? = 0
+    private val confirms = AtomicInteger()
     private lateinit var session: AdapterUpdateSession
 
     @After
@@ -53,6 +58,8 @@ class AdapterUpdateSessionTest {
 
         @Volatile var ack: Int? = 0
 
+        @Volatile var selfTestLine: String? = "PASSED in 4 s"
+
         override fun info(): String? = infoJson
 
         override fun push(
@@ -72,6 +79,8 @@ class AdapterUpdateSessionTest {
             started.add(sha256)
             return ack
         }
+
+        override fun selfTest(): String? = selfTestLine
     }
 
     private class FakeSupplier(
@@ -100,11 +109,18 @@ class AdapterUpdateSessionTest {
                         override fun updated() {
                             updated.incrementAndGet()
                         }
+
+                        override fun carriedCarPlay(): Boolean = carriedCarPlay
+
+                        override fun confirmInstall(): Int? {
+                            confirms.incrementAndGet()
+                            return confirmAck
+                        }
                     },
                 packages = supplier,
                 install = install,
                 scope = scope,
-                switches = AdapterUpdateSession.Switches(enabled = enabled, canConvert = true),
+                switches = AdapterUpdateSession.Switches(enabled = enabled, canFinish = true),
                 timing = timing,
             )
         session.onSubscribed()
@@ -246,13 +262,76 @@ class AdapterUpdateSessionTest {
         Thread.sleep(100) // shows that nothing is offered before the install is known
         assertEquals(UpdateOffer.None, session.offer.value)
         install.value = OneFileInstall(InstallMode.TRIAL, "1.0.0")
-        waitUntil(2000) { session.offer.value is UpdateOffer.RoundTrip }
+        waitUntil(2000) { session.offer.value is UpdateOffer.FinishFirst }
         install.value = OneFileInstall(InstallMode.CONFIRMED, "1.0.0")
         waitUntil(2000) { session.offer.value is UpdateOffer.AfterThisDrive }
         session.update()
         Thread.sleep(100) // shows that the tap starts nothing while the install finishes
         assertEquals(UpdatePhase.Idle, session.phase.value)
         assertTrue(box!!.pushed.isEmpty())
+    }
+
+    /** A trial adapter with [pkg] and too little room for it: the offer is to finish the install first. */
+    private fun withoutRoom() {
+        box!!.infoJson = info(freeKb = 300)
+        start()
+        waitUntil(2000) { session.offer.value is UpdateOffer.FinishFirst }
+    }
+
+    @Test
+    fun `without room, a proven trial asks to finish, and yes sends the install confirm and nothing else`() {
+        withoutRoom()
+        session.askToFinish()
+        waitUntil(2000) { session.finishAsk.value != null }
+        assertEquals(0, confirms.get())
+        session.finish()
+        waitUntil(2000) { confirms.get() == 1 }
+        assertEquals(null, session.finishAsk.value)
+        assertEquals(UpdatePhase.Idle, session.phase.value)
+        assertTrue("the update waits for the finish: nothing is sent", box!!.pushed.isEmpty() && box!!.started.isEmpty())
+    }
+
+    @Test
+    fun `no leaves the update uninstalled and says why, with nothing written`() {
+        withoutRoom()
+        session.askToFinish()
+        waitUntil(2000) { session.finishAsk.value != null }
+        session.declineFinish()
+        val phase = session.phase.value as UpdatePhase.Failed
+        assertEquals("The update wasn't installed", phase.title)
+        assertTrue(phase.body.startsWith("It needs about 387 KB of flash, and this adapter has 300 KB free."))
+        assertEquals(0, confirms.get())
+        assertTrue(box!!.pushed.isEmpty())
+    }
+
+    @Test
+    fun `a trial that hasn't proven itself is refused with the reason, before anything is asked`() {
+        box!!.selfTestLine = "FAILED after 60 s: ocbmd is not running"
+        withoutRoom()
+        session.askToFinish()
+        waitUntil(2000) { session.phase.value is UpdatePhase.Failed }
+        assertTrue((session.phase.value as UpdatePhase.Failed).body.contains("self-test"))
+        session.dismiss()
+
+        box!!.selfTestLine = "PASSED in 4 s"
+        carriedCarPlay = false
+        session.askToFinish()
+        waitUntil(2000) { session.phase.value is UpdatePhase.Failed }
+        assertTrue((session.phase.value as UpdatePhase.Failed).body.contains("CarPlay"))
+        assertEquals(null, session.finishAsk.value)
+        assertEquals(0, confirms.get())
+        assertTrue(box!!.pushed.isEmpty())
+    }
+
+    @Test
+    fun `a confirm the adapter refuses or doesn't answer is said so`() {
+        withoutRoom()
+        confirmAck = 1
+        session.askToFinish()
+        waitUntil(2000) { session.finishAsk.value != null }
+        session.finish()
+        waitUntil(2000) { session.phase.value is UpdatePhase.Failed }
+        assertEquals(UpdatePhase.Failed("The install didn't finish", "The adapter refused it. Nothing was changed."), session.phase.value)
     }
 
     @Test

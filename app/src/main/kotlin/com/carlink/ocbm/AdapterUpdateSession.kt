@@ -98,6 +98,9 @@ interface UpdateBox {
         sha256: String,
         timeoutMs: Long,
     ): Int?
+
+    /** The last line of the adapter's start-up self-test (`/tmp/ocbm_selftest.txt`); null when it couldn't be read. */
+    fun selfTest(): String?
 }
 
 /** What the update needs of the app around it. */
@@ -110,6 +113,12 @@ interface UpdateHost {
 
     /** The update was kept: read the install again, for its new version. */
     fun updated()
+
+    /** Whether the adapter in use has carried a CarPlay session in its trial. */
+    fun carriedCarPlay(): Boolean
+
+    /** Send MGMT_INSTALL_CONFIRM, the driver having agreed to finish the install: the ACK's status, or null with no answer. */
+    fun confirmInstall(): Int?
 }
 
 /**
@@ -136,8 +145,8 @@ class AdapterUpdateSession(
     data class Switches(
         /** BuildConfig.ADAPTER_UPDATES: on in debug builds, off in release builds until a package is published. */
         val enabled: Boolean,
-        /** BuildConfig.STOCK_CONVERSION: whether a trial adapter the package doesn't fit can take the round trip. */
-        val canConvert: Boolean,
+        /** BuildConfig.INSTALL_CONFIRM: whether a trial adapter without the room may finish its install to make it. */
+        val canFinish: Boolean,
     )
 
     /** How long each wait lasts. */
@@ -162,13 +171,18 @@ class AdapterUpdateSession(
     /** What Settings offers the adapter in use. */
     val offer: StateFlow<UpdateOffer> =
         combine(install, adapter) { i, a ->
-            if (switches.enabled) updateOffer(i, a.takesUpdates, a.pkg, a.freeKb, switches.canConvert) else UpdateOffer.None
+            if (switches.enabled) updateOffer(i, a.takesUpdates, a.pkg, a.freeKb, switches.canFinish) else UpdateOffer.None
         }.stateIn(scope, SharingStarted.Eagerly, UpdateOffer.None)
 
     private val phaseState = MutableStateFlow<UpdatePhase>(UpdatePhase.Idle)
 
     /** Where the update stands; kept across the adapter's restart, back to Idle on [dismiss]. */
     val phase: StateFlow<UpdatePhase> = phaseState.asStateFlow()
+
+    private val finishAskState = MutableStateFlow<UpdateOffer.FinishFirst?>(null)
+
+    /** The offer whose install the driver is asked to finish ([askToFinish]); null when nothing is asked. */
+    val finishAsk: StateFlow<UpdateOffer.FinishFirst?> = finishAskState.asStateFlow()
 
     private val lock = Any()
 
@@ -196,6 +210,7 @@ class AdapterUpdateSession(
     /** The session ended: an adapter installing or checking the update is restarting; nothing is known of the next one yet. */
     fun reset() {
         adapter.value = Adapter()
+        finishAskState.value = null
         synchronized(lock) {
             when (val now = phaseState.value) {
                 is UpdatePhase.Installing -> phaseState.value = UpdatePhase.Restarting(now.to)
@@ -214,13 +229,69 @@ class AdapterUpdateSession(
             val pkg = (offer.value as? UpdateOffer.InPlace)?.pkg ?: return
             if (phaseState.value is UpdatePhase.Updating) return
             host.notNow()?.let {
-                phaseState.value = UpdatePhase.Failed("The update didn't start", it)
+                phaseState.value = UpdatePhase.Failed(NOT_STARTED, it)
                 return
             }
             logWarn("[UPDATE] update to ${pkg.version} confirmed in the app", tag = Logger.Tags.ADAPTR)
             phaseState.value = UpdatePhase.Downloading(pkg.version, 0, 0)
             job?.cancel()
             job = scope.launch(Dispatchers.IO) { run(pkg.version) }
+        }
+    }
+
+    /**
+     * Update on a [UpdateOffer.FinishFirst] offer (Scott, 1 Nov): when the trial has proven itself ([finishBlocked]: a
+     * passed self-test and a CarPlay session), ask the driver ([finishAsk]); otherwise refuse, with the reason. Nothing is
+     * written to the adapter either way.
+     */
+    fun askToFinish() {
+        val offer = offer.value as? UpdateOffer.FinishFirst ?: return
+        synchronized(lock) {
+            if (phaseState.value is UpdatePhase.Updating) return
+            host.notNow()?.let {
+                phaseState.value = UpdatePhase.Failed(NOT_STARTED, it)
+                return
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            val blocked = finishBlocked(host.box()?.selfTest(), host.carriedCarPlay())
+            if (blocked == null) {
+                finishAskState.value = offer
+                return@launch
+            }
+            logInfo("[UPDATE] ${offer.pkg.version} needs the install finished, and it can't be now: $blocked", tag = Logger.Tags.ADAPTR)
+            outcome(UpdatePhase.Failed(NOT_INSTALLED, "${offer.why} $blocked"))
+        }
+    }
+
+    /**
+     * The driver agreed to finish the install: send the install confirm. The adapter finishes when this drive ends, and the
+     * update is offered in place on the next one.
+     */
+    fun finish() {
+        val offer = finishAskState.value ?: return
+        finishAskState.value = null
+        logWarn("[UPDATE] finishing the install for ${offer.pkg.version}, agreed in the app", tag = Logger.Tags.ADAPTR)
+        scope.launch(Dispatchers.IO) {
+            val status = host.confirmInstall()
+            logWarn("[UPDATE] MGMT_INSTALL_CONFIRM status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
+            if (status == 0) return@launch
+            val body = if (status == null) "The adapter didn't answer." else "The adapter refused it."
+            outcome(UpdatePhase.Failed("The install didn't finish", "$body Nothing was changed."))
+        }
+    }
+
+    /** The driver declined to finish the install: the update isn't installed, and the row says why. */
+    fun declineFinish() {
+        val offer = finishAskState.value ?: return
+        finishAskState.value = null
+        outcome(UpdatePhase.Failed(NOT_INSTALLED, "${offer.why} It goes in once the install has finished."))
+    }
+
+    /** Show [result] on the row, unless an update is in flight. */
+    private fun outcome(result: UpdatePhase.Failed) {
+        synchronized(lock) {
+            if (phaseState.value !is UpdatePhase.Updating) phaseState.value = result
         }
     }
 
@@ -361,5 +432,7 @@ class AdapterUpdateSession(
 
     private companion object {
         const val MS_PER_S = 1000
+        const val NOT_STARTED = "The update didn't start"
+        const val NOT_INSTALLED = "The update wasn't installed"
     }
 }

@@ -20,9 +20,9 @@ import com.carlink.ocbm.InstallMode
 import com.carlink.ocbm.OneFileInstall
 import com.carlink.ocbm.UpdateOffer
 import com.carlink.ocbm.UpdatePhase
+import com.carlink.ui.components.FinishFirstDialog
 import com.carlink.ui.components.GoBackToStockDialog
 import com.carlink.ui.components.LocalSettingsVisible
-import com.carlink.ui.components.RoundTripDialog
 import com.carlink.ui.components.UpdateDialog
 import com.carlink.ui.components.installLabel
 import com.carlink.ui.components.updateLine
@@ -79,7 +79,8 @@ internal fun InstallGroup(carlinkManager: CarlinkManager) {
 
 /**
  * A newer OCBM for the adapter (remote updates plan, U2): "OCBM 1.1.0 available" with its notes and Update, which
- * asks once more in a dialog; then the update's progress and outcome. Nothing shows with nothing to offer.
+ * asks once more in a dialog; then the update's progress and outcome. A trial adapter without the room asks to
+ * finish its install first (Scott, 1 Nov). Nothing shows with nothing to offer.
  */
 @Composable
 private fun UpdateRow(
@@ -90,6 +91,7 @@ private fun UpdateRow(
     val update = carlinkManager.adapterUpdate
     val offer by update.offer.collectAsState()
     val phase by update.phase.collectAsState()
+    val finishAsk by update.finishAsk.collectAsState()
     var asking by remember(offer) { mutableStateOf(false) }
     var blocked by remember(offer, phase) { mutableStateOf<String?>(null) }
     if (offer == UpdateOffer.None && phase == UpdatePhase.Idle) return
@@ -98,27 +100,22 @@ private fun UpdateRow(
         when {
             phase is UpdatePhase.Updating -> Unit
             phase != UpdatePhase.Idle -> RowAction("OK", onClick = update::dismiss)
-            offer is UpdateOffer.InPlace || offer is UpdateOffer.RoundTrip ->
+            offer is UpdateOffer.InPlace ->
                 RowAction("Update", onClick = {
                     blocked = update.notNowReason()
                     asking = blocked == null
                 })
+            // The session checks the trial, then asks (finishAsk) or says why not.
+            offer is UpdateOffer.FinishFirst -> RowAction("Update", onClick = update::askToFinish)
         }
     }
-    if (!asking) return
-    val dismiss = { asking = false }
-    when (val o = offer) {
-        is UpdateOffer.InPlace ->
-            UpdateDialog(o, install?.version, onDismiss = dismiss, onUpdate = {
-                asking = false
-                update.update()
-            })
-        is UpdateOffer.RoundTrip ->
-            RoundTripDialog(o, onDismiss = dismiss, onGoBack = {
-                asking = false
-                carlinkManager.oneFileInstall.goBackToStock()
-            })
-        else -> Unit
+    finishAsk?.let { FinishFirstDialog(it, onFinish = update::finish, onDecline = update::declineFinish) }
+    val o = offer
+    if (asking && o is UpdateOffer.InPlace) {
+        UpdateDialog(o, install?.version, onDismiss = { asking = false }, onUpdate = {
+            asking = false
+            update.update()
+        })
     }
 }
 
