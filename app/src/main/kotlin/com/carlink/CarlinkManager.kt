@@ -2673,7 +2673,10 @@ class CarlinkManager(
 
         c.onPhonePresence = { present ->
             scope.launch {
-                if (!present) adapterPhone.absent()
+                if (!present) {
+                    markPhoneLeft()
+                    adapterPhone.absent()
+                }
                 _phoneNews.update { it + 1 }
                 if (present || state == State.DISCONNECTED) return@launch
                 // Drop out of STREAMING. MainScreen keys both the loading overlay and touch
@@ -3193,6 +3196,20 @@ class CarlinkManager(
     }
 
     /**
+     * The phone the adapter had is gone (its identity cleared, or no phone on the adapter): its "Last seen" becomes now,
+     * not its session's start (bench 11-03: "Last seen 9 minutes ago" a minute after the phone left).
+     */
+    private fun markPhoneLeft() {
+        val mac = adapterPhone.identified ?: return
+        val now = System.currentTimeMillis()
+        knownStore?.update { snap ->
+            val prev = snap.devices[mac] ?: return@update snap
+            snap.copy(devices = snap.devices + (mac to prev.copy(lastConnectedMs = now)))
+        }
+        rebuildDeviceList()
+    }
+
+    /**
      * `CT_PHONE_IDENT` — the connected phone's own description of itself.
      *
      * Both fields earn their place: `name` is what the user set in Settings > General > About > Name,
@@ -3202,6 +3219,7 @@ class CarlinkManager(
      */
     private fun onPhoneIdentity(json: String) {
         if (json.isEmpty()) {
+            markPhoneLeft()
             // The adapter cleared it: that phone's session is over, so no phone is Connected until the next one
             // names itself (11-03 bench: the old phone's row read "Connected" through a switch).
             adapterPhone.identity(null)

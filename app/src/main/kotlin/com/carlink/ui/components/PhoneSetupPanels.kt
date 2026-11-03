@@ -88,7 +88,7 @@ private fun pairingPanel(
         meta = secondsLeft?.let { "Pairing open for %d:%02d".format(it / SECONDS_PER_MINUTE, it % SECONDS_PER_MINUTE) } ?: "Pairing is open",
         title = "Pick $name on the iPhone",
         body =
-            "On the iPhone, open Settings › General › CarPlay (or Settings › Bluetooth) and choose $name." +
+            "On the iPhone, open Settings › General › CarPlay and choose $name." +
                 progress.joinToString("") { "\n$it" },
         busy = true,
         actions = listOf(PanelAction("Stop", PanelActionLook.QUIET, setup::stop)),
