@@ -34,6 +34,12 @@ data class BoxSnapshot(
     val healthKnown: Boolean = false,
     /** The raw "WIRED_CP · HCI|SSP|..." line, kept for bug reports. */
     val raw: String = "",
+    /**
+     * A one-file install keeps stock CarPlay beside OCBM (trial or confirmed), and with both on it the flash is full by
+     * design: about 1.2 MB free, under the 2 MB the adapter's rootfs-ok bit wants. Bench 11-03: a healthy trial read
+     * "check status" and "— Firmware" until the install finished.
+     */
+    val stockKept: Boolean = false,
 )
 
 /** One plain-word health chip; [ok] is null until the box has reported its health. */
@@ -137,16 +143,23 @@ object SettingsModel {
             else -> "$adapterName · check status"
         }
 
-    fun coreHealthy(box: BoxSnapshot): Boolean = box.healthKnown && box.health and CORE_HEALTH == CORE_HEALTH
+    fun coreHealthy(box: BoxSnapshot): Boolean {
+        val core = if (box.stockKept) CORE_HEALTH and Ocbm.BH_ROOTFS_OK.inv() else CORE_HEALTH
+        return box.healthKnown && box.health and core == core
+    }
 
-    /** Bluetooth, Wi-Fi, CarPlay and Firmware, each lit by the CT_BOX_HEALTH bits behind it. */
+    /**
+     * Bluetooth, Wi-Fi, CarPlay and Firmware, each lit by the CT_BOX_HEALTH bits behind it. While stock is kept the
+     * rootfs bit is off by design ([BoxSnapshot.stockKept]), so Firmware is lit by the adapter answering.
+     */
     fun healthItems(box: BoxSnapshot): List<HealthItem> {
         fun any(mask: Int): Boolean? = if (box.healthKnown && box.adapterConnected) box.health and mask != 0 else null
+        val firmware = if (box.stockKept) any(Ocbm.BH_ROOTFS_OK)?.let { true } else any(Ocbm.BH_ROOTFS_OK)
         return listOf(
             HealthItem("Bluetooth", any(Ocbm.BH_HCI_PRESENT)),
             HealthItem("Wi-Fi", any(Ocbm.BH_WLAN_AP)),
             HealthItem("CarPlay", any(Ocbm.BH_IAP2D or Ocbm.BH_AIRPLAYD)),
-            HealthItem("Firmware", any(Ocbm.BH_ROOTFS_OK)),
+            HealthItem("Firmware", firmware),
         )
     }
 

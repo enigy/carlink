@@ -164,7 +164,9 @@ internal fun SettingRow(
             )
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = SettingsStyle.RowTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Two lines, not one: the trailing slot is measured first, and in a half-width column one line left
+            // "Remove stock CarP…" beside its button (bench 11-03).
+            Text(text = title, style = SettingsStyle.RowTitle, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (subtitle != null) {
                 Text(
                     text = subtitle,
