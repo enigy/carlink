@@ -3,9 +3,12 @@ package com.carlink.ui.settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertAll
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performSemanticsAction
@@ -83,7 +86,11 @@ class ConnectFeedbackTest {
         attempt.value = ConnectAttempt(owner.btMac)
         show(listOf(owner, other, third))
         compose.onNodeWithContentDescription("Connecting").assertExists()
-        compose.onNodeWithText("Connect").assertIsNotEnabled()
+        compose.onAllNodesWithText("Connect").assertCountEquals(2).assertAll(isNotEnabled())
+        // The second iPhone is still the one projecting, but with a switch away from it working no row says it is
+        // connected (11-03 bench: the old phone read "Connected" through a switch).
+        compose.onNodeWithText("Connected").assertDoesNotExist()
+        compose.onNodeWithText("Connected now").assertDoesNotExist()
     }
 
     @Test

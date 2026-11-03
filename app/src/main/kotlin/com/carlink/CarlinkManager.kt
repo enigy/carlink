@@ -61,6 +61,7 @@ import com.carlink.navigation.LaneActivity
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.OcbmNavigationFeed
 import com.carlink.navigation.compose.ComposedIconStore
+import com.carlink.ocbm.AdapterPhone
 import com.carlink.ocbm.AdapterUpdateSession
 import com.carlink.ocbm.AdapterUpdateStore
 import com.carlink.ocbm.BinaryPlist
@@ -72,7 +73,6 @@ import com.carlink.ocbm.ConnectAttempt
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.InstallMode
 import com.carlink.ocbm.InstallSession
-import com.carlink.ocbm.LivePhone
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmAvLanes
 import com.carlink.ocbm.OcbmClient
@@ -125,6 +125,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -576,7 +577,7 @@ class CarlinkManager(
     val oneFileInstall = InstallSession({ client }, scope, confirmAllowed = BuildConfig.INSTALL_CONFIRM)
 
     /** What Settings › Phones' Connect shows after a press: working, then connected or not reached. */
-    private val connectTracker = PhoneConnectTracker(scope, { LivePhone(connectedPhoneMac, phoneIdentities) })
+    private val connectTracker = PhoneConnectTracker(scope, { adapterPhone.live })
 
     /** The Connect press being followed, or its outcome while it stands ([PhoneConnectTracker]). */
     val connectAttempt: StateFlow<ConnectAttempt?> get() = connectTracker.attempt
@@ -720,11 +721,18 @@ class CarlinkManager(
      */
     private val phoneNames = java.util.Collections.synchronizedMap(mutableMapOf<String, String>())
 
-    /** `deviceID` of the phone currently in session, lower-cased, or null. */
-    @Volatile private var connectedPhoneMac: String? = null
+    /** The phone on the adapter: who it says it is (CT_PHONE_IDENT), and the one Settings marks Connected. */
+    private val adapterPhone = AdapterPhone()
 
-    // How many phone identities (CT_PHONE_IDENT) have arrived: a Connect counts as reached only through news.
-    @Volatile private var phoneIdentities = 0L
+    private val _phoneNews = MutableStateFlow(0L)
+
+    /**
+     * Bumped when the adapter says which phone is on it, or that none is, or how it is connected (CT_PHONE_IDENT,
+     * SEV_PHONE_PRESENT/ABSENT, CT_PROJ_MODE), so Settings reads it at once (11-03 bench: on its 1 s poll the Phones page
+     * lagged a switch, while the Connect outcome, which it follows directly, ran ahead and the two rows contradicted
+     * each other).
+     */
+    val phoneNews: StateFlow<Long> = _phoneNews.asStateFlow()
 
     /**
      * Durable known-device history. Survives process death; cleared only by the user or by clearing
@@ -939,13 +947,11 @@ class CarlinkManager(
      */
     @Volatile private var bondedMacs: Set<String> = emptySet()
 
-    @Volatile private var _connectedBtMac: String? = null
-
     /** The adapter's list of paired wireless devices. */
     val pairedDevices: List<DeviceInfo> get() = _pairedDevices
 
     /** BT MAC of the currently connected phone (null if none). */
-    val connectedBtMac: String? get() = _connectedBtMac
+    val connectedBtMac: String? get() = adapterPhone.shown
 
     /** 0 = wired, 1 = wireless, null = unknown. */
     @Volatile var currentWifi: Int? = null
@@ -973,7 +979,7 @@ class CarlinkManager(
         lastLengthAtMs = 0L
         synchronized(artworkById) { artworkById.clear() }
         pendingArtworkId = null
-        _connectedBtMac = null
+        adapterPhone.clearShown()
         currentWifi = null
     }
 
@@ -1920,17 +1926,12 @@ class CarlinkManager(
                 null
             }
 
-        // `CT_PHONE_IDENT` names the live phone outright, so prefer it. The heuristic below is
-        // the fallback for a box that has not sent one yet.
-        connectedPhoneMac?.let { _connectedBtMac = it }
-
-        // Single-bonded-device heuristic: MGMT_INFO reports no connected MAC, so with two or more
-        // BONDED phones the "Connected" card will be wrong. Asked of `bondedMacs`, never of
-        // `_pairedDevices` — the latter now includes history-only entries, which would make
+        // `CT_PHONE_IDENT` names the live phone outright, so it wins. Otherwise the single-bonded-device
+        // heuristic, the fallback for a box that has not sent one yet: MGMT_INFO reports no connected MAC,
+        // so with two or more BONDED phones the "Connected" card will be wrong. Asked of `bondedMacs`, never
+        // of `_pairedDevices` — the latter now includes history-only entries, which would make
         // `singleOrNull()` null for a one-phone user and silently kill the highlight.
-        if (_connectedBtMac == null && (wireless || phonePresent)) {
-            bondedMacs.singleOrNull()?.let { _connectedBtMac = it }
-        }
+        adapterPhone.info(phoneOn = wireless || phonePresent, bonded = bondedMacs)
     }
 
     // There is deliberately NO connectToDevice(): OCBM has no targeted-connect verb, and the
@@ -2192,13 +2193,15 @@ class CarlinkManager(
         known: Boolean,
     ) {
         if (mode == projectionMode && health == boxHealth && known == boxHealthKnown) return
-        if (mode != projectionMode) logInfo("[STATUS] adapter mode -> ${Ocbm.pmName(mode)}", tag = Logger.Tags.ADAPTR)
+        val modeChanged = mode != projectionMode
+        if (modeChanged) logInfo("[STATUS] adapter mode -> ${Ocbm.pmName(mode)}", tag = Logger.Tags.ADAPTR)
         // The pairing window just closed (it closes 10 s after a new phone bonds): ask for the bond
         // list again, so a phone added through "Add phone" shows up without reopening Settings.
         val pairWindowClosed = boxHealthKnown && boxHealth and Ocbm.BH_PAIR_WINDOW != 0 && health and Ocbm.BH_PAIR_WINDOW == 0
         projectionMode = mode
         boxHealth = health
         boxHealthKnown = known
+        if (modeChanged) _phoneNews.update { it + 1 } // the phone's transport: wired or wireless
         callback?.onBoxStatusChanged(mode, health, known)
         if (pairWindowClosed) {
             logInfo("[PAIRING] window closed — refreshing the phone list", tag = Logger.Tags.ADAPTR)
@@ -2670,6 +2673,8 @@ class CarlinkManager(
 
         c.onPhonePresence = { present ->
             scope.launch {
+                if (!present) adapterPhone.absent()
+                _phoneNews.update { it + 1 }
                 if (present || state == State.DISCONNECTED) return@launch
                 // Drop out of STREAMING. MainScreen keys both the loading overlay and touch
                 // forwarding on STREAMING, so staying there leaves the last decoded frame frozen
@@ -3197,7 +3202,10 @@ class CarlinkManager(
      */
     private fun onPhoneIdentity(json: String) {
         if (json.isEmpty()) {
-            connectedPhoneMac = null
+            // The adapter cleared it: that phone's session is over, so no phone is Connected until the next one
+            // names itself (11-03 bench: the old phone's row read "Connected" through a switch).
+            adapterPhone.identity(null)
+            _phoneNews.update { it + 1 }
             return
         }
         val obj =
@@ -3208,9 +3216,7 @@ class CarlinkManager(
         val name = obj.optString("name")
         val mac = obj.optString("deviceID").lowercase()
         if (mac.isEmpty()) return
-        connectedPhoneMac = mac
-        phoneIdentities++
-        _connectedBtMac = mac
+        adapterPhone.identity(mac)
         if (name.isNotEmpty()) phoneNames[mac] = name
         applyDriverProfile(mac, name)
 
@@ -3246,6 +3252,7 @@ class CarlinkManager(
         )
         // The list may already be on screen with a MAC for a label; rebuild it with the real name.
         rebuildDeviceList()
+        _phoneNews.update { it + 1 }
         pushPhonePolicyIfChanged("phone connected")
     }
 

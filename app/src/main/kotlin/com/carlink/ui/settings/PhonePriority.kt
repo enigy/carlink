@@ -55,6 +55,16 @@ internal class PhoneRanking(
     val attempt: ConnectAttempt? = null,
 ) {
     /**
+     * Whether [mac]'s row shows as the phone connected now: the one the adapter names, unless a Connect press for another
+     * phone is working or has connected it (11-03 bench: through a switch the old phone's row still read "Connected" while
+     * the new phone's said it had connected).
+     */
+    fun isLive(mac: String): Boolean {
+        val other = attempt?.takeUnless { it.mac.equals(mac, ignoreCase = true) }
+        return mac == connectedMac && (other == null || other.outcome == ConnectAttempt.Outcome.NOT_REACHED)
+    }
+
+    /**
      * Whether row [index]'s rank badge carries the accent: the phone connected now ([live]) or, with none connected, the
      * one called first (owner, 11-03: the second phone was connected and its badge stayed plain while the first's was lit).
      */
@@ -153,7 +163,7 @@ private fun PhoneRow(
     actions: PhoneListActions,
 ) {
     val colors = MaterialTheme.colorScheme
-    val live = device.btMac == ranking.connectedMac
+    val live = ranking.isLive(device.btMac)
     val mine = ranking.attempt?.takeIf { it.mac.equals(device.btMac, ignoreCase = true) }
     Row(modifier = Modifier.padding(start = if (ranking.enabled) 28.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
         if (ranking.enabled) RankBadge(index + 1, accent = ranking.badgeLit(index, live))

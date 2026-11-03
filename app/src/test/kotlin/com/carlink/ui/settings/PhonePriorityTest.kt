@@ -34,6 +34,19 @@ class PhonePriorityTest {
     }
 
     @Test
+    fun `while a press for another phone works or has connected it, the old phone's row is not live`() {
+        val scott = "68:a7:29:00:25:10"
+        val yoda = "aa:bb:cc:00:6a:de"
+
+        fun on(attempt: ConnectAttempt?) = PhoneRanking(true, scott, phoneConnected = true, switchable = true, attempt = attempt)
+        assertTrue("the phone the adapter names", on(null).isLive(scott))
+        assertFalse(on(null).isLive(yoda))
+        assertFalse("a switch to Yoda's is working (11-03 bench)", on(ConnectAttempt(yoda)).isLive(scott))
+        assertFalse("Yoda's has connected", on(ConnectAttempt(yoda, ConnectAttempt.Outcome.CONNECTED)).isLive(scott))
+        assertTrue("Yoda's was not reached", on(ConnectAttempt(yoda, ConnectAttempt.Outcome.NOT_REACHED)).isLive(scott))
+    }
+
+    @Test
     fun `the lit rank badge is the phone connected now, else the one called first`() {
         val idle = ranking(phoneConnected = false)
         assertTrue("nothing connected: the phone called first", idle.badgeLit(index = 0, live = false))
