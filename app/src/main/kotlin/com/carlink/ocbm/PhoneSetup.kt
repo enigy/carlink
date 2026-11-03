@@ -163,7 +163,19 @@ class PhoneSetup(
                 phaseState.value.also { phaseState.value = PhoneSetupPhase.None }
             }
         if (was is PhoneSetupPhase.Pairing) logInfo("[PAIRING] a phone connected while pairing was open", tag = Logger.Tags.ADAPTR)
+        if (was is PhoneSetupPhase.Pairing && was.endsAtMs != null) scope.launch(Dispatchers.IO) { closeOpened() }
         if (was != PhoneSetupPhase.None) scope.launch(Dispatchers.IO) { reread() }
+    }
+
+    /**
+     * Close the window this screen opened, now that a phone is connected. Bench 11-03: a phone paired in the window the
+     * adapter opens by itself, "Pair iPhone" opened a fresh 120 s one two seconds later, and the adapter stayed
+     * discoverable to every iPhone nearby until a second phone paired. Not through [window]: a failed close must not
+     * turn the connected session's screen into "Bluetooth is down".
+     */
+    private fun closeOpened() {
+        val status = box.pairWindow(0)
+        logInfo("[PAIRING] a phone connected: closing the window Carlink opened, status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
     }
 
     /** The session ended: nothing is known about the next one. */
@@ -192,12 +204,16 @@ class PhoneSetup(
             val status = window(timing.windowSeconds) ?: return@launch
             if (status != 0) return@launch
             val ends = box.now() + timing.windowSeconds * MS_PER_SECOND
-            synchronized(lock) {
-                if (connected) return@launch
-                phaseState.value = PhoneSetupPhase.Pairing(name, ends)
-                timer?.cancel()
-                timer = scope.launch { windowRunsOut(timing.windowSeconds * MS_PER_SECOND) }
-            }
+            val late =
+                synchronized(lock) {
+                    if (!connected) {
+                        phaseState.value = PhoneSetupPhase.Pairing(name, ends)
+                        timer?.cancel()
+                        timer = scope.launch { windowRunsOut(timing.windowSeconds * MS_PER_SECOND) }
+                    }
+                    connected
+                }
+            if (late) closeOpened() // a phone connected while the window was being opened
         }
     }
 

@@ -49,11 +49,28 @@ class PhonePriorityTest {
     @Test
     fun `the lit rank badge is the phone connected now, else the one called first`() {
         val idle = ranking(phoneConnected = false)
-        assertTrue("nothing connected: the phone called first", idle.badgeLit(index = 0, live = false))
-        assertFalse(idle.badgeLit(index = 1, live = false))
+        assertTrue("nothing connected: the phone called first", idle.badgeLit(index = 0, live = false, mac = A))
+        assertFalse(idle.badgeLit(index = 1, live = false, mac = B))
         val busy = ranking(phoneConnected = true)
-        assertTrue("the first phone connected", busy.badgeLit(index = 0, live = true))
-        assertTrue("the second phone connected (owner, 11-03)", busy.badgeLit(index = 1, live = true))
-        assertFalse("the first phone while the second is connected", busy.badgeLit(index = 0, live = false))
+        assertTrue("the first phone connected", busy.badgeLit(index = 0, live = true, mac = A))
+        assertTrue("the second phone connected (owner, 11-03)", busy.badgeLit(index = 1, live = true, mac = B))
+        assertFalse("the first phone while the second is connected", busy.badgeLit(index = 0, live = false, mac = A))
+    }
+
+    @Test
+    fun `while a press works or has connected, the accent stays on the phone pressed`() {
+        // Bench 11-03: a switch to the first-called phone lit, unlit and lit its badge again as the phones changed.
+        fun on(attempt: ConnectAttempt) = PhoneRanking(true, null, phoneConnected = true, switchable = true, attempt = attempt)
+        val working = on(ConnectAttempt(A))
+        assertTrue(working.badgeLit(index = 0, live = false, mac = A.uppercase()))
+        assertFalse("the phone leaving", working.badgeLit(index = 1, live = true, mac = B))
+        assertTrue(on(ConnectAttempt(A, ConnectAttempt.Outcome.CONNECTED)).badgeLit(index = 0, live = false, mac = A))
+        val missed = on(ConnectAttempt(A, ConnectAttempt.Outcome.NOT_REACHED))
+        assertTrue("not reached: the phone connected now again", missed.badgeLit(index = 1, live = true, mac = B))
+    }
+
+    private companion object {
+        const val A = "68:a7:29:00:25:10"
+        const val B = "aa:bb:cc:00:6a:de"
     }
 }
