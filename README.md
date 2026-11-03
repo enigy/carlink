@@ -168,7 +168,7 @@ Each [GitHub Release](https://github.com/enigy/carlink/releases) also attaches t
 
 ## Under the hood
 
-**Version 2.08**, out through Google Play internal testing and tested in the truck with every release. `:app`, `:bridge` and `:bridge-api` build; ktlint, detekt, Android lint and **692 unit tests** pass.
+**Version 2.09**, out through Google Play internal testing and tested in the truck with every release. `:app`, `:bridge` and `:bridge-api` build; ktlint, detekt, Android lint and **702 unit tests** pass.
 
 ### Adapter
 
