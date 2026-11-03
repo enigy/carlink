@@ -12,13 +12,17 @@ import androidx.compose.ui.test.performSemanticsAction
 import com.carlink.CarlinkManager
 import com.carlink.ocbm.ConnectAttempt
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** Settings › Phones' Connect shows the press at once, ignores more taps while it works, then says how it went (owner, 11-01). */
+/**
+ * Settings › Phones' Connect shows the press at once, ignores more taps while it works, then says how it went (owner, 11-01).
+ * The USB port is listed after the phones (owner, 11-03).
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class ConnectFeedbackTest {
@@ -80,5 +84,16 @@ class ConnectFeedbackTest {
         show(listOf(owner, other, third))
         compose.onNodeWithContentDescription("Connecting").assertExists()
         compose.onNodeWithText("Connect").assertIsNotEnabled()
+    }
+
+    @Test
+    fun the_usb_port_comes_after_the_phones() {
+        show()
+        assertTrue("owner, 11-03: the USB port at the bottom", topOf("USB port") > topOf("Second iPhone"))
+    }
+
+    private fun topOf(text: String): Float {
+        val node = compose.onNodeWithText(text).fetchSemanticsNode()
+        return node.boundsInRoot.top
     }
 }
