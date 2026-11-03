@@ -6,8 +6,6 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -49,14 +47,12 @@ internal fun InstallGroup(carlinkManager: CarlinkManager) {
     }
     var asking by remember { mutableStateOf(false) }
     SettingsGroup {
-        SettingRow(title = "Adapter firmware", icon = Icons.Default.Memory) {
-            Text(installLabel(current), style = SettingsStyle.RowTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        // The values sit under the titles: as trailing text they were measured first, and in the right-hand column of
+        // the 2400x960 screen they left "Adapte…" and "…" of the titles (bench 11-03).
+        SettingRow(title = "Adapter firmware", subtitle = installLabel(current), icon = Icons.Default.Memory)
         UpdateRow(carlinkManager, current)
         GroupDivider()
-        SettingRow(title = "Stock CarPlay", icon = Icons.Default.SettingsBackupRestore) {
-            Text(stockLine(current.mode), style = SettingsStyle.RowTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        SettingRow(title = "Stock CarPlay", subtitle = stockLine(current.mode), icon = Icons.Default.SettingsBackupRestore)
         if (carlinkManager.offersStockRemoval(current)) RemoveStockRow(carlinkManager)
         if (current.mode.stockKept) {
             GroupDivider()

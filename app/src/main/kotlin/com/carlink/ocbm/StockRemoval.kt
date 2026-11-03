@@ -56,6 +56,7 @@ class StockRemover(
             if (stateFlow.value != StockRemoval.Idle) return
             stateFlow.value = StockRemoval.Working
         }
+        logInfo("[UI_ACTION] Adapter: Remove stock CarPlay", tag = "UI")
         scope.launch(Dispatchers.IO) {
             val why = proven()
             if (why != null) logInfo("[INSTALL] Remove stock CarPlay: not now: $why", tag = Logger.Tags.ADAPTR)
@@ -83,9 +84,13 @@ class StockRemover(
 
     /** No on the question, OK on an answer, or the session ended: back to Idle. */
     fun dismiss() {
+        val was: StockRemoval
         synchronized(lock) {
-            if (stateFlow.value != StockRemoval.Working) stateFlow.value = StockRemoval.Idle
+            was = stateFlow.value
+            if (was != StockRemoval.Working) stateFlow.value = StockRemoval.Idle
         }
+        // Bench 11-03: the log said "agreed" and "not now", but nothing when the driver asked and backed out.
+        if (was == StockRemoval.Asking) logInfo("[UI_ACTION] Adapter: Remove stock CarPlay cancelled", tag = "UI")
     }
 
     /** The session ended: whatever was asked or answered was about that adapter. */

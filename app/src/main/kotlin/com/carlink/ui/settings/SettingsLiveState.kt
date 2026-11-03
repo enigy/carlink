@@ -114,6 +114,7 @@ internal fun rememberSettingsLiveState(
             live.pairWindowSupported = carlinkManager.pairWindowSupported
             live.pairWindowOpen = carlinkManager.pairWindowOpen
             live.driving = carlinkManager.isDriving
+            val install = carlinkManager.oneFileInstall.install.value
             live.box =
                 BoxSnapshot(
                     adapterConnected = connectionState != CarlinkManager.State.DISCONNECTED,
@@ -121,6 +122,7 @@ internal fun rememberSettingsLiveState(
                     health = carlinkManager.boxHealth,
                     healthKnown = carlinkManager.boxHealthKnown,
                     raw = carlinkManager.boxStatusText(),
+                    stockKept = install?.mode?.stockKept == true,
                 )
             live.driveLog = DriveLog.recording
             live.driveLogFile = DriveLog.currentFile

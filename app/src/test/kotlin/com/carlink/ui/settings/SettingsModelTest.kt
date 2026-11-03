@@ -105,6 +105,18 @@ class SettingsModelTest {
     }
 
     @Test
+    fun aTrialsFullFlashIsNotAFault() {
+        // Bench 11-03: with stock kept the flash is full by design, so the rootfs bit is off on a healthy trial.
+        val trial = BoxSnapshot(adapterConnected = true, health = Ocbm.BH_HCI_PRESENT or Ocbm.BH_WLAN_AP, healthKnown = true, stockKept = true)
+        assertEquals("carlink · all systems OK", SettingsModel.adapterSummary("carlink", trial))
+        assertEquals(true, SettingsModel.healthItems(trial).single { it.label == "Firmware" }.ok)
+        val final = trial.copy(stockKept = false)
+        assertEquals("once stock is gone the bit counts again", "carlink · check status", SettingsModel.adapterSummary("carlink", final))
+        assertEquals(false, SettingsModel.healthItems(final).single { it.label == "Firmware" }.ok)
+        assertEquals("a trial still needs its radios", "carlink · check status", SettingsModel.adapterSummary("carlink", trial.copy(health = Ocbm.BH_HCI_PRESENT)))
+    }
+
+    @Test
     fun adapterModeReadsTheProjectionMode() {
         assertEquals("Not connected", SettingsModel.adapterMode(BoxSnapshot(projectionMode = Ocbm.PM_WIRELESS_CP)))
         assertEquals("Wireless CarPlay running", SettingsModel.adapterMode(BoxSnapshot(adapterConnected = true, projectionMode = Ocbm.PM_WIRELESS_CP)))
