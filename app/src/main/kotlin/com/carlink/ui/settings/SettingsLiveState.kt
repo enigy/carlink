@@ -20,7 +20,8 @@ import com.carlink.CarlinkManager
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.logging.DriveLog
 import com.carlink.logging.VerboseLogging
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** The merged settings screen's categories, in list order. */
 enum class SettingsCategory(
@@ -78,9 +79,10 @@ internal class SettingsLiveState(
 private const val POLL_MS = 1000L
 
 /**
- * Polls the manager once a second while Settings is open. The manager's single callback slot is
- * MainScreen's, and its listeners do not cover phone-type or wifi changes, so polling is the one
- * path that sees every field (the old Phones tab did the same).
+ * Polls the manager once a second while Settings is open, and at once when the adapter says which phone is on it
+ * ([CarlinkManager.phoneNews]; 11-03 bench: a second's lag put "Connected" on the wrong phone during a switch). The
+ * manager's single callback slot is MainScreen's, and its listeners do not cover phone-type or wifi changes, so
+ * polling is the one path that sees every field (the old Phones tab did the same).
  */
 @Composable
 internal fun rememberSettingsLiveState(
@@ -97,6 +99,7 @@ internal fun rememberSettingsLiveState(
     LaunchedEffect(carlinkManager, active) { if (active) carlinkManager.refreshDeviceList() }
     LaunchedEffect(carlinkManager, connectionState, active) {
         while (active) {
+            val news = carlinkManager.phoneNews.value
             live.phone =
                 PhoneSnapshot(
                     carlinkManager.currentPhoneType,
@@ -124,7 +127,7 @@ internal fun rememberSettingsLiveState(
             live.driveLogTrouble = DriveLog.trouble()
             // Directions are per driver: an iPhone connecting while Settings is open can change them.
             live.clusterOn = ClusterNavigation.isEnabled(context)
-            delay(POLL_MS)
+            withTimeoutOrNull(POLL_MS) { carlinkManager.phoneNews.first { it != news } }
         }
     }
     return live

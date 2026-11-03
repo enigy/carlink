@@ -41,8 +41,8 @@ import com.carlink.ui.components.OnSettingsHidden
 import com.carlink.ui.theme.LocalCarlinkColors
 
 /**
- * Phones: the connected phone first, then the known list (the USB port and the adapter's bonded
- * phones merged with the app's history), then how to add one. Forget/Remove behave as before:
+ * Phones: the connected phone first, then the known list (the adapter's bonded phones merged with
+ * the app's history, then the USB port), then how to add one. Forget/Remove behave as before:
  * a bonded phone is cleared from the adapter too; a history-only record sends nothing.
  */
 @Composable

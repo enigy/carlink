@@ -49,6 +49,17 @@ class SettingsModelTest {
     }
 
     @Test
+    fun aClearedIdentityNamesNoKnownPhone() {
+        // 11-03 bench: through a switch the old phone stayed "Connected" after the adapter cleared its identity,
+        // because the manager kept its MAC. With the MAC gone the card says only that a wireless phone is on it,
+        // and no row in the list is the connected one.
+        val between = PhoneSnapshot(PhoneType.CARPLAY_WIRELESS, wifi = 1, btMac = null)
+        val phone = SettingsModel.connectedPhone(between, listOf(work, old))!!
+        assertEquals("Wireless phone", phone.name)
+        assertNull(phone.device)
+    }
+
+    @Test
     fun wirelessPhoneWithAnUnknownMacStillReads() {
         val phone = SettingsModel.connectedPhone(PhoneSnapshot(PhoneType.CARPLAY_WIRELESS, wifi = -1, btMac = "00:00:00:00:00:00"), listOf(work))!!
         assertEquals("Wireless phone", phone.name)

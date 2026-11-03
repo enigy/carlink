@@ -53,7 +53,26 @@ internal class PhoneRanking(
     val switchable: Boolean = false,
     /** The Connect press being followed, or its outcome while it stands (owner, 11-01: show the press). */
     val attempt: ConnectAttempt? = null,
-)
+) {
+    /**
+     * Whether [mac]'s row shows as the phone connected now: the one the adapter names, unless a Connect press for another
+     * phone is working or has connected it (11-03 bench: through a switch the old phone's row still read "Connected" while
+     * the new phone's said it had connected).
+     */
+    fun isLive(mac: String): Boolean {
+        val other = attempt?.takeUnless { it.mac.equals(mac, ignoreCase = true) }
+        return mac == connectedMac && (other == null || other.outcome == ConnectAttempt.Outcome.NOT_REACHED)
+    }
+
+    /**
+     * Whether row [index]'s rank badge carries the accent: the phone connected now ([live]) or, with none connected, the
+     * one called first (owner, 11-03: the second phone was connected and its badge stayed plain while the first's was lit).
+     */
+    fun badgeLit(
+        index: Int,
+        live: Boolean,
+    ): Boolean = live || (index == 0 && !phoneConnected)
+}
 
 /** Whether a row's Connect works: a bonded phone that isn't the live one, with no phone projecting or one [PhoneRanking.switchable]. */
 internal fun connectEnabled(
@@ -104,9 +123,9 @@ internal fun PhoneList(
 }
 
 /**
- * The USB port, then every known phone in the order the box will call them (design P2). With phone
- * priority each phone carries its rank, up/down buttons and Connect; the list order on screen is
- * the order sent to the box, so moving a row is the whole interaction.
+ * Every known phone in the order the box will call them (design P2), then the USB port (owner, 11-03: at the
+ * bottom). With phone priority each phone carries its rank, up/down buttons and Connect; the list order on
+ * screen is the order sent to the box, so moving a row is the whole interaction.
  */
 @Composable
 internal fun KnownPhones(
@@ -117,21 +136,21 @@ internal fun KnownPhones(
 ) {
     val shown = if (ranking.enabled) devices else devices.filterNot { it.btMac == ranking.connectedMac }
     SettingsGroup {
+        if (shown.isEmpty()) {
+            SettingRow(title = "No other phones yet", subtitle = "Phones you pair with the adapter appear here")
+        }
+        shown.forEachIndexed { index, device ->
+            key(device.btMac) {
+                if (index > 0) GroupDivider()
+                PhoneRow(device, index, shown.size, ranking, actions)
+            }
+        }
+        GroupDivider()
         SettingRow(
             title = "USB port",
             subtitle = if (usbInUse) "In use by the connected phone" else "Nothing plugged in",
             icon = Icons.Default.Usb,
         )
-        if (shown.isEmpty()) {
-            GroupDivider()
-            SettingRow(title = "No other phones yet", subtitle = "Phones you pair with the adapter appear here")
-        }
-        shown.forEachIndexed { index, device ->
-            key(device.btMac) {
-                GroupDivider()
-                PhoneRow(device, index, shown.size, ranking, actions)
-            }
-        }
     }
 }
 
@@ -144,10 +163,10 @@ private fun PhoneRow(
     actions: PhoneListActions,
 ) {
     val colors = MaterialTheme.colorScheme
-    val live = device.btMac == ranking.connectedMac
+    val live = ranking.isLive(device.btMac)
     val mine = ranking.attempt?.takeIf { it.mac.equals(device.btMac, ignoreCase = true) }
     Row(modifier = Modifier.padding(start = if (ranking.enabled) 28.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (ranking.enabled) RankBadge(index + 1, first = index == 0)
+        if (ranking.enabled) RankBadge(index + 1, accent = ranking.badgeLit(index, live))
         SettingRow(
             title = device.name,
             subtitle = phoneSubtitle(device, live, first = ranking.enabled && index == 0, mine),
@@ -256,18 +275,18 @@ private fun ConnectButton(
     }
 }
 
-/** "1" in the accent for the phone called first, plain numbers after it. */
+/** The rank, in the accent on the phone connected now or, with none connected, the one called first ([PhoneRanking.badgeLit]). */
 @Composable
 private fun RankBadge(
     rank: Int,
-    first: Boolean,
+    accent: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.size(56.dp),
         shape = CircleShape,
-        color = if (first) colors.primary else colors.surfaceContainerHigh,
-        contentColor = if (first) colors.onPrimary else colors.onSurface,
+        color = if (accent) colors.primary else colors.surfaceContainerHigh,
+        contentColor = if (accent) colors.onPrimary else colors.onSurface,
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(rank.toString(), fontSize = 26.sp, fontWeight = FontWeight.Bold)

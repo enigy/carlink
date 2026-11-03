@@ -3,22 +3,29 @@ package com.carlink.ui.settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertAll
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performSemanticsAction
 import com.carlink.CarlinkManager
 import com.carlink.ocbm.ConnectAttempt
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** Settings › Phones' Connect shows the press at once, ignores more taps while it works, then says how it went (owner, 11-01). */
+/**
+ * Settings › Phones' Connect shows the press at once, ignores more taps while it works, then says how it went (owner, 11-01).
+ * The USB port is listed after the phones (owner, 11-03).
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class ConnectFeedbackTest {
@@ -79,6 +86,21 @@ class ConnectFeedbackTest {
         attempt.value = ConnectAttempt(owner.btMac)
         show(listOf(owner, other, third))
         compose.onNodeWithContentDescription("Connecting").assertExists()
-        compose.onNodeWithText("Connect").assertIsNotEnabled()
+        compose.onAllNodesWithText("Connect").assertCountEquals(2).assertAll(isNotEnabled())
+        // The second iPhone is still the one projecting, but with a switch away from it working no row says it is
+        // connected (11-03 bench: the old phone read "Connected" through a switch).
+        compose.onNodeWithText("Connected").assertDoesNotExist()
+        compose.onNodeWithText("Connected now").assertDoesNotExist()
+    }
+
+    @Test
+    fun the_usb_port_comes_after_the_phones() {
+        show()
+        assertTrue("owner, 11-03: the USB port at the bottom", topOf("USB port") > topOf("Second iPhone"))
+    }
+
+    private fun topOf(text: String): Float {
+        val node = compose.onNodeWithText(text).fetchSemanticsNode()
+        return node.boundsInRoot.top
     }
 }
