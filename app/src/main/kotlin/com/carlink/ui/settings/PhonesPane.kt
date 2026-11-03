@@ -74,7 +74,7 @@ internal fun PhonesPane(
                 onSettings = connected.device?.btMac?.let(settingsFor),
             )
         } else {
-            NoPhoneCard()
+            NoPhoneCard(paired = live.devices.any { it.bonded }, addPhone = live.pairWindowSupported)
         }
         PhoneList(carlinkManager, live, connected, onRemove = { deviceToRemove = it }, settingsFor = { settingsFor(it.btMac) })
         if (live.pairWindowSupported) {
@@ -189,8 +189,15 @@ private fun ConnectedPhoneCard(
     }
 }
 
+/**
+ * No phone connected. With none paired with the adapter it says to pair one: after a restore to stock the card said
+ * a known phone would join on its own, while every row read "Not paired with the adapter" (bench 11-03).
+ */
 @Composable
-private fun NoPhoneCard() {
+private fun NoPhoneCard(
+    paired: Boolean,
+    addPhone: Boolean,
+) {
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -207,7 +214,11 @@ private fun NoPhoneCard() {
             Column(modifier = Modifier.weight(1f)) {
                 Text("No phone connected", style = SettingsStyle.PaneTitle)
                 Text(
-                    "The adapter is ready. A known phone joins on its own when it's nearby.",
+                    when {
+                        paired -> "The adapter is ready. A known phone joins on its own when it's nearby."
+                        addPhone -> "No phone is paired with the adapter yet. Pair one with Add phone below."
+                        else -> "No phone is paired with the adapter yet. Pair one from the iPhone: Settings › General › CarPlay."
+                    },
                     style = SettingsStyle.RowSubtitle,
                     color = colors.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp),

@@ -71,7 +71,15 @@ internal class PhoneRanking(
     fun badgeLit(
         index: Int,
         live: Boolean,
-    ): Boolean = live || (index == 0 && !phoneConnected)
+        mac: String,
+    ): Boolean {
+        // While a Connect press works, or has just connected its phone, the accent stays on that phone: through a
+        // switch to the first-called phone it went lit, plain, lit as the old phone left and the new one named itself
+        // (bench 11-03).
+        val pressed = attempt?.takeIf { it.outcome != ConnectAttempt.Outcome.NOT_REACHED }
+        if (pressed != null) return pressed.mac.equals(mac, ignoreCase = true)
+        return live || (index == 0 && !phoneConnected)
+    }
 }
 
 /** Whether a row's Connect works: a bonded phone that isn't the live one, with no phone projecting or one [PhoneRanking.switchable]. */
@@ -166,7 +174,7 @@ private fun PhoneRow(
     val live = ranking.isLive(device.btMac)
     val mine = ranking.attempt?.takeIf { it.mac.equals(device.btMac, ignoreCase = true) }
     Row(modifier = Modifier.padding(start = if (ranking.enabled) 28.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (ranking.enabled) RankBadge(index + 1, accent = ranking.badgeLit(index, live))
+        if (ranking.enabled) RankBadge(index + 1, accent = ranking.badgeLit(index, live, device.btMac))
         SettingRow(
             title = device.name,
             subtitle = phoneSubtitle(device, live, first = ranking.enabled && index == 0, mine),

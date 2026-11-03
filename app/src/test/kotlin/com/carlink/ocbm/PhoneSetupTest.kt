@@ -74,6 +74,8 @@ class PhoneSetupTest {
         assertEquals(PhoneSetupPhase.None, setup.phase.value)
         waitUntil { box.reads.get() > reads }
         waitUntil { !setup.noPhonePaired }
+        // Bench 11-03: the window stayed open after the phone came, and the adapter stayed discoverable.
+        waitUntil { box.windows == listOf(timing.windowSeconds, 0) }
     }
 
     @Test
