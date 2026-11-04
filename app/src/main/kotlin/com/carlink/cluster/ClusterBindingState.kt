@@ -44,4 +44,8 @@ object ClusterBindingState {
      * Host re-sends the maneuver icon on every distance tick ([201] HUD flicker).
      */
     val relayCount = java.util.concurrent.atomic.AtomicLong()
+
+    /** Called when the current primary session ends, on whatever thread its onDestroy runs ([ClusterRebind]). */
+    @Volatile
+    var onLost: (() -> Unit)? = null
 }

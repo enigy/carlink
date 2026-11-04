@@ -57,6 +57,7 @@ import com.carlink.media.NowPlayingInfo
 import com.carlink.media.NowPlayingState
 import com.carlink.media.PlayStatus
 import com.carlink.media.TrackChangeHold
+import com.carlink.media.TrackWords
 import com.carlink.navigation.LaneActivity
 import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.OcbmNavigationFeed
@@ -2673,7 +2674,10 @@ class CarlinkManager(
 
         c.onPhonePresence = { present ->
             scope.launch {
-                if (!present) adapterPhone.absent()
+                if (!present) {
+                    markPhoneLeft()
+                    adapterPhone.absent()
+                }
                 _phoneNews.update { it + 1 }
                 if (present || state == State.DISCONNECTED) return@launch
                 // Drop out of STREAMING. MainScreen keys both the loading overlay and touch
@@ -3193,6 +3197,20 @@ class CarlinkManager(
     }
 
     /**
+     * The phone the adapter had is gone (its identity cleared, or no phone on the adapter): its "Last seen" becomes now,
+     * not its session's start (bench 11-03: "Last seen 9 minutes ago" a minute after the phone left).
+     */
+    private fun markPhoneLeft() {
+        val mac = adapterPhone.identified ?: return
+        val now = System.currentTimeMillis()
+        knownStore?.update { snap ->
+            val prev = snap.devices[mac] ?: return@update snap
+            snap.copy(devices = snap.devices + (mac to prev.copy(lastConnectedMs = now)))
+        }
+        rebuildDeviceList()
+    }
+
+    /**
      * `CT_PHONE_IDENT` — the connected phone's own description of itself.
      *
      * Both fields earn their place: `name` is what the user set in Settings > General > About > Name,
@@ -3202,6 +3220,7 @@ class CarlinkManager(
      */
     private fun onPhoneIdentity(json: String) {
         if (json.isEmpty()) {
+            markPhoneLeft()
             // The adapter cleared it: that phone's session is over, so no phone is Connected until the next one
             // names itself (11-03 bench: the old phone's row read "Connected" through a switch).
             adapterPhone.identity(null)
@@ -3667,19 +3686,12 @@ class CarlinkManager(
         val newSongName = obj.optString("title").takeIf { it.isNotEmpty() }
         logFrameWords(obj)
 
-        // Snapshot before the song-change reset so incremental updates are still detectable after
-        // the caches are overwritten. Without this, an artist-only frame was silently dropped and
-        // the cluster showed a title with no artist until the next track.
-        val previousSongName = lastMediaSongName
-        val previousArtist = lastMediaArtistName
-        val previousAlbum = lastMediaAlbumName
-        val previousAppName = lastMediaAppName
         val previousDuration = lastDuration
-        val titleChanged = newSongName != null && newSongName != previousSongName
+        val titleChanged = newSongName != null && newSongName != lastMediaSongName
         if (titleChanged) clearTrackForNewTitle()
 
         newSongName?.let { lastMediaSongName = it }
-        val textChanged = mergeTextFields(obj, previousArtist, previousAlbum, previousAppName) or mergeTrackFields(obj)
+        val textChanged = mergeTextFields(obj) or mergeTrackFields(obj)
         val albumCover = mergeArtwork(obj)
         val elapsed = if (obj.has("elapsedMs")) obj.optLong("elapsedMs") else null
         val duration =
@@ -3724,15 +3736,11 @@ class CarlinkManager(
         CarlinkMediaBrowserService.updateNowPlaying(lastMediaSongName, lastMediaArtistName)
     }
 
-    /** A new title: the previous song's attributes go, so none of them is shown under the new one. The app name stays — it rarely changes mid-session. */
+    /**
+     * A new title: the previous song's art, length and position go. Its words stay ([TrackWords]): the phone
+     * sends only the ones that changed, the new album just before the title.
+     */
     private fun clearTrackForNewTitle() {
-        lastMediaSongName = null
-        lastMediaArtistName = null
-        lastMediaAlbumName = null
-        lastMediaGenre = null
-        lastMediaComposer = null
-        lastTrackNumber = 0
-        lastTrackCount = 0
         lastAlbumCover = null
         lastDuration = 0L
         lastPosition = 0L
@@ -3766,45 +3774,31 @@ class CarlinkManager(
     }
 
     /**
-     * Merge artist / album / appName from a delta record into the cache.
+     * Merge artist / album / appName from a delta record into the cache ([TrackWords]).
      *
-     * Returns whether any of them actually CHANGED — which is the whole reason the caller passes
-     * the pre-merge values in: iAP2 sends these incrementally, so an artist-only frame must still
-     * trigger a publish even though the title did not move.
+     * Returns whether any of them actually CHANGED: iAP2 sends these incrementally, so an artist-only
+     * frame must still trigger a publish even though the title did not move.
      */
-    private fun mergeTextFields(
-        obj: JSONObject,
-        previousArtist: String?,
-        previousAlbum: String?,
-        previousAppName: String?,
-    ): Boolean {
-        var changed = false
-        obj.optString("artist").takeIf { it.isNotEmpty() }?.let {
-            lastMediaArtistName = it
-            if (it != previousArtist) changed = true
-        }
-        obj.optString("album").takeIf { it.isNotEmpty() }?.let {
-            lastMediaAlbumName = it
-            if (it != previousAlbum) changed = true
-        }
+    private fun mergeTextFields(obj: JSONObject): Boolean {
+        val artist = TrackWords.after(obj, "artist", lastMediaArtistName)
+        val album = TrackWords.after(obj, "album", lastMediaAlbumName)
+        var changed = artist != lastMediaArtistName || album != lastMediaAlbumName
+        lastMediaArtistName = artist
+        lastMediaAlbumName = album
         obj.optString("appName").takeIf { it.isNotEmpty() }?.let {
+            if (it != lastMediaAppName) changed = true
             lastMediaAppName = it
-            if (it != previousAppName) changed = true
         }
         return changed
     }
 
     /** Genre / composer / track position — the rest of what the macOS host renders. Delta-merged like the text. */
     private fun mergeTrackFields(obj: JSONObject): Boolean {
-        var changed = false
-        obj.optString("genre").takeIf { it.isNotEmpty() }?.let {
-            if (it != lastMediaGenre) changed = true
-            lastMediaGenre = it
-        }
-        obj.optString("composer").takeIf { it.isNotEmpty() }?.let {
-            if (it != lastMediaComposer) changed = true
-            lastMediaComposer = it
-        }
+        val genre = TrackWords.after(obj, "genre", lastMediaGenre)
+        val composer = TrackWords.after(obj, "composer", lastMediaComposer)
+        var changed = genre != lastMediaGenre || composer != lastMediaComposer
+        lastMediaGenre = genre
+        lastMediaComposer = composer
         if (obj.has("trackNumber")) {
             val n = obj.optInt("trackNumber")
             if (n != lastTrackNumber) changed = true

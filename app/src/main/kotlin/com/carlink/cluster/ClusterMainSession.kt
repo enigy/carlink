@@ -238,6 +238,7 @@ class ClusterMainSession : Session() {
                         navigationManager = null
                         if (wasCurrentPrimary) {
                             ClusterBindingState.sessionAlive = false
+                            ClusterBindingState.onLost?.invoke()
                         }
                     } else {
                         logInfo("[CLUSTER_MAIN] Secondary session destroyed", tag = Logger.Tags.CLUSTER)
