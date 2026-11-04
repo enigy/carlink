@@ -72,7 +72,10 @@ private fun conversionPanel(
             PanelContent(
                 meta = "${phase.usbId} · a USB stick",
                 title = "Is there a USB stick in your adapter?",
-                body = "If this is your adapter with a USB stick in it, take the stick out. Carlink checks the adapter first and asks for the stick when it's time.",
+                // Pulling the stick alone left the adapter sharing an empty stick for 17 min, until a replug (M7 bench, 4 Nov).
+                body =
+                    "If this is your adapter with a USB stick in it, take the stick out, then unplug the adapter and plug it " +
+                        "back in. Carlink checks the adapter first and asks for the stick when it's time.",
                 actions = listOf(ok),
             )
         is ConversionPhase.Converting -> stickPanel(phase, conversion)
@@ -184,7 +187,11 @@ private fun offerPanel(
             PanelContent(
                 meta = meta,
                 title = STOCK_TITLE,
-                body = "Convert it to OCBM for current CarPlay. Stock CarPlay stays on the adapter until your first drive with Carlink ends.",
+                // Scott's words (4 Nov): stock stays until the driver asks Carlink to remove it, not until a first drive.
+                body =
+                    "This adapter is currently running factory Carlinkit firmware. In order for you to use this Carlink app, " +
+                        "you must first convert the adapter to use OCBM firmware. As a failsafe, stock Carlinkit firmware stays " +
+                        "on the adapter until you ask the Carlink app to remove it.",
                 note = "It takes a FAT32 USB stick, 16 GB or less, in the adapter.",
                 actions = listOf(PanelAction("Convert to OCBM", onClick = onConvert), notNow),
             )
@@ -261,7 +268,7 @@ internal fun fraction(
     total: Long,
 ): Float = if (total > 0) done.toFloat() / total else 0f
 
-private const val STOCK_TITLE = "This adapter runs Carlinkit firmware"
+private const val STOCK_TITLE = "Carlinkit firmware detected"
 
 /**
  * The stick's backup, as the installer's result file says it (enigy/ocbm a6d7a6c): from the first install it is the
