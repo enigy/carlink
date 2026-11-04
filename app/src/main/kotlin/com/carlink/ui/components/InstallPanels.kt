@@ -145,7 +145,7 @@ internal fun RemoveStockDialog(
 internal fun trialText(install: OneFileInstall): String =
     "OCBM${install.version?.let { " $it" }.orEmpty()} has been installed, and your adapter passed its self-test. " +
         "Stock firmware continues to reside on the adapter as a failsafe. To make OCBM firmware permanent and allow for " +
-        "future firmware updates, remove the factory firmware from the adapter by going to Carlink Settings > About. " +
+        "future firmware updates, remove the factory firmware from the adapter by going to Carlink Settings > Adapter and About. " +
         "You may now proceed to take the USB stick out of the adapter and keep it secure. It holds the backup and " +
         "restore to factory image should you need it."
 
