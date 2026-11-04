@@ -116,7 +116,7 @@ internal fun GoBackToStockDialog(
 }
 
 /**
- * "Remove stock CarPlay?" (Scott, 2 Nov): finishing deletes the copy of the Carlinkit firmware on the adapter, and the
+ * "Remove stock firmware?" (Scott, 2 Nov; his words, 4 Nov): finishing deletes the copy of the Carlinkit firmware on the adapter, and the
  * USB stick's backup is then the way back. Asked once more, as the way back is.
  */
 @Composable
@@ -125,11 +125,13 @@ internal fun RemoveStockDialog(
     onDismiss: () -> Unit,
 ) {
     CarlinkDialog(
-        title = "Remove stock CarPlay?",
+        title = "Remove stock firmware?",
         text =
-            "OCBM passed its self-test and has carried CarPlay. Removing stock CarPlay deletes the copy of the Carlinkit " +
-                "firmware on the adapter, which frees the room for updates. After that, the backup on your USB stick is the " +
-                "way back to stock. It's removed when this drive ends.",
+            "OCBM passed its self-test, but still has the stock firmware in memory. Removing stock firmware deletes the copy " +
+                "of the Carlinkit firmware on the adapter, which frees up room for future OCBM firmware updates. After that, " +
+                "the backup on your USB stick is the way back to stock. Pressing \u201cRemove\u201d will allow for the adapter to " +
+                "remove the stock firmware at the end of this Carlink session (when streaming stops) and receive future " +
+                "updates if needed.",
         confirmLabel = "Remove",
         onConfirm = onRemove,
         onDismiss = onDismiss,
