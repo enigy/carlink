@@ -61,7 +61,7 @@ private fun conversionPanel(
                 title = STOCK_TITLE,
                 body =
                     "Carlink works with adapters converted to OCBM. This version of Carlink doesn't convert them; the OCBM " +
-                        "installer on a USB stick does." + InstallerImage.STICK_GUIDE?.let { " The guide: $it" }.orEmpty(),
+                        "installer on a USB stick does. The guide: ${InstallerImage.STICK_GUIDE}",
                 actions = listOf(ok),
             )
         is ConversionPhase.Reading ->
@@ -166,9 +166,8 @@ private fun stickReadyPanel(
     }
 }
 
-/** After a STOPPED install, where the stick guide is, once it is published (M7). */
-private fun stoppedGuide(report: StickReport?): String =
-    if (report?.headline == StickReport.STOPPED) InstallerImage.STICK_GUIDE?.let { " The stick guide says what to do next: $it" }.orEmpty() else ""
+/** After a STOPPED install, where the stick guide is (M7). */
+private fun stoppedGuide(report: StickReport?): String = if (report?.headline == StickReport.STOPPED) " The stick guide says what to do next: ${InstallerImage.STICK_GUIDE}" else ""
 
 /** What the adapter said it is, and what it is offered: the detect cards. */
 private fun offerPanel(
