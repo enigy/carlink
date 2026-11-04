@@ -3,8 +3,8 @@ package com.carlink.ocbm
 import android.content.Context
 
 /**
- * The adapters, by serial, that have carried a CarPlay session in their trial. A trial must have done so before
- * Carlink finishes its install to make room for an update (Scott, 1 Nov; [finishBlocked]).
+ * The installs ([OneFileInstall.recordKey]: serial and install id) whose trial has carried a CarPlay session. A trial
+ * must have done so before Carlink finishes its install to make room for an update (Scott, 1 Nov; [finishBlocked]).
  */
 class CarPlaySessionRecord(
     context: Context,

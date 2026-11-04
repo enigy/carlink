@@ -3020,15 +3020,15 @@ class CarlinkManager(
     /** Whether the adapter in use has carried a CarPlay session in its trial ([CarPlaySessionRecord]). */
     private fun carriedCarPlay(): Boolean {
         noteCarPlaySession()
-        val serial = oneFileInstall.install.value?.serial ?: return false
-        return carPlaySessions.contains(serial)
+        val key = oneFileInstall.install.value?.recordKey ?: return false
+        return carPlaySessions.contains(key)
     }
 
     /** A CarPlay session streams on a trial adapter: remember the adapter ([CarPlaySessionRecord]). */
     private fun noteCarPlaySession() {
         val install = oneFileInstall.install.value ?: return
         val carPlay = projectionMode == Ocbm.PM_WIRED_CP || projectionMode == Ocbm.PM_WIRELESS_CP
-        if (state == State.STREAMING && carPlay && install.mode == InstallMode.TRIAL) carPlaySessions.add(install.serial)
+        if (state == State.STREAMING && carPlay && install.mode == InstallMode.TRIAL) carPlaySessions.add(install.recordKey)
     }
 
     /** Why the adapter can't be updated right now, or null when it can: the car parked, and no call. */

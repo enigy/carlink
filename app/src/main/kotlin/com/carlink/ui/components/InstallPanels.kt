@@ -34,10 +34,11 @@ internal fun InstallPanelOr(
     val install by session.install.collectAsState()
     val goBack by session.goBack.collectAsState()
     val context = LocalContext.current
-    // Once per trial, not once per connection: an update restarts the adapter and Carlink reconnects to the same
-    // trial (bench 11-03: the welcome, with its "take the USB stick out" text, came back after an update).
-    var trialSeen by remember(install?.serial) { mutableStateOf(FinishNotice.welcomed(context, install?.serial)) }
-    var finishSeen by remember(install?.serial) { mutableStateOf(FinishNotice.seen(context, install?.serial)) }
+    // Once per install ([OneFileInstall.recordKey]), not once per connection: an update restarts the adapter and
+    // Carlink reconnects to the same trial (bench 11-03: the welcome, with its "take the USB stick out" text, came
+    // back after an update).
+    var trialSeen by remember(install?.recordKey) { mutableStateOf(FinishNotice.welcomed(context, install?.recordKey)) }
+    var finishSeen by remember(install?.recordKey) { mutableStateOf(FinishNotice.seen(context, install?.recordKey)) }
     val current = install
     when {
         goBack == GoBackResult.GOING ->
@@ -46,18 +47,18 @@ internal fun InstallPanelOr(
             TrialPanel(
                 current,
                 onContinue = {
-                    FinishNotice.markWelcomed(context, current.serial)
+                    FinishNotice.markWelcomed(context, current.recordKey)
                     trialSeen = true
                 },
                 onGoBack = {
-                    FinishNotice.clearWelcomed(context, current.serial)
+                    FinishNotice.clearWelcomed(context, current.recordKey)
                     session.goBackToStock()
                 },
             )
         current != null && current.mode == InstallMode.FINAL && !finishSeen -> {
             val acknowledge = {
-                FinishNotice.markSeen(context, current.serial)
-                FinishNotice.clearWelcomed(context, current.serial)
+                FinishNotice.markSeen(context, current.recordKey)
+                FinishNotice.clearWelcomed(context, current.recordKey)
                 finishSeen = true
             }
             InstallPanel(
