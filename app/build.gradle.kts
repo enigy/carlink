@@ -78,10 +78,9 @@ android {
         }
     }
 
-    // Converting a stock adapter from the app (OCBM one-file install M5 part 3, decisions of 10-28): one
-    // build, behind a switch that is on in debug builds and off in release builds (Play and the release
-    // APK), which point a stock adapter at the stick guide instead. -Pcarlink.stockConversion=true|false
-    // overrides it for either; turning it on for Play is a commit here and a normal tagged release.
+    // Converting a stock adapter from the app (OCBM one-file install M5 part 3, decisions of 10-28): on in every
+    // build since the installer image was published and pinned (M7, installer-1.0.2, Scott, 4 Nov). With it off a
+    // build points a stock adapter at the stick guide instead. -Pcarlink.stockConversion=true|false overrides it.
     val stockConversion = (findProperty("carlink.stockConversion") as String?)?.toBoolean()
 
     // Updating an adapter already on OCBM from Settings › Adapter (remote updates plan, U2): on in every build since the
@@ -95,7 +94,7 @@ android {
             buildConfigField("boolean", "ADAPTER_UPDATES", (adapterUpdates ?: true).toString())
         }
         release {
-            buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: false).toString())
+            buildConfigField("boolean", "STOCK_CONVERSION", (stockConversion ?: true).toString())
             buildConfigField("boolean", "ADAPTER_UPDATES", (adapterUpdates ?: true).toString())
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true

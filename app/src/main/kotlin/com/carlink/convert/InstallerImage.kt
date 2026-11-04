@@ -38,10 +38,17 @@ object InstallerImage {
      * asset URL, size and SHA-256 here, in a commit and an app release. The app writes it to a stick in the
      * adapter, where it runs as ROUTE=stick: pin an image built from enigy/ocbm 710eb23 or newer.
      */
-    val PINNED: PinnedImage? = null
+    val PINNED: PinnedImage? =
+        PinnedImage(
+            // "1.0.2 ocbm df73a57" with the 1.0.1 image's binaries: its files match the pinned update package (M7, Scott, 4 Nov).
+            tag = "installer-1.0.2",
+            url = "https://github.com/enigy/ocbm/releases/download/installer-1.0.2/A15W_Update.img",
+            sizeBytes = 2_273_080L,
+            sha256 = "666394d2907e557011e20308f1ef87ebf1baa1b1c6df624e4a32b86d03c10944",
+        )
 
-    /** Where the one-page stick guide is, once it is published with the image (M7); a build with the switch off points at it. */
-    val STICK_GUIDE: String? = null
+    /** Where the stick guide is: the installer image's release page (M7). A build with the switch off points at it. */
+    const val STICK_GUIDE = "github.com/enigy/ocbm/releases/tag/installer-1.0.2"
 
     /** The name the stock firmware installs from, at the root of a stick in the adapter. */
     const val FILE_NAME = "A15W_Update.img"
