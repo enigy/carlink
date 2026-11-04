@@ -187,7 +187,11 @@ private fun offerPanel(
             PanelContent(
                 meta = meta,
                 title = STOCK_TITLE,
-                body = "Convert it to OCBM for current CarPlay. Stock CarPlay stays on the adapter until your first drive with Carlink ends.",
+                // Scott's words (4 Nov): stock stays until the driver asks Carlink to remove it, not until a first drive.
+                body =
+                    "This adapter is currently running factory Carlinkit firmware. In order for you to use this Carlink app, " +
+                        "you must first convert the adapter to use OCBM firmware. As a failsafe, stock Carlinkit firmware stays " +
+                        "on the adapter until you ask the Carlink app to remove it.",
                 note = "It takes a FAT32 USB stick, 16 GB or less, in the adapter.",
                 actions = listOf(PanelAction("Convert to OCBM", onClick = onConvert), notNow),
             )
@@ -264,7 +268,7 @@ internal fun fraction(
     total: Long,
 ): Float = if (total > 0) done.toFloat() / total else 0f
 
-private const val STOCK_TITLE = "This adapter runs Carlinkit firmware"
+private const val STOCK_TITLE = "Carlinkit firmware detected"
 
 /**
  * The stick's backup, as the installer's result file says it (enigy/ocbm a6d7a6c): from the first install it is the
