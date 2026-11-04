@@ -80,7 +80,7 @@ private fun TrialPanel(
 ) {
     var asking by remember { mutableStateOf(false) }
     InstallPanel(
-        title = "Welcome to OCBM",
+        title = "Welcome to Carlink",
         body = trialText(install),
         primary = "Continue" to onContinue,
         wayBack = { asking = true },
@@ -139,12 +139,15 @@ internal fun RemoveStockDialog(
 }
 
 /**
- * The welcome card's text for a trial (Scott, 1 Nov): stock CarPlay stays as the fallback, and Carlink asks before removing
- * it. It was "until this drive ends", from when the trial finished on its own.
+ * The welcome card's text for a trial, in Scott's words (4 Nov): the install and its self-test, stock kept as the failsafe,
+ * where removing it is, and the stick to keep.
  */
 internal fun trialText(install: OneFileInstall): String =
-    "${installLabel(install)}. Your adapter passed its self-test. Stock CarPlay stays on it as a fallback, " +
-        "and Carlink asks before removing it.\n$STICK_OUT"
+    "OCBM${install.version?.let { " $it" }.orEmpty()} has been installed, and your adapter passed its self-test. " +
+        "Stock firmware continues to reside on the adapter as a failsafe. To make OCBM firmware permanent and allow for " +
+        "future firmware updates, remove the factory firmware from the adapter by going to Carlink Settings > About. " +
+        "You may now proceed to take the USB stick out of the adapter and keep it secure. It holds the backup and " +
+        "restore to factory image should you need it."
 
 /** "OCBM 1.0.0 · trial": the install's version (when read) and mode, as the panels and Settings show it. */
 internal fun installLabel(install: OneFileInstall): String = "OCBM${install.version?.let { " $it" }.orEmpty()} · ${install.mode.wire}"
