@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.Window
 import android.view.WindowManager
@@ -44,6 +45,7 @@ import androidx.lifecycle.lifecycleScope
 import com.carlink.car.VehicleData
 import com.carlink.cluster.ClusterBindingState
 import com.carlink.cluster.ClusterNavigation
+import com.carlink.cluster.ClusterRebind
 import com.carlink.convert.SharedStick
 import com.carlink.logging.DriveLogging
 import com.carlink.logging.Logger
@@ -269,6 +271,7 @@ class MainActivity : ComponentActivity() {
         ClusterNavigation.applyComponentState(this)
         checkBridgeInstalled()
         application.registerActivityLifecycleCallbacks(carAppActivityWindow)
+        ClusterBindingState.onLost = clusterLost
         // Cluster steps held during a USB permission prompt run when it closes.
         lifecycleScope.launch {
             UsbPermissionPrompt.open.collect { open -> if (!open) releaseHeldClusterSteps() }
@@ -425,7 +428,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Why it ends: on the 11-03 drive Android rebuilt this activity 0.1 s after a phone connect and
+        // the session dropped with it, and nothing in the log said why.
+        logInfo("MainActivity ending: finishing=$isFinishing, config change=$isChangingConfigurations", tag = "MAIN")
         application.unregisterActivityLifecycleCallbacks(carAppActivityWindow)
+        if (ClusterBindingState.onLost === clusterLost) ClusterBindingState.onLost = null
         // Any way out (Back, the system finishing us), not only Close app: the hidden cluster task
         // must not outlive this one in front of the launcher ([closeApp]).
         if (isFinishing) finishClusterTask()
@@ -883,6 +890,11 @@ class MainActivity : ComponentActivity() {
 
     private var clusterConnectCount = 0
 
+    // When Carlink last finished the cluster task, and its rebinds after the car ended the session.
+    private var clusterTeardownAtMs = 0L
+    private val clusterRebind = ClusterRebind()
+    private val clusterLost: () -> Unit = { Handler(Looper.getMainLooper()).post(::onClusterLost) }
+
     // A launch or bring-back held while a USB permission prompt was open ([UsbPermissionPrompt]).
     private var heldClusterLaunch = false
     private var heldBringBack = false
@@ -1012,6 +1024,7 @@ class MainActivity : ComponentActivity() {
 
     /** Finish CarAppActivity's task, if there is one. */
     private fun finishClusterTask() {
+        clusterTeardownAtMs = SystemClock.elapsedRealtime()
         val am = getSystemService(ActivityManager::class.java)
         for (appTask in am.appTasks) {
             if (appTask.taskInfo?.baseActivity?.className == CAR_APP_ACTIVITY) {
@@ -1035,6 +1048,24 @@ class MainActivity : ComponentActivity() {
                 launchCarAppActivity()
             }
         }, CLUSTER_RELAUNCH_MS)
+    }
+
+    /** The cluster session ended ([ClusterRebind]): rebind when the car ended it during a phone session. Main thread. */
+    private fun onClusterLost() {
+        if (isDestroyed || isFinishing) return
+        val state = carlinkManager?.state
+        val wanted =
+            ClusterNavigation.isEnabled(this) &&
+                (state == CarlinkManager.State.DEVICE_CONNECTED || state == CarlinkManager.State.STREAMING)
+        when (clusterRebind.lost(SystemClock.elapsedRealtime(), clusterTeardownAtMs, wanted)) {
+            ClusterRebind.Answer.OURS, ClusterRebind.Answer.NOT_NEEDED -> Unit
+            ClusterRebind.Answer.REBIND -> {
+                logWarn("[CLUSTER] the car ended the cluster session; rebinding (${clusterRebind.rebinds} in 5 min)", tag = "MAIN")
+                restartClusterBinding()
+            }
+            ClusterRebind.Answer.GIVE_UP ->
+                logWarn("[CLUSTER] the car ended the cluster session again; 3 rebinds in 5 min, left for Reconnect cluster", tag = "MAIN")
+        }
     }
 
     /** Each phone connect gets a fresh host binding; a no-op while Cluster Navigation is off. */
