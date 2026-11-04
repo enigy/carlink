@@ -72,7 +72,10 @@ private fun conversionPanel(
             PanelContent(
                 meta = "${phase.usbId} · a USB stick",
                 title = "Is there a USB stick in your adapter?",
-                body = "If this is your adapter with a USB stick in it, take the stick out. Carlink checks the adapter first and asks for the stick when it's time.",
+                // Pulling the stick alone left the adapter sharing an empty stick for 17 min, until a replug (M7 bench, 4 Nov).
+                body =
+                    "If this is your adapter with a USB stick in it, take the stick out, then unplug the adapter and plug it " +
+                        "back in. Carlink checks the adapter first and asks for the stick when it's time.",
                 actions = listOf(ok),
             )
         is ConversionPhase.Converting -> stickPanel(phase, conversion)
