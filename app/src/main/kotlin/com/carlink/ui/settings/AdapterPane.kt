@@ -51,8 +51,9 @@ internal fun AdapterPane(
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(28.dp)) {
         PaneHeader(title = "Adapter and about")
         Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            AdapterStatusCard(carlinkManager.adapterName, live.box, Modifier.weight(1f))
+            // Left: the adapter, then the app (version and privacy policy). Right: the adapter's firmware, then lyrics.
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+                AdapterStatusCard(carlinkManager.adapterName, live.box)
                 SettingsGroup {
                     SettingRow(title = "App version", icon = Icons.Default.Info) {
                         Text(rememberAppVersion(), style = SettingsStyle.RowTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -60,6 +61,8 @@ internal fun AdapterPane(
                     GroupDivider()
                     PrivacyRow()
                 }
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(28.dp)) {
                 InstallGroup(carlinkManager)
                 LyricsGroup()
             }
