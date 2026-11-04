@@ -2,6 +2,7 @@ package com.carlink.ocbm
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,5 +55,19 @@ class OneFileInstallTest {
         assertFalse("still running: read it again later", OneFileInstall.isVerdict("ocbm_selftest: ocbmd up"))
         assertFalse(OneFileInstall.isVerdict(null))
         assertNull(OneFileInstall.selfTestOf("  \n"))
+    }
+
+    @Test
+    fun `the once-per-install records are kept per install, not per adapter`() {
+        // 4 Nov bench: a trial counted as proven by CarPlay after a back to stock and a fresh install on the same adapter.
+        val first = OneFileInstall(InstallMode.TRIAL, serial = "ABC", installId = "0123456789abcdef")
+        val again = first.copy(installId = "fedcba9876543210")
+        assertEquals("ABC/0123456789abcdef", first.recordKey)
+        assertNotEquals(first.recordKey, again.recordKey)
+        assertEquals("an update keeps the install, and its id", first.recordKey, first.copy(version = "1.0.1").recordKey)
+        assertEquals("an OCBM without the id: by serial, as before", "ABC", first.copy(installId = null).recordKey)
+        assertEquals("", OneFileInstall(InstallMode.TRIAL, installId = "0123456789abcdef").recordKey)
+        assertEquals("0123456789abcdef", OneFileInstall.installIdOf("0123456789abcdef\n"))
+        assertNull(OneFileInstall.installIdOf("not an id"))
     }
 }

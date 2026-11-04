@@ -120,7 +120,13 @@ class InstallSession(
                     ?.toString(Charsets.UTF_8)
                     ?.let(OneFileInstall::selfTestOf)
             }
-        installState.value = OneFileInstall(mode, version, info.optString("serial"), selfTest)
+        val installId =
+            c
+                .pullFile(OneFileInstall.INSTALL_ID_FILE, timeoutMs = VERSION_TIMEOUT_MS)
+                .getOrNull()
+                ?.toString(Charsets.UTF_8)
+                ?.let(OneFileInstall::installIdOf)
+        installState.value = OneFileInstall(mode, version, info.optString("serial"), selfTest, installId)
         logInfo(
             "[INSTALL] one-file install: ${mode.wire}, version ${version ?: "unknown"}" + (selfTest?.let { ", self-test $it" } ?: ""),
             tag = Logger.Tags.ADAPTR,

@@ -33,18 +33,32 @@ internal fun InstallPanelOr(
     val session = carlinkManager.oneFileInstall
     val install by session.install.collectAsState()
     val goBack by session.goBack.collectAsState()
-    var trialSeen by remember(carlinkManager, install?.mode) { mutableStateOf(false) }
     val context = LocalContext.current
-    var finishSeen by remember(install?.serial) { mutableStateOf(FinishNotice.seen(context, install?.serial)) }
+    // Once per install ([OneFileInstall.recordKey]), not once per connection: an update restarts the adapter and
+    // Carlink reconnects to the same trial (bench 11-03: the welcome, with its "take the USB stick out" text, came
+    // back after an update).
+    var trialSeen by remember(install?.recordKey) { mutableStateOf(FinishNotice.welcomed(context, install?.recordKey)) }
+    var finishSeen by remember(install?.recordKey) { mutableStateOf(FinishNotice.seen(context, install?.recordKey)) }
     val current = install
     when {
         goBack == GoBackResult.GOING ->
             InstallPanel("Restarting on stock CarPlay", "About 30 seconds. The adapter comes back on its Carlinkit firmware.")
         current != null && current.mode.stockKept && !trialSeen ->
-            TrialPanel(current, onContinue = { trialSeen = true }, onGoBack = session::goBackToStock)
+            TrialPanel(
+                current,
+                onContinue = {
+                    FinishNotice.markWelcomed(context, current.recordKey)
+                    trialSeen = true
+                },
+                onGoBack = {
+                    FinishNotice.clearWelcomed(context, current.recordKey)
+                    session.goBackToStock()
+                },
+            )
         current != null && current.mode == InstallMode.FINAL && !finishSeen -> {
             val acknowledge = {
-                FinishNotice.markSeen(context, current.serial)
+                FinishNotice.markSeen(context, current.recordKey)
+                FinishNotice.clearWelcomed(context, current.recordKey)
                 finishSeen = true
             }
             InstallPanel(
@@ -66,7 +80,7 @@ private fun TrialPanel(
 ) {
     var asking by remember { mutableStateOf(false) }
     InstallPanel(
-        title = "Welcome to OCBM",
+        title = "Welcome to Carlink",
         body = trialText(install),
         primary = "Continue" to onContinue,
         wayBack = { asking = true },
@@ -102,7 +116,7 @@ internal fun GoBackToStockDialog(
 }
 
 /**
- * "Remove stock CarPlay?" (Scott, 2 Nov): finishing deletes the copy of the Carlinkit firmware on the adapter, and the
+ * "Remove stock firmware?" (Scott, 2 Nov; his words, 4 Nov): finishing deletes the copy of the Carlinkit firmware on the adapter, and the
  * USB stick's backup is then the way back. Asked once more, as the way back is.
  */
 @Composable
@@ -111,11 +125,13 @@ internal fun RemoveStockDialog(
     onDismiss: () -> Unit,
 ) {
     CarlinkDialog(
-        title = "Remove stock CarPlay?",
+        title = "Remove stock firmware?",
         text =
-            "OCBM passed its self-test and has carried CarPlay. Removing stock CarPlay deletes the copy of the Carlinkit " +
-                "firmware on the adapter, which frees the room for updates. After that, the backup on your USB stick is the " +
-                "way back to stock. It's removed when this drive ends.",
+            "OCBM passed its self-test, but still has the stock firmware in memory. Removing stock firmware deletes the copy " +
+                "of the Carlinkit firmware on the adapter, which frees up room for future OCBM firmware updates. After that, " +
+                "the backup on your USB stick is the way back to stock. Pressing \u201cRemove\u201d will allow for the adapter to " +
+                "remove the stock firmware at the end of this Carlink session (when streaming stops) and receive future " +
+                "updates if needed.",
         confirmLabel = "Remove",
         onConfirm = onRemove,
         onDismiss = onDismiss,
@@ -125,12 +141,15 @@ internal fun RemoveStockDialog(
 }
 
 /**
- * The welcome card's text for a trial (Scott, 1 Nov): stock CarPlay stays as the fallback, and Carlink asks before removing
- * it. It was "until this drive ends", from when the trial finished on its own.
+ * The welcome card's text for a trial, in Scott's words (4 Nov): the install and its self-test, stock kept as the failsafe,
+ * where removing it is, and the stick to keep.
  */
 internal fun trialText(install: OneFileInstall): String =
-    "${installLabel(install)}. Your adapter passed its self-test. Stock CarPlay stays on it as a fallback, " +
-        "and Carlink asks before removing it.\n$STICK_OUT"
+    "OCBM${install.version?.let { " $it" }.orEmpty()} has been installed, and your adapter passed its self-test. " +
+        "Stock firmware continues to reside on the adapter as a failsafe. To make OCBM firmware permanent and allow for " +
+        "future firmware updates, remove the factory firmware from the adapter by going to Carlink Settings > Adapter and About. " +
+        "You may now proceed to take the USB stick out of the adapter and keep it secure. It holds the backup and " +
+        "restore to factory image should you need it."
 
 /** "OCBM 1.0.0 · trial": the install's version (when read) and mode, as the panels and Settings show it. */
 internal fun installLabel(install: OneFileInstall): String = "OCBM${install.version?.let { " $it" }.orEmpty()} · ${install.mode.wire}"
@@ -154,6 +173,7 @@ private fun InstallPanel(
 private object FinishNotice {
     private const val PREFS = "carlink_one_file_install"
     private const val KEY_SEEN = "finish_seen"
+    private const val KEY_WELCOMED = "trial_welcomed"
 
     fun seen(
         context: Context,
@@ -167,6 +187,28 @@ private object FinishNotice {
         val p = prefs(context)
         p.edit().putStringSet(KEY_SEEN, p.getStringSet(KEY_SEEN, emptySet()).orEmpty() + serial).apply()
         logInfo("[INSTALL] conversion-finished notice acknowledged", tag = "UI")
+    }
+
+    /** Whether the trial's welcome was dismissed for this adapter: cleared when its trial ends, so a new install welcomes again. */
+    fun welcomed(
+        context: Context,
+        serial: String?,
+    ): Boolean = serial != null && serial in prefs(context).getStringSet(KEY_WELCOMED, emptySet()).orEmpty()
+
+    fun markWelcomed(
+        context: Context,
+        serial: String,
+    ) {
+        val p = prefs(context)
+        p.edit().putStringSet(KEY_WELCOMED, p.getStringSet(KEY_WELCOMED, emptySet()).orEmpty() + serial).apply()
+    }
+
+    fun clearWelcomed(
+        context: Context,
+        serial: String,
+    ) {
+        val p = prefs(context)
+        p.edit().putStringSet(KEY_WELCOMED, p.getStringSet(KEY_WELCOMED, emptySet()).orEmpty() - serial).apply()
     }
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

@@ -33,7 +33,21 @@ object AdapterUpdates {
      * and the VERSION, FROM_MIN and ROOM need_kb it carries here, in a commit and an app release. Pin the installer image
      * of the same version with it: a trial adapter it doesn't fit takes the round trip, and converts with that image.
      */
-    val PINNED: PinnedPackage? = null
+    val PINNED: PinnedPackage? =
+        PinnedPackage(
+            tag = "v1.0.2",
+            url = "https://github.com/enigy/ocbm/releases/download/v1.0.2/ocbm-update-1.0.2.tgz",
+            sizeBytes = 11_705L,
+            sha256 = "bb6b3ed5c099990ee70275576cc40987bcf0caaca0fd7c0e798c16544fbc0bfe",
+            // "1.0.2 ocbm df73a57" from 1.0.1: script/ocbm_dispatch.sh and script/ocbm_restore.sh (Scott OKd, 4 Nov).
+            pkg =
+                UpdatePackage(
+                    version = "1.0.2",
+                    fromMin = "1.0.1",
+                    needKb = 410,
+                    notes = "Fixes going back to stock from the USB stick, and makes installing from a stick faster.",
+                ),
+        )
 
     /** Where the adapter's update script takes the package from (ocbmd UPDATE_PACKAGE). */
     const val BOX_PATH = "/tmp/ocbm-update.tgz"
