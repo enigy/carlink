@@ -33,18 +33,31 @@ internal fun InstallPanelOr(
     val session = carlinkManager.oneFileInstall
     val install by session.install.collectAsState()
     val goBack by session.goBack.collectAsState()
-    var trialSeen by remember(carlinkManager, install?.mode) { mutableStateOf(false) }
     val context = LocalContext.current
+    // Once per trial, not once per connection: an update restarts the adapter and Carlink reconnects to the same
+    // trial (bench 11-03: the welcome, with its "take the USB stick out" text, came back after an update).
+    var trialSeen by remember(install?.serial) { mutableStateOf(FinishNotice.welcomed(context, install?.serial)) }
     var finishSeen by remember(install?.serial) { mutableStateOf(FinishNotice.seen(context, install?.serial)) }
     val current = install
     when {
         goBack == GoBackResult.GOING ->
             InstallPanel("Restarting on stock CarPlay", "About 30 seconds. The adapter comes back on its Carlinkit firmware.")
         current != null && current.mode.stockKept && !trialSeen ->
-            TrialPanel(current, onContinue = { trialSeen = true }, onGoBack = session::goBackToStock)
+            TrialPanel(
+                current,
+                onContinue = {
+                    FinishNotice.markWelcomed(context, current.serial)
+                    trialSeen = true
+                },
+                onGoBack = {
+                    FinishNotice.clearWelcomed(context, current.serial)
+                    session.goBackToStock()
+                },
+            )
         current != null && current.mode == InstallMode.FINAL && !finishSeen -> {
             val acknowledge = {
                 FinishNotice.markSeen(context, current.serial)
+                FinishNotice.clearWelcomed(context, current.serial)
                 finishSeen = true
             }
             InstallPanel(
@@ -154,6 +167,7 @@ private fun InstallPanel(
 private object FinishNotice {
     private const val PREFS = "carlink_one_file_install"
     private const val KEY_SEEN = "finish_seen"
+    private const val KEY_WELCOMED = "trial_welcomed"
 
     fun seen(
         context: Context,
@@ -167,6 +181,28 @@ private object FinishNotice {
         val p = prefs(context)
         p.edit().putStringSet(KEY_SEEN, p.getStringSet(KEY_SEEN, emptySet()).orEmpty() + serial).apply()
         logInfo("[INSTALL] conversion-finished notice acknowledged", tag = "UI")
+    }
+
+    /** Whether the trial's welcome was dismissed for this adapter: cleared when its trial ends, so a new install welcomes again. */
+    fun welcomed(
+        context: Context,
+        serial: String?,
+    ): Boolean = serial != null && serial in prefs(context).getStringSet(KEY_WELCOMED, emptySet()).orEmpty()
+
+    fun markWelcomed(
+        context: Context,
+        serial: String,
+    ) {
+        val p = prefs(context)
+        p.edit().putStringSet(KEY_WELCOMED, p.getStringSet(KEY_WELCOMED, emptySet()).orEmpty() + serial).apply()
+    }
+
+    fun clearWelcomed(
+        context: Context,
+        serial: String,
+    ) {
+        val p = prefs(context)
+        p.edit().putStringSet(KEY_WELCOMED, p.getStringSet(KEY_WELCOMED, emptySet()).orEmpty() - serial).apply()
     }
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

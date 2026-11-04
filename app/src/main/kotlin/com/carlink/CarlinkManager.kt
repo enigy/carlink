@@ -222,6 +222,9 @@ class CarlinkManager(
 
         private const val USB_WAIT_PERIOD_MS = 3000L
 
+        /** How often a connected phone's "Last seen" is moved to now ([keepLastSeen]). */
+        private const val LAST_SEEN_TICK_MS = 60_000L
+
         private const val USB_FIND_ATTEMPTS = 10 // × USB_WAIT_PERIOD_MS: ~30 s to find the adapter
 
         /** Without the bridge Carlink can't reach the adapter (it has no USB access of its own). */
@@ -740,6 +743,9 @@ class CarlinkManager(
      * app storage. This is what lets the list render before any adapter session exists.
      */
     private var knownStore: KnownDeviceStore? = null
+
+    // Keeps the connected phone's "Last seen" current through its session ([keepLastSeen]).
+    private var lastSeenJob: Job? = null
 
     /**
      * The device the box should prefer when it initiates a reconnect, or null for
@@ -3201,6 +3207,7 @@ class CarlinkManager(
      * not its session's start (bench 11-03: "Last seen 9 minutes ago" a minute after the phone left).
      */
     private fun markPhoneLeft() {
+        lastSeenJob?.cancel()
         val mac = adapterPhone.identified ?: return
         val now = System.currentTimeMillis()
         knownStore?.update { snap ->
@@ -3271,8 +3278,30 @@ class CarlinkManager(
         )
         // The list may already be on screen with a MAC for a label; rebuild it with the real name.
         rebuildDeviceList()
+        keepLastSeen(mac)
         _phoneNews.update { it + 1 }
         pushPhonePolicyIfChanged("phone connected")
+    }
+
+    /**
+     * The connected phone's "Last seen" moves with the session, once a minute: switching the car off with Carlink
+     * running ends the process with no word from the adapter that the phone left, which left it at the
+     * session's start (bench 11-03).
+     */
+    private fun keepLastSeen(mac: String) {
+        lastSeenJob?.cancel()
+        lastSeenJob =
+            scope.launch {
+                while (isActive) {
+                    delay(LAST_SEEN_TICK_MS)
+                    if (adapterPhone.identified != mac) break
+                    val now = System.currentTimeMillis()
+                    knownStore?.update { snap ->
+                        val prev = snap.devices[mac] ?: return@update snap
+                        snap.copy(devices = snap.devices + (mac to prev.copy(lastConnectedMs = now)))
+                    }
+                }
+            }
     }
 
     /**
