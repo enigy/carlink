@@ -64,6 +64,15 @@ private fun setupPanel(
                 actions = listOf(pair, later),
             )
         is PhoneSetupPhase.NotPaired -> PanelContent(meta = phase.name, title = phase.title, body = phase.body, actions = listOf(pair.copy(label = "Try again"), later))
+        is PhoneSetupPhase.PhoneForgot ->
+            PanelContent(
+                meta = phase.name,
+                title = "Your iPhone no longer knows this adapter",
+                body =
+                    "It answered the adapter's call and turned it away. On the iPhone, open Settings > Bluetooth, tap the info " +
+                        "button next to ${phase.name} and choose Forget This Device. Then tap Pair iPhone here.",
+                actions = listOf(pair, later),
+            )
         is PhoneSetupPhase.BluetoothStarting ->
             PanelContent(
                 meta = phase.name,
