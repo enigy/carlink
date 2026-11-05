@@ -265,6 +265,9 @@ class StockConversion(
 
     // A stock adapter showed up while the adapter was away installing.
     private var sawStock = false
+
+    // Since the stick left USB, the adapter has been off USB at least once: only then is it back ([awaitReplug]).
+    @Volatile private var adapterWasGone = false
     private var stockWait: Job? = null
 
     // The shared stick [ConversionPhase.StickInFirst] is about, and those its guidance was dismissed for.
@@ -280,7 +283,7 @@ class StockConversion(
     fun claim(usbId: String): Boolean =
         synchronized(lock) {
             // Back on USB as stock at power-on, before the look-out saw it: the install is under way.
-            if (phaseState.value == ConversionPhase.AdapterUnplugged) installing(ConversionPhase.InstallingFromStick())
+            if (phaseState.value == ConversionPhase.AdapterUnplugged && adapterWasGone) installing(ConversionPhase.InstallingFromStick())
             val now = phaseState.value
             val quiet = gaveUp || now is ConversionPhase.Converting || now is ConversionPhase.Failed || now == ConversionPhase.Declined
             if (now is ConversionPhase.InstallingFromStick && !sawStock) {
@@ -676,10 +679,21 @@ class StockConversion(
         while (name in usb.attached { _, _ -> true }) delay(timing.pollMs)
         synchronized(lock) {
             if (phaseState.value != ConversionPhase.ReplugAdapter) return
+            adapterWasGone = false
             phaseState.value = ConversionPhase.AdapterUnplugged
         }
         logInfo("[CONVERT] the stick left USB with the adapter; waiting for the adapter to be plugged back in", tag = Logger.Tags.ADAPTR)
-        while (usb.attached(::isAdapterBack).isEmpty()) delay(timing.pollMs)
+        // Back means gone first: a stock adapter that never left USB (the bench, whose stick is not in the adapter)
+        // came back from nowhere and read as plugged back in (5 Nov). In the car it leaves with the stick.
+        while (true) {
+            val here = usb.attached(::isAdapterBack).isNotEmpty()
+            if (!here) {
+                adapterWasGone = true
+            } else if (adapterWasGone) {
+                break
+            }
+            delay(timing.pollMs)
+        }
         synchronized(lock) {
             if (phaseState.value != ConversionPhase.AdapterUnplugged) return
             installing(ConversionPhase.InstallingFromStick())

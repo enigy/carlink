@@ -97,6 +97,8 @@ internal class PhoneListActions(
     val onRemove: (CarlinkManager.DeviceInfo) -> Unit,
     /** The phone's own Cluster and Driving settings, or null when it has none to show now. */
     val onSettings: (CarlinkManager.DeviceInfo) -> (() -> Unit)?,
+    /** Forget and Remove reach the adapter only while it is connected ([SettingsLiveState.canForget]). */
+    val canRemove: Boolean = true,
 )
 
 /** The ranked phone list. The adapter always calls these phones, in this order, when the vehicle starts. */
@@ -126,6 +128,7 @@ internal fun PhoneList(
                 onConnect = { carlinkManager.connectPhone(it.btMac, switching = connected != null) },
                 onRemove = onRemove,
                 onSettings = settingsFor,
+                canRemove = live.canForget,
             ),
     )
 }
@@ -189,6 +192,7 @@ private fun PhoneRow(
             RowAction(
                 label = if (device.bonded) "Forget" else "Remove",
                 onClick = { actions.onRemove(device) },
+                enabled = actions.canRemove,
                 weight = if (device.bonded) ActionWeight.DANGER_OUTLINE else ActionWeight.NORMAL,
             )
         }

@@ -241,8 +241,29 @@ class StockConversionTest {
         awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
         usb.devices.remove(STICK)
         awaitPhase<ConversionPhase.AdapterUnplugged>()
+        Thread.sleep(100) // the look-out sees it off USB
         assertFalse("not offered: it is installing", conversion.claim("1314:1520"))
         assertTrue(conversion.phase.value is ConversionPhase.InstallingFromStick)
+    }
+
+    @Test
+    fun `an adapter that never left USB is not taken as plugged back in`() {
+        // The bench, 5 Nov: its stick is not in the adapter, and the stock adapter stayed on USB the whole time.
+        toWaitingForStick()
+        adapter.killLink()
+        usb.devices[ADAPTER] = 0x1314 to 0x1520
+        plugStick(MemoryStick.superfloppy(64), STICK)
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        usb.devices.remove(STICK)
+        awaitPhase<ConversionPhase.AdapterUnplugged>()
+        Thread.sleep(200)
+        assertEquals(ConversionPhase.AdapterUnplugged, conversion.phase.value)
+        assertFalse(conversion.claim("1314:1520"))
+        assertEquals("a stock claim without a replug is not one either", ConversionPhase.AdapterUnplugged, conversion.phase.value)
+        usb.devices.remove(ADAPTER) // unplugged
+        Thread.sleep(100)
+        usb.devices[ADAPTER] = 0x1314 to 0x1520 // and back
+        awaitPhase<ConversionPhase.InstallingFromStick>()
     }
 
     @Test

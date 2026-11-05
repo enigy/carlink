@@ -79,6 +79,10 @@ internal fun PhonesPane(
             NoPhoneCard(paired = live.devices.any { it.bonded }, addPhone = live.pairWindowSupported)
         }
         PhoneList(carlinkManager, live, connected, onRemove = { deviceToRemove = it }, settingsFor = { settingsFor(it.btMac) })
+        if (!live.canForget && live.devices.isNotEmpty()) {
+            // Unplugged, Forget only dropped Carlink's history and the adapter kept the pairing (bench, 5 Nov).
+            Text("Connect the adapter to forget a phone.", style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (live.pairWindowSupported) {
             PairPhoneCard(
                 adapterName = adapterName,
