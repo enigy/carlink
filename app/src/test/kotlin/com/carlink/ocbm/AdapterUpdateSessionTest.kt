@@ -175,7 +175,7 @@ class AdapterUpdateSessionTest {
         // The self-test failed: the adapter puts 1.0.0 back and restarts again.
         restart(info(update = "rolled_back", result = "rolled_back 1.1.0 ocbm eec9db5: its start-up self-test failed (kept 1.0.0 ocbm f8f18c8)"))
         waitUntil(2000) { session.phase.value is UpdatePhase.Kept }
-        assertEquals(UpdatePhase.Kept("1.0.0", "its start-up self-test failed"), session.phase.value)
+        assertEquals(UpdatePhase.Kept("1.0.0", "its start-up self-test failed", "1.1.0"), session.phase.value)
         assertEquals(0, updated.get())
     }
 

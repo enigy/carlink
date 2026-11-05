@@ -35,17 +35,17 @@ object AdapterUpdates {
      */
     val PINNED: PinnedPackage? =
         PinnedPackage(
-            tag = "v1.0.2",
-            url = "https://github.com/enigy/ocbm/releases/download/v1.0.2/ocbm-update-1.0.2.tgz",
-            sizeBytes = 11_705L,
-            sha256 = "bb6b3ed5c099990ee70275576cc40987bcf0caaca0fd7c0e798c16544fbc0bfe",
-            // "1.0.2 ocbm df73a57" from 1.0.1: script/ocbm_dispatch.sh and script/ocbm_restore.sh (Scott OKd, 4 Nov).
+            tag = "v1.0.3",
+            url = "https://github.com/enigy/ocbm/releases/download/v1.0.3/ocbm-update-1.0.3.tgz",
+            sizeBytes = 20_287L,
+            sha256 = "5430fe02a1095067dbff86e3c31845b363e35c86552e80cb497a350c56a6f27e",
+            // "1.0.3 ocbm c90701d" from 1.0.1: ocbm_boot.sh, ocbm_dispatch.sh, ocbm_restore.sh, ocbm_update.sh (Scott, 5 Nov).
             pkg =
                 UpdatePackage(
-                    version = "1.0.2",
+                    version = "1.0.3",
                     fromMin = "1.0.1",
-                    needKb = 410,
-                    notes = "Fixes going back to stock from the USB stick, and makes installing from a stick faster.",
+                    needKb = 431,
+                    notes = "Stops the Android Auto prompt on GM head units, and an update is kept only once the adapter answers Carlink.",
                 ),
         )
 
