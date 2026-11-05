@@ -61,10 +61,11 @@ sealed interface UpdatePhase {
         val version: String,
     ) : UpdatePhase
 
-    /** The update failed its trial, and the adapter put [version] back. */
+    /** The update ([to], when the adapter said) failed its trial, and the adapter put [version] back. */
     data class Kept(
         val version: String,
         val reason: String,
+        val to: String? = null,
     ) : UpdatePhase
 
     /** The adapter checked the package and refused it; nothing changed. */
@@ -418,7 +419,7 @@ class AdapterUpdateSession(
             UpdateState.INSTALLING -> UpdatePhase.Installing(to)
             UpdateState.TRIAL -> UpdatePhase.Checking(to)
             UpdateState.COMMITTED -> UpdatePhase.Updated(result?.version ?: to)
-            UpdateState.ROLLED_BACK -> UpdatePhase.Kept(result?.kept ?: "the version it had", result?.reason.orEmpty())
+            UpdateState.ROLLED_BACK -> UpdatePhase.Kept(result?.kept ?: "the version it had", result?.reason.orEmpty(), result?.version)
             UpdateState.REFUSED -> UpdatePhase.Refused(result?.reason?.ifEmpty { null } ?: "It gave no reason.")
         }
 

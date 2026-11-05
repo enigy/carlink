@@ -45,9 +45,13 @@ internal fun updatePanel(
         is UpdatePhase.Restarting ->
             PanelContent("The adapter is restarting", "On OCBM ${phase.to}. It checks itself as it starts.", note = KEEP_ON, busy = true)
         is UpdatePhase.Checking ->
-            PanelContent("Checking OCBM ${phase.to}", "The adapter runs its start-up self-test. If the update fails it, the adapter puts back the version it had.", busy = true)
-        is UpdatePhase.Updated -> PanelContent("Adapter updated to ${phase.version}", "It passed its start-up self-test.", actions = ok)
-        is UpdatePhase.Kept -> PanelContent(keptTitle(phase), sentence(phase.reason), actions = ok)
+            PanelContent(
+                "Checking OCBM ${phase.to}",
+                "The adapter runs its start-up self-test and reconnects to Carlink. If either fails, it puts back the version it had.",
+                busy = true,
+            )
+        is UpdatePhase.Updated -> PanelContent("Adapter updated to ${phase.version}", "It passed its start-up self-test and reconnected to Carlink.", actions = ok)
+        is UpdatePhase.Kept -> PanelContent(keptTitle(phase), keptText(phase), actions = ok)
         is UpdatePhase.Refused -> PanelContent(REFUSED_TITLE, phase.reason, note = "The adapter keeps the version it has.", actions = ok)
         is UpdatePhase.Failed -> PanelContent(phase.title, phase.body, actions = ok)
     }
@@ -108,7 +112,8 @@ internal fun UpdateDialog(
         title = "Update the adapter to OCBM ${offer.pkg.version}?",
         text =
             notes + "CarPlay goes away for a few minutes while the adapter installs it and restarts. Keep the car on. If the update " +
-                "doesn't pass the adapter's self-test, it puts back ${have?.let { "OCBM $it" } ?: "the version it has"}.",
+                "doesn't pass the adapter's self-test or doesn't connect to Carlink, the adapter puts back " +
+                "${have?.let { "OCBM $it" } ?: "the version it has"}.",
         confirmLabel = "Update",
         onConfirm = onUpdate,
         onDismiss = onDismiss,
@@ -144,6 +149,23 @@ internal fun FinishFirstDialog(
 /** "Kept 1.0.0: the update did not pass its self-test", as the plan has it, or that it was undone for another reason. */
 private fun keptTitle(kept: UpdatePhase.Kept): String =
     if ("self-test" in kept.reason) "Kept ${kept.version}: the update did not pass its self-test" else "Kept ${kept.version}: the update was undone"
+
+/**
+ * The adapter's reason in plain words (Scott, 5 Nov): it said "ocbmd heard the host for 121 s and never answered it", and the
+ * panel showed that as it came. Known reasons get a sentence naming both versions; any other is shown as it came.
+ */
+internal fun keptText(kept: UpdatePhase.Kept): String {
+    val update = kept.to?.let { "OCBM $it" }
+    val back = if (kept.version.firstOrNull()?.isDigit() == true) "OCBM ${kept.version}" else kept.version
+    val r = kept.reason
+    return when {
+        "never answered" in r -> "The adapter on ${update ?: "the update"} didn't answer Carlink, so it put back $back."
+        "self-test failed" in r -> "${update ?: "The update"} failed the adapter's start-up self-test, so it put back $back."
+        "times in a row" in r -> "${update ?: "The update"} didn't start properly twice in a row, so the adapter put back $back."
+        "power was lost" in r -> "Power was lost during the update, so the adapter put back $back."
+        else -> sentence(r)
+    }
+}
 
 /** The adapter's reason as a sentence: "its start-up self-test failed" to "Its start-up self-test failed." */
 private fun sentence(reason: String): String = reason.replaceFirstChar { it.uppercaseChar() }.let { if (it.isEmpty() || it.endsWith('.')) it else "$it." }
