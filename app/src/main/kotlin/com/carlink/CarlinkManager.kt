@@ -866,6 +866,17 @@ class CarlinkManager(
     @Volatile private var reconnectJob: Job? = null
     private var reconnectAttempts: Int = 0
 
+    // ---- head unit display power ([DisplayOff]) ---------------------------------------------
+    // The display as MainActivity last reported it; the grace wait after it went off; dormant once that wait ended
+    // the session (no starts, no reconnects until the display is on); and the settle before connecting on a wake.
+    @Volatile private var displayOn = true
+
+    @Volatile private var displayOffJob: Job? = null
+
+    @Volatile private var dormantForDisplayOff = false
+
+    @Volatile private var wakeConnectJob: Job? = null
+
     private var hadPriorSession: Boolean = false
     private var consecutiveNoResponse: Int = 0
     private var shortLivedStreamingCount: Int = 0
@@ -1504,6 +1515,10 @@ class CarlinkManager(
     private suspend fun startImpl() {
         if (released) {
             logWarn("[LIFECYCLE] start() on a released manager — ignoring", tag = Logger.Tags.ADAPTR)
+            return
+        }
+        if (dormantForDisplayOff) {
+            logInfo("[POWER] start skipped: dormant while the display is off", tag = Logger.Tags.USB)
             return
         }
 
@@ -2295,6 +2310,78 @@ class CarlinkManager(
             logInfo("[REBOOT] adapter back on USB ${(android.os.SystemClock.elapsedRealtime() - since) / 1000}s after the reboot", tag = Logger.Tags.USB)
         }
         scope.launch { startIfDisconnected("Adapter attached") }
+    }
+
+    /** The head unit's display is on, by the system's word; fails open, so a failed query never blocks connecting. */
+    private fun isInteractive(): Boolean = runCatching { powerManager.isInteractive }.getOrDefault(true)
+
+    private fun callActive(): Boolean = voiceRouter?.isCallActive() == true
+
+    /**
+     * The head unit's display went off (MainActivity: its display listener and the screen-off broadcast, both; the
+     * second is a no-op). Starts the [DisplayOff] wait; the session itself carries on through it.
+     */
+    fun onDisplayOff(source: String) {
+        if (released || !displayOn) return
+        displayOn = false
+        wakeConnectJob?.cancel()
+        logInfo(
+            "[POWER] display OFF ($source): state=$state driving=$isDriving call=${callActive()}; the session ends in " +
+                "${DisplayOff.GRACE_MS / 1000} s unless the display comes back",
+            tag = Logger.Tags.USB,
+        )
+        displayOffJob?.cancel()
+        displayOffJob =
+            scope.launch {
+                while (true) {
+                    delay(DisplayOff.GRACE_MS)
+                    val decision = DisplayOff.atGraceEnd(displayOn, isDriving, callActive())
+                    logInfo("[POWER] display off ${DisplayOff.GRACE_MS / 1000} s: state=$state driving=$isDriving call=${callActive()} -> $decision", tag = Logger.Tags.USB)
+                    when (decision) {
+                        DisplayOff.Decision.DISPLAY_ON -> return@launch
+                        DisplayOff.Decision.KEEP_DRIVING, DisplayOff.Decision.KEEP_CALL -> continue
+                        DisplayOff.Decision.END_SESSION -> {
+                            endForDisplayOff()
+                            return@launch
+                        }
+                    }
+                }
+            }
+    }
+
+    /**
+     * The display stayed off, parked, with no call: end the session as Close app does (CT_STOP, close OCBM, release
+     * USB; DISCONNECTED drops the wake lock and the foreground service) and stay dormant. The box then goes idle and
+     * finishes a confirmed install ("Remove stock CarPlay") once Carlink stays away.
+     */
+    private suspend fun endForDisplayOff() {
+        dormantForDisplayOff = true
+        cancelReconnect()
+        logWarn("[POWER] display still off, parked, no call: ending the session; dormant until the display is on", tag = Logger.Tags.USB)
+        disconnect()
+        releaseWakeLock()
+        CarlinkMediaBrowserService.stopConnectionForeground(context)
+    }
+
+    /**
+     * The head unit's display came on. Within the wait the session was never touched; after it, Carlink wakes and
+     * connects once the USB port has settled ([DisplayOff.WAKE_SETTLE_MS]).
+     */
+    fun onDisplayOn(source: String) {
+        if (released || displayOn) return
+        displayOn = true
+        displayOffJob?.cancel()
+        val wasDormant = dormantForDisplayOff
+        dormantForDisplayOff = false
+        reconnectAttempts = 0
+        logInfo("[POWER] display ON ($source): state=$state dormant=$wasDormant", tag = Logger.Tags.USB)
+        if (state != State.DISCONNECTED) return
+        wakeConnectJob?.cancel()
+        wakeConnectJob =
+            scope.launch {
+                delay(DisplayOff.WAKE_SETTLE_MS)
+                startIfDisconnected("Display on")
+            }
     }
 
     private fun rebootAdapterImpl() {
@@ -4120,6 +4207,14 @@ class CarlinkManager(
      */
     private fun scheduleReconnect() {
         reconnectJob?.cancel()
+
+        // The display is off ([DisplayOff]): reconnecting there only churns while the car is off. Checked against the
+        // system too, in case a display-off signal was missed; the display coming on connects again.
+        if (dormantForDisplayOff || !isInteractive()) {
+            logInfo("[POWER] no reconnect: the display is off (dormant=$dormantForDisplayOff)", tag = Logger.Tags.USB)
+            CarlinkMediaBrowserService.stopConnectionForeground(context)
+            return
+        }
 
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
             logWarn(
