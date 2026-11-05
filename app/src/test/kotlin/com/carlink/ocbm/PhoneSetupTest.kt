@@ -148,6 +148,12 @@ class PhoneSetupTest {
         waitUntil { box.reads.get() == 1 }
         setup.onBtPhase(Ocbm.BTP_BOND_LOST)
         assertEquals(PhoneSetupPhase.PhoneForgot("CarLink-9C1A"), setup.phase.value)
+        setup.onPhoneConnected() // it was a still-paired phone after all: the question goes at once
+        assertEquals(PhoneSetupPhase.None, setup.phase.value)
+        setup.reset()
+        setup.onSubscribed()
+        waitUntil { box.reads.get() >= 3 } // the re-read on connect, then this session's
+        setup.onBtPhase(Ocbm.BTP_BOND_LOST)
         setup.pair()
         await<PhoneSetupPhase.Pairing>()
         setup.onBtPhase(Ocbm.BTP_BOND_LOST)

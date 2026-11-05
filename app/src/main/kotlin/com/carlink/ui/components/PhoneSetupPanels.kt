@@ -67,10 +67,11 @@ private fun setupPanel(
         is PhoneSetupPhase.PhoneForgot ->
             PanelContent(
                 meta = phase.name,
-                title = "Your iPhone no longer knows this adapter",
+                title = "Your iPhone may no longer know this adapter",
                 body =
-                    "It answered the adapter's call and turned it away. On the iPhone, open Settings > Bluetooth, tap the info " +
-                        "button next to ${phase.name} and choose Forget This Device. Then tap Pair iPhone here.",
+                    "It keeps answering the adapter's call and turning it away. If it doesn't connect, on the iPhone open " +
+                        "Settings > Bluetooth, tap the info button next to ${phase.name} and choose Forget This Device. Then tap " +
+                        "Pair iPhone here.",
                 actions = listOf(pair, later),
             )
         is PhoneSetupPhase.BluetoothStarting ->
