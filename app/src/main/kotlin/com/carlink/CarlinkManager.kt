@@ -121,6 +121,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -864,6 +865,9 @@ class CarlinkManager(
 
     // ---- reconnect / escalation -------------------------------------------------------------
     @Volatile private var reconnectJob: Job? = null
+
+    // The coroutine running [startImpl] now (or the last one, done); [disconnect] cancels it.
+    @Volatile private var startingJob: Job? = null
     private var reconnectAttempts: Int = 0
 
     // ---- head unit display power ([DisplayOff]) ---------------------------------------------
@@ -1521,6 +1525,8 @@ class CarlinkManager(
             logInfo("[POWER] start skipped: dormant while the display is off", tag = Logger.Tags.USB)
             return
         }
+        // The coroutine running this start, for [disconnect] to cancel: it may sit ~30 s looking for the adapter.
+        startingJob = currentCoroutineContext()[Job]
 
         // Tear down any existing session BEFORE entering CONNECTING, so the FGS started at
         // CONNECTING isn't immediately stopped by the teardown's DISCONNECTED transition.
@@ -1710,14 +1716,23 @@ class CarlinkManager(
      * so it neither blocks the main thread on USB teardown nor interleaves with a start() in
      * flight. [stop] stays synchronous for [release] / onDestroy, which need teardown before they
      * return.
+     *
+     * A start in flight is cancelled first: with no adapter plugged in, a reconnect searches for it for up to
+     * ~30 s holding the lifecycle mutex, and Close app waited behind it with its dialog up (owner, 5 Nov).
      */
-    suspend fun disconnect() =
+    suspend fun disconnect() {
+        cancelReconnect()
+        startingJob?.let { job ->
+            if (job.isActive) logInfo("[LIFECYCLE] disconnect(): cancelling the start in flight", tag = Logger.Tags.ADAPTR)
+            job.cancel()
+        }
         lifecycleMutex.withLock {
             withContext(Dispatchers.IO) {
                 logInfo("[LIFECYCLE] disconnect() — user-initiated", tag = Logger.Tags.ADAPTR)
                 stopImpl()
             }
         }
+    }
 
     /**
      * Settings → Adapter → Save Logs: pull the box's `/tmp/box.log` over the live link (it lives in
