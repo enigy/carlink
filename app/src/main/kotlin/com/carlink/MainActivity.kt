@@ -116,6 +116,9 @@ class MainActivity : ComponentActivity() {
     // is destroyed before initialization completes (e.g., low memory kill)
     private var carlinkManager: CarlinkManager? = null
 
+    private val displayPower =
+        DisplayPowerWatcher(this, onOff = { carlinkManager?.onDisplayOff(it) }, onOn = { carlinkManager?.onDisplayOn(it) })
+
     /** The display the live manager was built for; a configuration change that moves its content area rebuilds. */
     private var activeProfile: DisplayProfile? = null
 
@@ -311,6 +314,8 @@ class MainActivity : ComponentActivity() {
 
         // Register USB detachment receiver for immediate disconnect detection
         registerUsbDetachReceiver()
+        // The head unit's display: off and parked for 30 s ends the session ([DisplayOff], Scott, 5 Nov).
+        displayPower.register()
 
         // Set up Compose UI
         // CarlinkManager is observed via mutableStateOf — replacement during display mode
@@ -439,6 +444,7 @@ class MainActivity : ComponentActivity() {
 
         // Unregister USB detachment receiver
         unregisterUsbDetachReceiver()
+        displayPower.unregister()
 
         // Release the CarlinkManager (it detaches its transport callback from the
         // MediaSession but does NOT release it — see CarlinkManager.release KDoc).
