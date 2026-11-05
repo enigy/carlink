@@ -55,7 +55,8 @@ internal fun PairPhoneCard(
     boxSaysOpen: Boolean,
     onOpen: () -> Unit,
     onClose: () -> Unit,
-    modifier: Modifier = Modifier,
+    // The adapter's Bluetooth is still starting, and Carlink asks again until it answers (PhoneSetupPhase.BluetoothStarting).
+    bluetoothStarting: Boolean = false,
 ) {
     var endsAt by remember { mutableLongStateOf(0L) }
     var openedAt by remember { mutableLongStateOf(0L) }
@@ -81,7 +82,7 @@ internal fun PairPhoneCard(
     }
     val noAnswer = counting && !sawOpen && now - openedAt > OPEN_CONFIRM_MS
 
-    PairCardFrame(modifier) {
+    PairCardFrame {
         Icon(
             imageVector = if (counting) Icons.AutoMirrored.Filled.BluetoothSearching else Icons.Default.Add,
             contentDescription = null,
@@ -90,7 +91,9 @@ internal fun PairPhoneCard(
         )
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(pairText(counting, adapterName, (endsAt - now).coerceAtLeast(0) / TICK_MS), style = SettingsStyle.Body)
-            if (noAnswer) {
+            if (bluetoothStarting) {
+                Text("The adapter's Bluetooth is starting. Pairing opens as soon as it's ready.", style = SettingsStyle.RowSubtitle)
+            } else if (noAnswer) {
                 Text("The adapter hasn't opened pairing. Check it is connected, then try again.", style = SettingsStyle.RowSubtitle, color = SettingsStyle.ErrorText)
             }
         }

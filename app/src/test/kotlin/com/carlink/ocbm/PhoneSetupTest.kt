@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class PhoneSetupTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val box = FakeBox()
-    private val timing = PhoneSetup.Timing(waitMs = 300, windowSeconds = 1)
+    private val timing = PhoneSetup.Timing(waitMs = 300, windowSeconds = 1, btStartMs = 600, btRetryMs = 100)
     private val setup = PhoneSetup(box, scope, timing)
 
     @After
@@ -99,9 +99,24 @@ class PhoneSetupTest {
         setup.onSubscribed()
         await<PhoneSetupPhase.Prompt>()
         setup.pair()
+        await<PhoneSetupPhase.BluetoothStarting>()
         assertEquals(1, await<PhoneSetupPhase.BluetoothDown>().status)
+        assertTrue("asked again while it started", box.windows.size > 2)
         setup.later()
         assertEquals(PhoneSetupPhase.Waiting("CarLink-9C1A", noPhone = true), setup.phase.value)
+    }
+
+    @Test
+    fun `a window refused while the adapter's Bluetooth starts is asked again, and opens once it answers`() {
+        // The truck, 5 Nov: btd up ~15 s after power-on, and three refusals in that time read as Bluetooth failing.
+        box.devices = "[]"
+        box.windowStatus = 1
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        setup.pair()
+        await<PhoneSetupPhase.BluetoothStarting>()
+        box.windowStatus = 0
+        await<PhoneSetupPhase.Pairing>()
     }
 
     @Test
