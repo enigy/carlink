@@ -35,6 +35,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.logging.logWarn
+import com.carlink.ocbm.PhoneSetupPhase
 import com.carlink.ui.components.CarlinkDialog
 import com.carlink.ui.components.DialogWeight
 import com.carlink.ui.components.OnSettingsHidden
@@ -55,6 +56,7 @@ internal fun PhonesPane(
     val view = LocalView.current
     val context = LocalContext.current
     val profiles by remember { DriverProfiles.view(context) }.collectAsState()
+    val setupPhase by carlinkManager.phoneSetup.phase.collectAsState()
     val settingsFor = profileOpener(profiles, live.driving, onOpenProfile)
     var deviceToRemove by remember { mutableStateOf<CarlinkManager.DeviceInfo?>(null) }
     OnSettingsHidden { deviceToRemove = null }
@@ -83,6 +85,7 @@ internal fun PhonesPane(
                 boxSaysOpen = live.pairWindowOpen,
                 onOpen = { carlinkManager.setPairWindow(PAIR_WINDOW_SECONDS) },
                 onClose = { carlinkManager.setPairWindow(0) },
+                bluetoothStarting = setupPhase is PhoneSetupPhase.BluetoothStarting,
             )
         } else {
             AddPhoneHint(adapterName)

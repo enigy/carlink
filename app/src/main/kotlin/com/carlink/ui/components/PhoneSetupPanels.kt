@@ -64,6 +64,13 @@ private fun setupPanel(
                 actions = listOf(pair, later),
             )
         is PhoneSetupPhase.NotPaired -> PanelContent(meta = phase.name, title = phase.title, body = phase.body, actions = listOf(pair.copy(label = "Try again"), later))
+        is PhoneSetupPhase.BluetoothStarting ->
+            PanelContent(
+                meta = phase.name,
+                title = "The adapter's Bluetooth is starting",
+                body = "It takes about 15 seconds after the adapter powers on. Pairing opens as soon as it's ready.",
+                busy = true,
+            )
         is PhoneSetupPhase.BluetoothDown ->
             PanelContent(
                 meta = "${phase.name} · pairing refused, status ${phase.status}",

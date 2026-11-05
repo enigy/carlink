@@ -69,6 +69,15 @@ sealed interface PhoneSetupPhase {
         val body: String,
     ) : PhoneSetupPhase
 
+    /**
+     * MGMT_PAIR_WINDOW came back non-zero while the adapter's Bluetooth may still be starting: about 15 s from
+     * power-on (firmware ~10 s, attach ~13 s; the dev adapter in the truck, 5 Nov). The request is tried again until
+     * btd answers or [PhoneSetup.Timing.btStartMs] runs out.
+     */
+    data class BluetoothStarting(
+        val name: String,
+    ) : PhoneSetupPhase
+
     /** MGMT_PAIR_WINDOW or SET_POLICY came back non-zero: btd is not reachable. */
     data class BluetoothDown(
         val name: String,
@@ -125,6 +134,10 @@ class PhoneSetup(
         val waitMs: Long = 60_000,
         /** How long "Pair iPhone" opens the window for. */
         val windowSeconds: Int = WINDOW_SECONDS,
+        /** How long a refused pairing window is tried again, while the adapter's Bluetooth may still be starting. */
+        val btStartMs: Long = 30_000,
+        /** Between those tries, as SET_POLICY's after SUBSCRIBE. */
+        val btRetryMs: Long = 2_000,
     )
 
     private val phaseState = MutableStateFlow<PhoneSetupPhase>(PhoneSetupPhase.None)
@@ -222,10 +235,11 @@ class PhoneSetup(
      * share. A non-zero status means btd isn't reachable ([PhoneSetupPhase.BluetoothDown]); no answer at
      * all, while pairing from this screen, is "Try again". Returns the status.
      */
-    fun window(seconds: Int): Int? {
+    suspend fun window(seconds: Int): Int? {
         logWarn("[PAIRING] window ${if (seconds > 0) "open for ${seconds}s" else "close"} requested", tag = Logger.Tags.ADAPTR)
-        val status = box.pairWindow(seconds)
+        var status = box.pairWindow(seconds)
         logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
+        if (seconds > 0 && status != null && status != 0) status = whileBluetoothStarts(seconds)
         when {
             status == null && seconds > 0 -> moveIfAsked(PhoneSetupPhase.NotPaired(nameNow(), NO_ANSWER, NO_ANSWER_BODY))
             status != null && status != 0 -> bluetoothDown("MGMT_PAIR_WINDOW", status)
@@ -290,6 +304,32 @@ class PhoneSetup(
             adapterName = name
             phaseState.value = renamed(phaseState.value, name)
         }
+    }
+
+    /**
+     * The window was refused: btd isn't reachable, which in the first ~15 s after power-on means it is still starting.
+     * Show that and ask again every [Timing.btRetryMs] for up to [Timing.btStartMs] (the truck, 5 Nov: three refusals
+     * in that window read as Bluetooth failing, and the adapter was unplugged). Returns the last status.
+     */
+    private suspend fun whileBluetoothStarts(seconds: Int): Int? {
+        val before =
+            synchronized(lock) {
+                val now = phaseState.value
+                if (!connected) phaseState.value = PhoneSetupPhase.BluetoothStarting(nameNow())
+                now
+            }
+        val until = box.now() + timing.btStartMs
+        var status: Int?
+        var tries = 1
+        do {
+            delay(timing.btRetryMs)
+            status = box.pairWindow(seconds)
+            tries++
+        } while (refused(status) && box.now() < until && !connected)
+        logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"} after $tries tries while Bluetooth started", tag = Logger.Tags.ADAPTR)
+        // Answered: back to what was showing, for the caller to move on from (pair() to Pairing).
+        if (status == 0) synchronized(lock) { if (phaseState.value is PhoneSetupPhase.BluetoothStarting) phaseState.value = before }
+        return status
     }
 
     /** SET_POLICY never came back 0 in its tries after SUBSCRIBE: btd isn't reachable. */
@@ -363,9 +403,15 @@ class PhoneSetup(
     private fun moveIfAsked(next: PhoneSetupPhase) {
         synchronized(lock) {
             val now = phaseState.value
-            if (!connected && (now is PhoneSetupPhase.Prompt || now is PhoneSetupPhase.NotPaired)) phaseState.value = next
+            if (!connected && onThisScreen(now)) phaseState.value = next
         }
     }
+
+    /** A refusal: btd answered nothing useful (no answer at all is not one). */
+    private fun refused(status: Int?): Boolean = status != null && status != 0
+
+    /** The driver asked from this screen: a prompt, a failure on it, or Bluetooth still starting is up. */
+    private fun onThisScreen(p: PhoneSetupPhase): Boolean = p is PhoneSetupPhase.Prompt || p is PhoneSetupPhase.NotPaired || p is PhoneSetupPhase.BluetoothStarting
 
     private fun nameNow(): String = adapterName ?: phones?.name ?: DEFAULT_NAME
 
@@ -399,6 +445,7 @@ class PhoneSetup(
                 is PhoneSetupPhase.Pairing -> p.copy(name = name)
                 is PhoneSetupPhase.NotPaired -> p.copy(name = name, body = if (p.title == NOT_PAIRED) notPairedBody(name) else p.body)
                 is PhoneSetupPhase.BluetoothDown -> p.copy(name = name)
+                is PhoneSetupPhase.BluetoothStarting -> p.copy(name = name)
                 is PhoneSetupPhase.Waiting -> p.copy(name = name)
                 PhoneSetupPhase.None -> p
             }
