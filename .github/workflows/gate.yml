@@ -2,9 +2,11 @@ name: Gate
 
 # The same gate run locally before every commit: build the display app and the USB bridge, ktlint,
 # detekt against the baseline, the unit tests, and the OCBM protocol-constant check. No signing, no
-# artifacts, no uploads — a sideload/Release workflow comes later. Runs on every push and PR.
+# artifacts, no uploads. Runs on every branch push and PR, not on tags: a release tag is pushed with the
+# commit main has just gated, and running it again only doubled each release's checks (5 Nov).
 on:
   push:
+    branches: ["**"]
   pull_request:
 
 permissions:
