@@ -69,6 +69,9 @@ internal class SettingsLiveState(
     var pairWindowSupported by mutableStateOf(false)
     var pairWindowOpen by mutableStateOf(false)
 
+    /** Forget reaches the adapter: it is connected and its pairings are known ([CarlinkManager.canForget]). */
+    var canForget by mutableStateOf(false)
+
     /** AAOS says the truck is moving: another iPhone's profile, copy and reset wait until parked. */
     var driving by mutableStateOf(false)
 
@@ -113,6 +116,7 @@ internal fun rememberSettingsLiveState(
             live.switchSupported = carlinkManager.phoneSwitchSupported
             live.pairWindowSupported = carlinkManager.pairWindowSupported
             live.pairWindowOpen = carlinkManager.pairWindowOpen
+            live.canForget = carlinkManager.canForget
             live.driving = carlinkManager.isDriving
             val install = carlinkManager.oneFileInstall.install.value
             live.box =

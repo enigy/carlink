@@ -969,6 +969,15 @@ class CarlinkManager(
      */
     @Volatile private var bondedMacs: Set<String> = emptySet()
 
+    // This session's MGMT_INFO has said which phones the adapter is paired with ([canForget]).
+    @Volatile private var bondsRead = false
+
+    /**
+     * Forget can reach the adapter: the link is up and this session's bond list has been read. Unplugged, every
+     * phone looked unpaired and Forget only dropped Carlink's history, leaving the adapter's pairing (bench, 5 Nov).
+     */
+    val canForget: Boolean get() = client != null && bondsRead
+
     /** The adapter's list of paired wireless devices. */
     val pairedDevices: List<DeviceInfo> get() = _pairedDevices
 
@@ -1664,6 +1673,7 @@ class CarlinkManager(
         reboot: Boolean = false,
         preserveEscalation: Boolean = false,
     ) {
+        bondsRead = false
         logDebug("[LIFECYCLE] stop()", tag = Logger.Tags.VIDEO)
         cancelDelayedKeyframe()
         cancelReconnect()
@@ -1935,6 +1945,7 @@ class CarlinkManager(
                     .mapNotNull { i -> macs.optString(i).takeIf { it.isNotEmpty() }?.lowercase() }
                     .toSet()
             bondedMacs = bonded
+            bondsRead = true
 
             // Learn any bond we have never seen — a fresh install over existing bonds, or app data
             // cleared while the box kept its link keys. It shows as a bare MAC until the phone next
