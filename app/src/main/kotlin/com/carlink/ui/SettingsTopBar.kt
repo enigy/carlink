@@ -40,6 +40,7 @@ import com.carlink.ui.settings.ConnectedPhone
 import com.carlink.ui.settings.SettingsStyle
 import com.carlink.ui.theme.LocalCarlinkColors
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Back, the title, which phone is connected, and Close app. */
 @Composable
@@ -120,7 +121,9 @@ private fun CloseAppButton(onCloseApp: suspend () -> Unit) {
                 closing = true
                 scope.launch {
                     try {
-                        onCloseApp()
+                        // Bounded: the screen closes even if the teardown is still waiting, and closing it stops
+                        // the session anyway (onDestroy's release(), synchronous).
+                        withTimeoutOrNull(CLOSE_WAIT_MS) { onCloseApp() }
                     } finally {
                         // Also ends the hidden cluster task, which finishAffinity() alone left over the launcher.
                         (activity as? MainActivity)?.closeApp() ?: activity?.finishAffinity()
@@ -134,3 +137,6 @@ private fun CloseAppButton(onCloseApp: suspend () -> Unit) {
         )
     }
 }
+
+/** The most Close app waits for the session to end before the screen closes ([CloseAppButton]). */
+private const val CLOSE_WAIT_MS = 3_000L
