@@ -98,6 +98,13 @@ sealed interface ConversionPhase {
     /** The installer is on the stick: the adapter installs it when it starts with the stick in it. */
     data object ReplugAdapter : Converting
 
+    /**
+     * The adapter left USB with the stick and hasn't come back yet: it is unplugged. The install starts when it is
+     * plugged back in, so "installing" waits for it to show on USB again (owner, 5 Nov: shown from the unplug on, it
+     * could tell a driver who hadn't plugged it back in yet that the install was under way).
+     */
+    data object AdapterUnplugged : Converting
+
     /** The adapter left USB with the stick, to install; [hint] when it came back sharing the stick instead. */
     data class InstallingFromStick(
         val hint: String? = null,
@@ -272,6 +279,8 @@ class StockConversion(
      */
     fun claim(usbId: String): Boolean =
         synchronized(lock) {
+            // Back on USB as stock at power-on, before the look-out saw it: the install is under way.
+            if (phaseState.value == ConversionPhase.AdapterUnplugged) installing(ConversionPhase.InstallingFromStick())
             val now = phaseState.value
             val quiet = gaveUp || now is ConversionPhase.Converting || now is ConversionPhase.Failed || now == ConversionPhase.Declined
             if (now is ConversionPhase.InstallingFromStick && !sawStock) {
@@ -563,7 +572,11 @@ class StockConversion(
                 notStick += deviceName
                 stickName = deviceName
                 // Taken after the installer went on: the adapter came back sharing it, and its report is read.
-                val afterInstall = now == ConversionPhase.ReplugAdapter || now is ConversionPhase.InstallingFromStick || now is ConversionPhase.AsksForReplug
+                val afterInstall =
+                    now == ConversionPhase.ReplugAdapter ||
+                        now == ConversionPhase.AdapterUnplugged ||
+                        now is ConversionPhase.InstallingFromStick ||
+                        now is ConversionPhase.AsksForReplug
                 returning = afterInstall || (now is ConversionPhase.StickProblem && returning)
                 wait?.cancel()
                 phaseState.value = ConversionPhase.ReadingStick
@@ -654,15 +667,31 @@ class StockConversion(
         total: Long,
     ) = moveOn<ConversionPhase.WritingStick>(if (done < total) ConversionPhase.WritingStick(done, total) else ConversionPhase.CheckingStick)
 
-    /** The installer is on the stick: wait for the driver to unplug the adapter, which takes the stick off USB with it. */
+    /**
+     * The installer is on the stick: wait for the driver to unplug the adapter, which takes the stick off USB with it,
+     * then for the adapter to show on USB again (as stock at power-on, as OCBM once installed, or sharing the stick),
+     * and only then call it installing.
+     */
     private suspend fun awaitReplug(name: String) {
         while (name in usb.attached { _, _ -> true }) delay(timing.pollMs)
         synchronized(lock) {
             if (phaseState.value != ConversionPhase.ReplugAdapter) return
+            phaseState.value = ConversionPhase.AdapterUnplugged
+        }
+        logInfo("[CONVERT] the stick left USB with the adapter; waiting for the adapter to be plugged back in", tag = Logger.Tags.ADAPTR)
+        while (usb.attached(::isAdapterBack).isEmpty()) delay(timing.pollMs)
+        synchronized(lock) {
+            if (phaseState.value != ConversionPhase.AdapterUnplugged) return
             installing(ConversionPhase.InstallingFromStick())
         }
-        logInfo("[CONVERT] the stick left USB with the adapter; ${timing.deadlineMs / MS_PER_SECOND} s for it to come back as OCBM", tag = Logger.Tags.ADAPTR)
+        logInfo("[CONVERT] the adapter is back on USB; ${timing.deadlineMs / MS_PER_SECOND} s for it to come back as OCBM", tag = Logger.Tags.ADAPTR)
     }
+
+    /** The adapter on USB in any of its guises: Carlinkit's vendor id (stock or OCBM), or the stick it shares. */
+    private fun isAdapterBack(
+        vendorId: Int,
+        productId: Int,
+    ): Boolean = vendorId == StockAdapters.VENDOR || isStick(vendorId, productId)
 
     /** The adapter is away installing: [next], the deadline, and a fresh look out for it coming back as stock. Under [lock]. */
     private fun installing(next: ConversionPhase.InstallingFromStick) {
@@ -749,7 +778,7 @@ class StockConversion(
     /** Waiting for a stick, or for the adapter to come back with it. */
     private fun waitsForStick(p: ConversionPhase): Boolean =
         when (p) {
-            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter -> true
+            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter, ConversionPhase.AdapterUnplugged -> true
             is ConversionPhase.StickProblem, is ConversionPhase.InstallingFromStick, is ConversionPhase.AsksForReplug -> true
             else -> false
         }
@@ -764,7 +793,8 @@ class StockConversion(
         when (p) {
             is ConversionPhase.Offered, is ConversionPhase.StickOnly, is ConversionPhase.Failed, is ConversionPhase.StickInFirst -> true
             is ConversionPhase.StickProblem, is ConversionPhase.StickReady -> true
-            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter, is ConversionPhase.AsksForReplug -> true
+            ConversionPhase.WaitingForStick, ConversionPhase.ReplugAdapter, ConversionPhase.AdapterUnplugged -> true
+            is ConversionPhase.AsksForReplug -> true
             else -> false
         }
 

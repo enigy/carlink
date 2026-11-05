@@ -127,6 +127,13 @@ private fun stickPanel(
                 note = KEEP_STICK,
                 actions = listOf(PanelAction("Close", PanelActionLook.QUIET, conversion::dismiss)),
             )
+        ConversionPhase.AdapterUnplugged ->
+            PanelContent(
+                title = "Plug the adapter back in",
+                body = "With the stick still in it. It installs OCBM from the stick as it starts.",
+                note = KEEP_STICK,
+                actions = listOf(PanelAction("Close", PanelActionLook.QUIET, conversion::dismiss)),
+            )
         is ConversionPhase.AsksForReplug ->
             PanelContent(phase.title, phase.body, busy = true, actions = listOf(PanelAction("Close", PanelActionLook.QUIET, conversion::dismiss)))
         is ConversionPhase.InstallingFromStick ->

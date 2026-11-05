@@ -224,9 +224,25 @@ class StockConversionTest {
         assertEquals(InstallerImage.sha256Hex(images.image!!), InstallerImage.sha256Hex(read(fs, StickFiles.IMAGE)))
         assertFalse("taken once", conversion.wantsStick(0x1d6b, 0xa4a5, STICK))
         usb.devices.remove(STICK) // the adapter unplugged
+        awaitPhase<ConversionPhase.AdapterUnplugged>()
+        Thread.sleep(300)
+        assertEquals("not installing until the adapter is back", ConversionPhase.AdapterUnplugged, conversion.phase.value)
+        usb.devices[ADAPTER] = 0x1314 to 0x1520 // plugged back in: stock at power-on, installing
         assertNull(awaitPhase<ConversionPhase.InstallingFromStick>().hint)
         conversion.reset() // the manager found it back as 1314:2d00
         assertEquals(ConversionPhase.Idle, conversion.phase.value)
+    }
+
+    @Test
+    fun `the adapter back as stock before the look-out saw it is installing too`() {
+        toWaitingForStick()
+        adapter.killLink()
+        plugStick(MemoryStick.superfloppy(64), STICK)
+        awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
+        usb.devices.remove(STICK)
+        awaitPhase<ConversionPhase.AdapterUnplugged>()
+        assertFalse("not offered: it is installing", conversion.claim("1314:1520"))
+        assertTrue(conversion.phase.value is ConversionPhase.InstallingFromStick)
     }
 
     @Test
@@ -481,7 +497,10 @@ class StockConversionTest {
         plugStick(stick, STICK)
         awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
         usb.devices.remove(STICK)
+        awaitPhase<ConversionPhase.AdapterUnplugged>()
+        usb.devices[ADAPTER] = 0x1314 to 0x1520 // plugged back in
         awaitPhase<ConversionPhase.InstallingFromStick>()
+        usb.devices.remove(ADAPTER)
         return stick
     }
 
@@ -625,6 +644,7 @@ class StockConversionTest {
         const val EARLIER = "/dev/bus/usb/001/004"
         const val STICK = "/dev/bus/usb/001/007"
         const val AGAIN = "/dev/bus/usb/001/009"
+        const val ADAPTER = "/dev/bus/usb/001/011"
         val ADAPTER_STICK = 0x1d6b to 0xa4a5
     }
 }
