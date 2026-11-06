@@ -31,7 +31,7 @@ enum class SettingsCategory(
 ) {
     PHONES("Phones", Icons.Default.PhoneIphone),
     DISPLAY("Display", Icons.Default.DesktopWindows),
-    CLUSTER("Cluster", Icons.Default.Navigation),
+    CLUSTER("Cluster & HUD", Icons.Default.Navigation),
     CALLS("Calls", Icons.Default.Mic),
 
     /** Listed only while other apps' access is on (bridge API 6; Adapter and about › USB bridge). */

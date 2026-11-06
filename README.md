@@ -32,7 +32,7 @@ In addition, you now have the capability of adding a media pane on the side, sim
 
 ## Your cluster and HUD, upgraded
 
-Turn on **Settings › Cluster › Directions on cluster** and CarPlay's route lands on GM's driver display: turn card, distance, road and lanes, drawn by GM itself.
+Turn on **Settings › Cluster & HUD › Directions on cluster** and CarPlay's route lands on GM's driver display: turn card, distance, road and lanes, drawn by GM itself.
 
 GM's native Carplay experience strips lane guidance from the vehicle's Cluster and HUD screens.  But with Carlink, we can deliver this capability to the Cluster and HUD
 
@@ -46,7 +46,7 @@ Every icon is drawn from the junction Apple sends with the maneuver, at the real
 
 ### Lane guidance
 
-Know your lane before the exit. **Settings › Cluster › Lane guidance**, kept for each iPhone:
+Know your lane before the exit. **Settings › Cluster & HUD › Lane guidance**, kept for each iPhone:
 
 | Setting | Factory setting | What it does |
 | --- | --- | --- |
@@ -59,11 +59,11 @@ Settings also shows the last lanes the iPhone sent, or why none have arrived.
 
 The lane strip is always 6:1. GM fits it into a lane area at most 74 dp tall (the Car App Library's 500 × 74 dp box), and a calibration card in the lane area showed 6:1 is the widest shape that keeps that height. The lanes share the full width, each arrow centered and widened to fill its lane, so turns read wider than they are tall.
 
-> ![Settings › Cluster › Lane guidance](docs/readme/settings-lane-guidance.png)
+> ![Settings › Cluster & HUD › Lane guidance](docs/readme/settings-lane-guidance.png)
 
 ### Turn alert
 
-Get a heads-up before your turn. **Settings › Cluster › Turn alert** (off by factory setting, kept for each iPhone) flashes the turn icon between its normal frame and a colored one as you close in on the next turn or exit. The faster you go, the earlier it starts:
+Get a heads-up before your turn. **Settings › Cluster & HUD › Turn alert** (off by factory setting, kept for each iPhone) flashes the turn icon between its normal frame and a colored one as you close in on the next turn or exit. The faster you go, the earlier it starts:
 
 | Start alerting | Up to 35 mph | 36–59 mph | 60–69 mph | 70 mph and up |
 | --- | --- | --- | --- | --- |
@@ -80,7 +80,7 @@ Carlink can read the truck's speed, so make it yours:
 
 Nothing flashes when you're stopped, on straight-ahead or follow-the-road steps, or on arrival.
 
-> ![Settings › Cluster › Turn alert](docs/readme/settings-turn-alert.png)
+> ![Settings › Cluster & HUD › Turn alert](docs/readme/settings-turn-alert.png)
 
 ## A tour of the new Settings page:
 
@@ -108,13 +108,13 @@ Display mode, the loading screen photo, the driver's seat, and **Limit features 
 
 > <img src="docs/readme/settings-display-1.png" alt="Settings › Display" width="49%"> <img src="docs/readme/settings-display-2.png" alt="Display mode" width="49%"> <img src="docs/readme/settings-display-3.png" alt="Loading screen" width="49%"> <img src="docs/readme/settings-display-4.png" alt="Driver's seat and driving limits" width="49%">
 
-### Cluster
+### Cluster & HUD
 
 **Directions on cluster**, **Reconnect cluster**, the **Turn alert** with a live preview of the flash, and **Lane guidance**.
 
-> ![Settings › Cluster › Turn alert](docs/readme/settings-turn-alert.png)
+> ![Settings › Cluster & HUD › Turn alert](docs/readme/settings-turn-alert.png)
 
-> ![Settings › Cluster › Lane guidance](docs/readme/settings-lane-guidance.png)
+> ![Settings › Cluster & HUD › Lane guidance](docs/readme/settings-lane-guidance.png)
 
 ### Calls
 
