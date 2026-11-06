@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -79,6 +80,29 @@ fun BridgeNotStartingPanel(onOpenAppInfo: () -> Boolean) {
             failureText = "Settings has no App info page for the bridge. Restart the head unit.",
         ),
         onClick = onOpenAppInfo,
+    )
+}
+
+/**
+ * Bridge API 6: the owner handed the adapter to another app ([label]) in Settings › Bridge Configuration, so
+ * Carlink leaves it alone until it is taken back or the app is done.
+ */
+@Composable
+fun HandedOverPanel(
+    label: String,
+    onTakeBack: () -> Boolean,
+) {
+    SetupPanel(
+        SetupPanelSpec(
+            title = "$label is using the adapter",
+            body =
+                "You handed the adapter to $label, so CarPlay is off. Take it back to use CarPlay again; " +
+                    "Carlink connects by itself once $label is done.",
+            buttonLabel = "Take back",
+            buttonIcon = Icons.Default.Usb,
+            failureText = "The USB bridge didn't take the adapter back. Try again, or restart the head unit.",
+        ),
+        onClick = onTakeBack,
     )
 }
 

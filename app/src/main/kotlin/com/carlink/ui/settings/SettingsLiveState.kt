@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.PhoneIphone
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -34,6 +35,9 @@ enum class SettingsCategory(
     CLUSTER("Cluster", Icons.Default.Navigation),
     TROUBLESHOOT("Troubleshoot", Icons.Default.Build),
     ADAPTER("Adapter and about", Icons.Default.Memory),
+
+    /** Listed only while other apps' access is on (bridge API 6; Adapter and about › USB bridge). */
+    BRIDGE("Bridge Configuration", Icons.Default.Usb),
 }
 
 /**

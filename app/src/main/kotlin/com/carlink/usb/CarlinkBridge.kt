@@ -53,6 +53,9 @@ object CarlinkBridge {
      */
     fun statusIfBound(): String? = service?.takeIf { it.asBinder().isBinderAlive }?.let { runCatching { it.status }.getOrNull() }
 
+    /** The bridge if a binding is already up, else null; never binds. */
+    fun boundOrNull(): ICarlinkBridge? = service?.takeIf { it.asBinder().isBinderAlive }
+
     /** Needs the `<queries>` entry for the bridge package in the manifest. */
     fun isInstalled(context: Context): Boolean = context.packageManager.resolveService(bridgeIntent(), 0) != null
 
@@ -141,6 +144,8 @@ object CarlinkBridge {
                 consecutiveFailures = 0
                 logInfo("[BRIDGE] Connected to ${name.flattenToShortString()}", tag = Logger.Tags.USB)
                 pending?.complete(bridge)
+                // API 6: other apps' access, read again from each bridge process (a handover lives only in its memory).
+                BridgeAccessHub.onBridgeConnected(bridge)
             }
 
             override fun onServiceDisconnected(name: ComponentName) {

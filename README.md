@@ -141,7 +141,7 @@ Below them are the logs:
 
 ### Adapter and about
 
-The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them.
+The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
 
 ## Install in four steps
 
@@ -155,6 +155,17 @@ First, the adapter needs lvalen91's OCBM userspace, installed per his documentat
 ### About the bridge
 
 The bridge uses the same package name as Carlink-legacy's (`android.car.usb.handler`, the name GM's head unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink-legacy's bridge. From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store. 1.0.6 adds a second way to open a device, for the USB stick a stock adapter shares while Carlink converts it; Carlink's connection to the adapter is unchanged, so 1.0.5 still works for everything else.
+
+### Using the USB bridge from another app
+
+From bridge 1.0.8 you may let another app use the adapter, for a tool of your own or a bench probe. It's off by default, and while it's off the bridge answers only Carlink, as before.
+
+1. While parked, open Settings › Adapter and about and turn on **Let other apps use the adapter**. Read the warning: an app you approve can control the adapter while it has it, including its root console, its Apple authentication chip, installing software on it, and touch input to your iPhone.
+2. Open the other app and let it connect to the bridge. The bridge refuses it, and Carlink lists it under Settings › **Bridge Configuration** › Asking for access, with its package, signing certificate and installer.
+3. **Approve** it while parked. An approval is for that package signed by that key. If the app is later signed by another key, it has to ask again, and Carlink marks the request in red.
+4. **Hand over** the adapter while parked. CarPlay stops, and the app gets the adapter until you **Take back** (in Settings, or on Carlink's connecting screen; this works while driving), until Carlink opens the adapter itself, or until the app has had no session for a minute. Then Carlink connects again by itself.
+
+An approved app gets the adapter only (Carlinkit's USB ids 1314:2d00, 1314:1520 and 1314:1521), only through a session handle (`openSession`), and a short status line. Carlink's own calls stay Carlink's. **Remove** ends an app's access; turning the switch off removes every approval and request. Approvals count only while the installed Carlink passes the bridge's pin. App developers: see `bridge-api/` (`ICarlinkBridge.aidl`, `BridgeContract.ACCESS_API_VERSION`), and `tools/bridge-probe` for a working client.
 
 ### Check the download
 

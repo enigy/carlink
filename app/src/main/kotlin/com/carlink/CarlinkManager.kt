@@ -108,6 +108,9 @@ import com.carlink.ui.settings.LaneGuidanceStore
 import com.carlink.ui.settings.LayoutStore
 import com.carlink.ui.settings.MusicStore
 import com.carlink.ui.settings.SessionSettings
+import com.carlink.usb.AdapterHandover
+import com.carlink.usb.BridgeAccessHub
+import com.carlink.usb.BridgeAccessText
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.util.DisplayProfile
@@ -209,6 +212,8 @@ class CarlinkManager(
         // authority the bridge hosts; the compose icon store renders maneuver bitmaps for it.
         NavigationStateManager.initialize(context.applicationContext)
         ComposedIconStore.setEnabled(true)
+        // Bridge API 6: the app the adapter was handed to is done, or the owner took it back; connect as after a detach.
+        BridgeAccessHub.onHandoverEnded = { if (live === this) scope.launch { startIfDisconnected("the adapter's handover ended") } }
     }
 
     companion object {
@@ -1313,6 +1318,7 @@ class CarlinkManager(
      * platform never granted gets the bridge's one-tap prompt ([ICarlinkBridge.requestPermission]).
      */
     private suspend fun acquireBridgeTransport(): RawBulkTransport? {
+        if (handedOver()) return null
         val dev = awaitAdapterListed()
         if (dev == null) {
             logError("Failed to find the OCBM adapter", tag = Logger.Tags.USB)
@@ -1323,6 +1329,50 @@ class CarlinkManager(
         stockConversion.reset() // an OCBM adapter: a converted one back in its trial, or another
         return openThroughBridge(dev.deviceName)
     }
+
+    /**
+     * Bridge API 6: true when the owner handed the adapter to another app. Carlink opens nothing then (any open of
+     * Carlink's takes the adapter back) and doesn't retry; the connecting screen offers Take back, and
+     * [BridgeAccessHub.onHandoverEnded] connects again when the handover ends. An older bridge has no handover.
+     */
+    private suspend fun handedOver(): Boolean {
+        val bridge = CarlinkBridge.connect(context) ?: return false
+        val access = withContext(Dispatchers.IO) { BridgeAccessHub.read(bridge) }
+        val words = AdapterHandover.connectBlockedBy(access) ?: return false
+        logInfo("[BRIDGE_ACCESS] the adapter is handed to ${access.handedTo?.packageName}: Carlink leaves it alone", tag = Logger.Tags.USB)
+        cancelReconnect()
+        setState(State.DISCONNECTED)
+        setStatusText(words)
+        return true
+    }
+
+    private val handover =
+        AdapterHandover(
+            stopSession = { lifecycleMutex.withLock { withContext(Dispatchers.IO) { stopImpl() } } },
+            bridgeHandOver = { BridgeAccessHub.handOver(context, it) },
+            bridgeTakeBack = { BridgeAccessHub.takeBack(context) },
+            connect = { startIfDisconnected("the adapter is Carlink's again") },
+        )
+
+    /**
+     * Settings › Bridge Configuration › Hand over: Carlink's session ends (CarPlay stops), then the bridge hands the
+     * adapter to [packageName]. Null when it did; otherwise the bridge's refusal, and Carlink connects again.
+     */
+    suspend fun handOverAdapter(packageName: String): String? {
+        cancelReconnect()
+        startingJob?.let { if (it.isActive) it.cancel() }
+        logInfo("[BRIDGE_ACCESS] handing the adapter to $packageName", tag = Logger.Tags.USB)
+        val refusal = handover.handOver(packageName)
+        if (refusal == null) {
+            setStatusText(BridgeAccessText.usingAdapter(BridgeAccessHub.state.value.labelOf(packageName)))
+        } else {
+            logWarn("[BRIDGE_ACCESS] the bridge refused the handover: $refusal", tag = Logger.Tags.USB)
+        }
+        return refusal
+    }
+
+    /** Take back (Settings, or the connecting screen): the bridge ends the handover, then Carlink connects as usual. */
+    suspend fun takeBackAdapter(): String? = handover.takeBack()
 
     /** True when [dev] gets no OCBM session: the conversion holds the bridge, or it is a shared stick or a stock adapter. */
     private suspend fun noSessionFor(dev: UsbDevice): Boolean {

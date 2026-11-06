@@ -36,7 +36,7 @@ Carlink has one maintainer, so these are targets, not guarantees. You will hear 
 | Severity | Example in Carlink | Fix target |
 | --- | --- | --- |
 | Critical | Code runs in Carlink or the USB Bridge without physical access; driver-safety limits switched off without the driver | 14 days |
-| High | Another app on the head unit uses the USB Bridge; the adapter's Wi-Fi password, Bluetooth keys, contacts or location leak | 30 days |
+| High | Another app on the head unit uses the USB Bridge without the owner approving it, or reaches the bridge's access calls (only Carlink may); the adapter's Wi-Fi password, Bluetooth keys, contacts or location leak | 30 days |
 | Medium | Needs a paired phone, the adapter's Wi-Fi or a modified adapter; a crash an attacker can trigger at will | 90 days |
 | Low | Hardening, or needs an unlocked or rooted head unit | A later release |
 
@@ -47,7 +47,7 @@ Please keep the report private until a fix is released, or for 90 days, whicheve
 In scope:
 
 - **The Carlink app**: how it handles what the adapter and the iPhone send it, its settings and saved data, and what it sends over the network (lyrics lookups to LRCLIB, release downloads from GitHub).
-- **The Carlink USB Bridge**: it should answer only Carlink builds signed with the pinned keys, and its icon provider only the car's system apps.
+- **The Carlink USB Bridge**: it should answer only Carlink builds signed with the pinned keys, and its icon provider only the car's system apps. From 1.0.8 the owner may approve other apps, by package and signing key, and hand them the adapter. An app the owner didn't approve reaching the adapter, an approved app reaching it without a handover, or any app but Carlink reaching an access call (approve, hand over and the rest) is High. What an approved app does with the adapter while the owner has handed it over is the owner's choice, not a vulnerability.
 - **Cluster and HUD**: the cluster service should bind only to the car's own templates host.
 - **Logs**: Save Logs should hide phone names, Bluetooth addresses, callers and places. A personal detail that gets through is a bug to report here.
 - **This repo's build and release pipeline**: the GitHub Actions workflows, signing, and the Google Play upload.

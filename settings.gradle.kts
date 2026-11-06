@@ -29,3 +29,7 @@ include(":bridge-api")
 // Not carried over from OCBM's host/CarlinkAndroid: :projection (Raspberry Pi target),
 // :car-system-stubs (system APIs a third-party app cannot hold), :usbhandler (OCBM's untested
 // proof of the permission grant — superseded by :bridge). See NOTICE.md.
+
+// Bench only, never released: "another app" for the bridge's API 6 access path (tools/bridge-probe).
+include(":bridge-probe")
+project(":bridge-probe").projectDir = file("tools/bridge-probe")

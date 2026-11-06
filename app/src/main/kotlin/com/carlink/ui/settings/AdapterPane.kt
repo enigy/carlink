@@ -39,7 +39,7 @@ import com.carlink.logging.logWarn
 
 /**
  * Adapter and about: the box's status in plain words (with the raw line kept for bug reports), the
- * app version and the privacy policy ([PrivacyRow]), and where lyrics come from and what of them the
+ * app version and the privacy policy ([PrivacyRow]), the USB bridge's version and other apps' access ([UsbBridgeGroup]), and where lyrics come from and what of them the
  * head unit keeps ([LyricsGroup]). The log controls live under Troubleshoot ([LogsGroup]).
  */
 @Composable
@@ -61,6 +61,7 @@ internal fun AdapterPane(
                     GroupDivider()
                     PrivacyRow()
                 }
+                UsbBridgeGroup(live)
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(28.dp)) {
                 InstallGroup(carlinkManager)
