@@ -287,6 +287,9 @@ class CarlinkManager(
         private const val INITIAL_RECONNECT_DELAY_MS = 2000L
         private const val MAX_RECONNECT_DELAY_MS = 30000L
 
+        // A link up this long before it is lost starts a fresh reconnect chain: longer than the box's 20 s escalation window.
+        private const val RECONNECT_STABLE_MS = 30_000L
+
         // Surface debouncing — wait for size to stabilize before rebuilding the decoder.
         private const val SURFACE_DEBOUNCE_MS = 150L
 
@@ -868,7 +871,7 @@ class CarlinkManager(
 
     // The coroutine running [startImpl] now (or the last one, done); [disconnect] cancels it.
     @Volatile private var startingJob: Job? = null
-    private var reconnectAttempts: Int = 0
+    private val reconnects = ReconnectBudget(MAX_RECONNECT_ATTEMPTS, INITIAL_RECONNECT_DELAY_MS, MAX_RECONNECT_DELAY_MS, RECONNECT_STABLE_MS)
 
     // ---- head unit display power ([DisplayOff]) ---------------------------------------------
     // The display as MainActivity last reported it; the grace wait after it went off; dormant once that wait ended
@@ -1563,6 +1566,9 @@ class CarlinkManager(
             handleError("no initial response — no CT_HELLO_ACK from the adapter")
             return
         }
+        // The adapter answered: once the link has stayed up RECONNECT_STABLE_MS, the next loss starts a fresh chain ([ReconnectBudget]).
+        if (reconnects.used > 0) logInfo("[RECONNECT] reconnected after ${reconnects.used} attempt(s)", tag = Logger.Tags.USB)
+        reconnects.linkUp(SystemClock.elapsedRealtime())
 
         // The box has no RTC battery, so its clock is bogus at every boot and CarPlay's TLS
         // pairing needs a real one. Non-fatal: a wrong clock degrades pairing, a missing
@@ -2399,7 +2405,7 @@ class CarlinkManager(
         displayOffJob?.cancel()
         val wasDormant = dormantForDisplayOff
         dormantForDisplayOff = false
-        reconnectAttempts = 0
+        reconnects.reset()
         logInfo("[POWER] display ON ($source): state=$state dormant=$wasDormant", tag = Logger.Tags.USB)
         if (state != State.DISCONNECTED) return
         wakeConnectJob?.cancel()
@@ -4209,7 +4215,7 @@ class CarlinkManager(
         transport = null
         setState(State.DISCONNECTED)
         setStatusText(statusMsg)
-        if (reconnectAttempts > 0) {
+        if (reconnects.used > 0) {
             logInfo("[RECONNECT] start() failed pre-session ($statusMsg) — continuing chain", tag = Logger.Tags.USB)
             scheduleReconnect()
         }
@@ -4242,7 +4248,8 @@ class CarlinkManager(
             return
         }
 
-        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        val backoff = reconnects.next(SystemClock.elapsedRealtime())
+        if (backoff == null) {
             logWarn(
                 "[RECONNECT] Max attempts ($MAX_RECONNECT_ATTEMPTS) reached, giving up. " +
                     "noResponse=$consecutiveNoResponse shortSessions=$shortLivedStreamingCount hadPrior=$hadPriorSession",
@@ -4255,9 +4262,8 @@ class CarlinkManager(
                     hadPriorSession -> "Phone not reconnecting — reboot adapter"
                     else -> "Adapter not responding — unplug and replug adapter"
                 }
-            // reconnectAttempts resets but the escalation counters do NOT: a user who taps
+            // The budget starts over (next() did that) but the escalation counters do NOT: a user who taps
             // reconnect after give-up should still see the right advice on the first failure.
-            reconnectAttempts = 0
             setStatusText(giveUpMessage)
             CarlinkMediaBrowserService.stopConnectionForeground(context)
             return
@@ -4265,15 +4271,8 @@ class CarlinkManager(
 
         CarlinkMediaBrowserService.startConnectionForeground(context)
 
-        val backoff =
-            minOf(
-                INITIAL_RECONNECT_DELAY_MS * (1L shl reconnectAttempts),
-                MAX_RECONNECT_DELAY_MS,
-            )
-        reconnectAttempts++
-
-        logInfo("[RECONNECT] Scheduling attempt $reconnectAttempts/$MAX_RECONNECT_ATTEMPTS in ${backoff}ms", tag = Logger.Tags.USB)
-        setStatusText("Reconnecting ($reconnectAttempts/$MAX_RECONNECT_ATTEMPTS)...")
+        logInfo("[RECONNECT] Scheduling attempt ${reconnects.used}/$MAX_RECONNECT_ATTEMPTS in ${backoff}ms", tag = Logger.Tags.USB)
+        setStatusText("Reconnecting (${reconnects.used}/$MAX_RECONNECT_ATTEMPTS)...")
 
         reconnectJob =
             scope.launch {
@@ -4291,7 +4290,7 @@ class CarlinkManager(
                     }
                 } else {
                     logInfo("[RECONNECT] Already connected, cancelling reconnect", tag = Logger.Tags.USB)
-                    reconnectAttempts = 0
+                    reconnects.reset()
                 }
             }
     }
@@ -4299,7 +4298,7 @@ class CarlinkManager(
     private fun cancelReconnect() {
         reconnectJob?.cancel()
         reconnectJob = null
-        reconnectAttempts = 0
+        reconnects.reset()
     }
 
     /**
