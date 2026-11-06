@@ -18,7 +18,17 @@ package com.enigy.carlink2.bridge
  */
 object BridgeContract {
     /** Bump when ICarlinkBridge gains methods or changes semantics; the display app checks [MIN_API_VERSION]. */
-    const val API_VERSION = 4
+    const val API_VERSION = 5
+
+    /** First bridge API with a separate handle and end reason for each session. */
+    const val SESSION_API_VERSION = 5
+
+    const val END_HANDOFF = "USB session taken over"
+    const val END_DETACHED = "USB device detached"
+    const val END_TRANSFER_FAILED = "USB transfer failed"
+    const val END_CLIENT_GONE = "USB client disconnected"
+    const val END_BRIDGE_STOPPED = "USB bridge stopped"
+    const val END_CLOSED = "USB session closed"
 
     /**
      * Carlink3: from this API the bridge relays the adapter's bulk stream RAW — chunks as read from
@@ -51,9 +61,6 @@ object BridgeContract {
 
     const val BRIDGE_PACKAGE = "android.car.usb.handler"
     const val BRIDGE_SERVICE_CLASS = "com.enigy.carlink2.bridge.BridgeService"
-
-    /** The only package the bridge serves. Play guarantees nobody else can publish it. */
-    const val DISPLAY_PACKAGE = "com.enigy.carlink3"
 
     const val CLUSTER_ICON_AUTHORITY =
         "com.google.android.apps.automotive.templates.host.ClusterIconContentProvider"

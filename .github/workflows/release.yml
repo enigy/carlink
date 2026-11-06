@@ -25,10 +25,6 @@ name: Release
 #   CARLINK_KEY_ALIAS          key alias inside the keystore
 #   CARLINK_KEY_PASSWORD       password for that key
 #   PLAY_SERVICE_ACCOUNT_JSON  JSON key of a Google Cloud service account allowed to release Carlink
-# Variable (… → Variables), optional
-#   CARLINK3_CALLER_CERTS      replaces the bridge's caller pin, same as -Pcarlink3.callerCerts locally.
-#                              Unset = the pins committed in bridge/build.gradle.kts (Play app signing
-#                              and upload certificates; only debug bridges also take the debug key).
 
 on:
   push:
@@ -50,7 +46,7 @@ on:
         type: boolean
         default: true
       rebuild_bridge:
-        description: Rebuild the USB bridge even if its source is unchanged (e.g. after changing CARLINK3_CALLER_CERTS)
+        description: Rebuild the USB bridge even if its source is unchanged
         type: boolean
         default: false
 
@@ -85,7 +81,7 @@ jobs:
       # The bridge is sideloaded by hand, so a rebuild with unchanged source only produces a new file
       # with a new SHA-256 for users to check against. Reuse the committed, already-signed
       # app/carlink_bridge.apk unless the bridge source changed since that APK was committed, or a
-      # manual run asks for a rebuild (the bridge bakes in CARLINK3_CALLER_CERTS, which git can't see).
+      # manual run asks for a rebuild.
       - name: Decide whether to rebuild the USB bridge
         id: bridge
         env:
@@ -175,7 +171,6 @@ jobs:
 
       - name: Build AAB and bridge APK
         env:
-          CALLER_CERTS: ${{ vars.CARLINK3_CALLER_CERTS }}
           BUILD_BRIDGE: ${{ steps.bridge.outputs.build }}
         run: |
           set -o pipefail
@@ -183,8 +178,7 @@ jobs:
           bridge_task=""
           [ "$BUILD_BRIDGE" = "true" ] && bridge_task=":bridge:assembleRelease"
           if ! ./gradlew :app:bundleSideloadRelease :app:assembleSideloadRelease $bridge_task \
-              -Pcarlink.buildRoot="$BUILD_ROOT" \
-              -Pcarlink3.callerCerts="$CALLER_CERTS" 2>&1 | tee "$log"; then
+              -Pcarlink.buildRoot="$BUILD_ROOT" 2>&1 | tee "$log"; then
             msg=$( { grep '^e: ' "$log"; sed -n '/What went wrong:/,/^\* Try:/p' "$log" | grep -v '^\* Try:'; } | head -40)
             [ -n "$msg" ] || msg=$(tail -40 "$log")
             msg=${msg//'%'/'%25'}

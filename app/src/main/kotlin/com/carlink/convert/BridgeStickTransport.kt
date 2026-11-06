@@ -1,8 +1,10 @@
 package com.carlink.convert
 
+import android.os.Binder
 import com.carlink.ocbm.BridgeSession
 import com.enigy.carlink2.bridge.BridgeContract
 import com.enigy.carlink2.bridge.ICarlinkBridge
+import com.enigy.carlink2.bridge.IUsbBridgeSession
 
 /**
  * A USB stick spoken to one transfer at a time: an IN transfer only when asked, of the length asked.
@@ -43,29 +45,30 @@ interface StickTransport {
  */
 class BridgeStickTransport private constructor(
     private val bridge: ICarlinkBridge,
+    private val session: IUsbBridgeSession?,
     val deviceName: String,
 ) : StickTransport {
     override fun write(
         data: ByteArray,
         timeoutMs: Int,
-    ): Boolean = mine { bridge.write(data, timeoutMs) == data.size } ?: false
+    ): Boolean = mine { (session?.write(data, timeoutMs) ?: bridge.write(data, timeoutMs)) == data.size } ?: false
 
     override fun read(
         length: Int,
         timeoutMs: Int,
-    ): ByteArray? = mine { bridge.read(length, timeoutMs) }
+    ): ByteArray? = mine { if (session == null) bridge.read(length, timeoutMs) else session.read(length, timeoutMs) }
 
-    override fun clearHalt(inEndpoint: Boolean): Boolean = mine { bridge.clearHalt(inEndpoint) >= 0 } ?: false
+    override fun clearHalt(inEndpoint: Boolean): Boolean = mine { (session?.clearHalt(inEndpoint) ?: bridge.clearHalt(inEndpoint)) >= 0 } ?: false
 
-    override fun resetBulkOnly(): Boolean = mine { bridge.resetBulkOnly() } ?: false
+    override fun resetBulkOnly(): Boolean = mine { session?.resetBulkOnly() ?: bridge.resetBulkOnly() } ?: false
 
-    override fun takeTrace(): String = mine { bridge.takeTrace() }.orEmpty()
+    override fun takeTrace(): String = mine { session?.takeTrace() ?: bridge.takeTrace() }.orEmpty()
 
     override fun close() {
         synchronized(BridgeSession.lock) {
             if (BridgeSession.owner === this) {
                 BridgeSession.owner = null
-                runCatching { bridge.close() }
+                runCatching { if (session == null) bridge.close() else session.close() }
             }
         }
     }
@@ -84,8 +87,16 @@ class BridgeStickTransport private constructor(
             trace: Boolean,
         ): BridgeStickTransport? =
             synchronized(BridgeSession.lock) {
-                val opened = runCatching { bridge.openOnRequest(deviceName, trace) }.getOrDefault(false)
-                if (opened) BridgeStickTransport(bridge, deviceName).also { BridgeSession.owner = it } else null
+                runCatching {
+                    val session =
+                        if (bridge.apiVersion >= BridgeContract.SESSION_API_VERSION) {
+                            bridge.openSession(deviceName, true, trace, Binder()) ?: return null
+                        } else {
+                            if (!bridge.openOnRequest(deviceName, trace)) return null
+                            null
+                        }
+                    BridgeStickTransport(bridge, session, deviceName).also { BridgeSession.owner = it }
+                }.getOrNull()
             }
     }
 }

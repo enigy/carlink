@@ -48,7 +48,7 @@ jobs:
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/gradle.log"
-          if ! ./gradlew :app:assembleDebug :bridge:assembleDebug :app:ktlintCheck :app:detekt :app:testSideloadDebugUnitTest \
+          if ! ./gradlew :app:assembleDebug :bridge:assembleDebug :app:ktlintCheck :app:detekt :app:testSideloadDebugUnitTest :bridge:testDebugUnitTest \
               -Pcarlink.buildRoot="$BUILD_ROOT" 2>&1 | tee "$log"; then
             msg=$( { grep '^e: ' "$log"; sed -n '/What went wrong:/,/^\* Try:/p' "$log" | grep -v '^\* Try:'; } | head -40)
             [ -n "$msg" ] || msg=$(tail -40 "$log")

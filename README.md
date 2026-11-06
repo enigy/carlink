@@ -154,7 +154,7 @@ First, the adapter needs lvalen91's OCBM userspace, installed per his documentat
 
 ### About the bridge
 
-The bridge uses the same package name as Carlink-legacy's (`android.car.usb.handler`, the name GM's head unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink-legacy's bridge. From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store. 1.0.6 adds a second way to open a device, for the USB stick a stock adapter shares while Carlink converts it; Carlink's connection to the adapter is unchanged, so 1.0.5 still works for everything else.
+The bridge keeps the AAOS USB handler package `android.car.usb.handler` and replaces the Carlink-legacy bridge when installed. Bridge 1.0.7 (API 5) serves compatible clients without package or certificate checks. An API 5 client can take over the adapter with its own session handle, and the previous handle reports why it ended. Older clients can still use the legacy methods when they own the session. Install the generic bridge only on a head unit where you trust the installed apps, since a local app can use it for raw USB transfers.
 
 ### Check the download
 
@@ -200,7 +200,7 @@ See `NOTICE.md` for provenance.
 - **Version:** `appVersionCode` in `app/build.gradle.kts` is the only number to bump. `versionName` derives from it (100 is 1.00, 101 is 1.01), and the release tag must be `v<appVersionCode>`.
 - **Tag push `vNNN`:** build, upload to Internal testing, GitHub Release. **Manual run** from main: pick the track; untick *Upload* to build only. Runs from other branches never upload.
 - **Naming a release:** the bump commit carries the summary (`[7] Connecting screen, call-audio choices`, not `Bump appVersionCode`), since it is the workflow run's title. The annotated tag's message becomes the GitHub Release title and intro (`git tag -a v7 -m "Carlink v7: …"`).
-- **Play Console, once:** create the app (`com.enigy.carlink3`), grant the existing service account release rights to it, and upload the first AAB from the workflow artifact by hand. The API only accepts drafts until an app has been rolled out once (the step then fails with `status=completed`; rerun after the first manual rollout). The bridge's caller pins are committed in `bridge/build.gradle.kts`; a `CARLINK3_CALLER_CERTS` repository variable replaces the release list.
+- **Play Console, once:** create the app (`com.enigy.carlink3`), grant the existing service account release rights to it, and upload the first AAB from the workflow artifact by hand. The API only accepts drafts until an app has been rolled out once (the step then fails with `status=completed`; rerun after the first manual rollout).
 - **Local release builds** need a `keystore.properties` next to `settings.gradle.kts` (gitignored, same keys the workflow writes). Without it, release variants build unsigned and debug is unaffected.
 
 ## Privacy

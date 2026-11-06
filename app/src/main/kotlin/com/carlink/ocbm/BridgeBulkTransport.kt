@@ -3,9 +3,11 @@ package com.carlink.ocbm
 import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.os.Binder
 import android.os.ParcelFileDescriptor
 import com.enigy.carlink2.bridge.BridgeContract
 import com.enigy.carlink2.bridge.ICarlinkBridge
+import com.enigy.carlink2.bridge.IUsbBridgeSession
 import java.io.FileInputStream
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -25,11 +27,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * (device detached, bridge restarted): the dead handler fires once, off the read thread.
  * Outbound: [writeBulk] is one Binder call per ≤16 KiB chunk, matching the adapter's bulk chunking.
  *
- * The bridge relays ONE session ([BridgeSession]): only the transport opened last ([open]) writes to or
- * closes it; a superseded one's writes are refused and its [stop] leaves the bridge's session alone.
+ * API 5 scopes transfers to the handle for this open. [BridgeSession] also guards the legacy calls
+ * when connected to an older bridge.
  */
 class BridgeBulkTransport private constructor(
     private val bridge: ICarlinkBridge,
+    private val session: IUsbBridgeSession?,
     private val stream: ParcelFileDescriptor,
     val deviceName: String,
     private val log: com.carlink.logging.ProbeLog.Logger,
@@ -50,8 +53,25 @@ class BridgeBulkTransport private constructor(
             log: com.carlink.logging.ProbeLog.Logger,
         ): BridgeBulkTransport? =
             synchronized(BridgeSession.lock) {
-                val stream = runCatching { bridge.open(deviceName) }.getOrNull() ?: return null
-                BridgeBulkTransport(bridge, stream, deviceName, log).also { BridgeSession.owner = it }
+                runCatching {
+                    val session =
+                        if (bridge.apiVersion >= BridgeContract.SESSION_API_VERSION) {
+                            bridge.openSession(deviceName, false, false, Binder()) ?: return null
+                        } else {
+                            null
+                        }
+                    val stream =
+                        if (session == null) {
+                            bridge.open(deviceName)
+                        } else {
+                            runCatching { session.takeStream() }.getOrNull()
+                        }
+                    if (stream == null) {
+                        runCatching { session?.close() }
+                        return null
+                    }
+                    BridgeBulkTransport(bridge, session, stream, deviceName, log).also { BridgeSession.owner = it }
+                }.getOrNull()
             }
 
         /** The OCBM adapter if attached, by VID/PID — readable without USB permission. */
@@ -148,7 +168,7 @@ class BridgeBulkTransport private constructor(
                 val chunk = if (off == 0 && len == data.size) data else data.copyOfRange(off, off + len)
                 val n =
                     try {
-                        bridge.write(chunk, WRITE_TIMEOUT_MS)
+                        session?.write(chunk, WRITE_TIMEOUT_MS) ?: bridge.write(chunk, WRITE_TIMEOUT_MS)
                     } catch (t: Throwable) {
                         lastError = "bridge.write threw ${t.javaClass.simpleName}: ${t.message}"
                         -1
@@ -168,6 +188,7 @@ class BridgeBulkTransport private constructor(
 
     override fun stop() {
         running.set(false)
+        runCatching { session?.close() }
         try {
             stream.close() // unblocks a read() parked in readLoop
         } catch (_: IOException) {
@@ -184,7 +205,7 @@ class BridgeBulkTransport private constructor(
                 (BridgeSession.owner === this).also {
                     if (it) {
                         BridgeSession.owner = null
-                        runCatching { bridge.close() }
+                        if (session == null) runCatching { bridge.close() }
                     }
                 }
             }
@@ -196,6 +217,9 @@ class BridgeBulkTransport private constructor(
 
     /** One-line diagnostics from the bridge process (handler config, permission, counters). */
     fun bridgeStatus(): String = runCatching { bridge.status }.getOrElse { "bridge status unavailable: ${it.message}" }
+
+    /** End reason for this specific session, even if another client already owns the bridge. */
+    fun sessionEndReason(): String? = runCatching { session?.endReason }.getOrNull()
 
     /** Bridge API this transport was opened against; raw-stream relay requires [BridgeContract.RAW_STREAM_API_VERSION]. */
     fun apiVersion(): Int = runCatching { bridge.apiVersion }.getOrDefault(-1)

@@ -11,7 +11,7 @@ Only the newest release gets security fixes. Update to it before reporting, if y
 | Component | Supported | Where it comes from |
 | --- | --- | --- |
 | Carlink app (`com.enigy.carlink3`) | The newest release (2.19 today) | Google Play, or the APK on the GitHub release |
-| Carlink USB Bridge | The version the newest release ships (1.0.6 today) | `app/carlink_bridge.apk` in this repo, and the GitHub release |
+| Carlink USB Bridge | The version the newest release ships (1.0.7 today) | `app/carlink_bridge.apk` in this repo, and the GitHub release |
 | OCBM adapter software | Reported to its own repo, [enigy/ocbm](https://github.com/enigy/ocbm) | The adapter's one-file install |
 | Older app and bridge versions | No |  |
 
@@ -36,7 +36,7 @@ Carlink has one maintainer, so these are targets, not guarantees. You will hear 
 | Severity | Example in Carlink | Fix target |
 | --- | --- | --- |
 | Critical | Code runs in Carlink or the USB Bridge without physical access; driver-safety limits switched off without the driver | 14 days |
-| High | Another app on the head unit uses the USB Bridge; the adapter's Wi-Fi password, Bluetooth keys, contacts or location leak | 30 days |
+| High | A superseded USB session can access the new session; the adapter's Wi-Fi password, Bluetooth keys, contacts or location leak | 30 days |
 | Medium | Needs a paired phone, the adapter's Wi-Fi or a modified adapter; a crash an attacker can trigger at will | 90 days |
 | Low | Hardening, or needs an unlocked or rooted head unit | A later release |
 
@@ -47,7 +47,7 @@ Please keep the report private until a fix is released, or for 90 days, whicheve
 In scope:
 
 - **The Carlink app**: how it handles what the adapter and the iPhone send it, its settings and saved data, and what it sends over the network (lyrics lookups to LRCLIB, release downloads from GitHub).
-- **The Carlink USB Bridge**: it should answer only Carlink builds signed with the pinned keys, and its icon provider only the car's system apps.
+- **The Carlink USB Bridge**: the service can expose raw USB transfers to any compatible local app. Install it only on a head unit with trusted apps. A session that has ended cannot read from, write to, or close its successor. The icon provider still serves only the car's system apps.
 - **Cluster and HUD**: the cluster service should bind only to the car's own templates host.
 - **Logs**: Save Logs should hide phone names, Bluetooth addresses, callers and places. A personal detail that gets through is a bug to report here.
 - **This repo's build and release pipeline**: the GitHub Actions workflows, signing, and the Google Play upload.

@@ -1,9 +1,10 @@
 package com.enigy.carlink2.bridge;
 
 import android.os.ParcelFileDescriptor;
+import com.enigy.carlink2.bridge.IUsbBridgeSession;
 
 /**
- * Display app (com.enigy.carlink3) -> USB bridge (android.car.usb.handler).
+ * Display app -> USB bridge (android.car.usb.handler).
  *
  * The bridge owns the CPC200 USB device. Inbound adapter traffic is not delivered over
  * Binder: open() returns the read end of a socket that carries the adapter's bulk stream RAW,
@@ -11,9 +12,8 @@ import android.os.ParcelFileDescriptor;
  * BridgeContract.RAW_STREAM_API_VERSION). The display app does its own framing. Outbound
  * traffic goes through write(), one bulk OUT transfer per call.
  *
- * Methods other than getApiVersion() throw SecurityException for callers that are not the
- * display app. Add new methods at the END only — transaction codes follow declaration order,
- * and the two apps are updated independently.
+ * Legacy transfer methods only act on the legacy session opened by the calling process.
+ * Add new methods at the end to preserve the transaction codes used by older apps.
  */
 interface ICarlinkBridge {
     /** BridgeContract.API_VERSION of the installed bridge build. */
@@ -25,7 +25,8 @@ interface ICarlinkBridge {
     /**
      * Open deviceName, claim its bulk interface and start forwarding inbound bytes.
      * Returns the read end of the message socket, or null on failure (reason in getStatus()).
-     * A session that is already open is closed first. EOF on the socket means the session ended.
+     * Replaces a legacy session from this caller. Returns null if another session owns the device.
+     * EOF on the socket means the session ended.
      */
     ParcelFileDescriptor open(String deviceName);
 
@@ -49,7 +50,7 @@ interface ICarlinkBridge {
     /**
      * API 4. Open deviceName for transfers on request, as USB mass storage needs (a stick a stock
      * adapter shares): claim its bulk interface with force, and start NO read pump. Nothing is read
-     * from the device until read() asks. A session that is already open is closed first. write()
+     * from the device until read() asks. Uses the same ownership rule as open(). write()
      * and close() work on it as on an open() session. When trace is true the bridge records each
      * transfer's result for takeTrace(). Returns false on failure (reason in getStatus()).
      */
@@ -77,4 +78,11 @@ interface ICarlinkBridge {
 
     /** API 4. The transfer results recorded since the last call (openOnRequest with trace), one per line; "" when none. */
     String takeTrace();
+
+    /**
+     * API 5. Request ownership of the adapter, replacing any active session. The client supplies a
+     * local Binder so the bridge can release ownership if that process dies. Use the returned
+     * handle for all transfers, teardown and end status.
+     */
+    @nullable IUsbBridgeSession openSession(String deviceName, boolean onRequest, boolean trace, IBinder client);
 }

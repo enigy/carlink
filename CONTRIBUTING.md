@@ -22,7 +22,7 @@ Every commit passes the gate, and every push and pull request runs it in CI
 
 ```sh
 python3 tools/proto_check.py
-./gradlew :app:assembleDebug :bridge:assembleDebug :app:ktlintCheck :app:detekt :app:testSideloadDebugUnitTest
+./gradlew :app:assembleDebug :bridge:assembleDebug :app:ktlintCheck :app:detekt :app:testSideloadDebugUnitTest :bridge:testDebugUnitTest
 ```
 
 It builds the app and the USB bridge, then runs ktlint, detekt and the unit tests. A pull request
@@ -92,8 +92,7 @@ Tests live in `app/src/test/kotlin`, next to the package they test (`com.carlink
 
 - **Versions and releases.** Don't change `appVersionCode` in `app/build.gradle.kts` and don't push
   `v*` tags: a tag push uploads to Google Play.
-- **The package id.** `com.enigy.carlink3` never changes; it is the Play listing and the id the
-  bridge answers.
+- **The package id.** `com.enigy.carlink3` never changes; it is the Play listing.
 - **New dependencies.** Ask in an issue first.
 
 ## Areas with extra rules

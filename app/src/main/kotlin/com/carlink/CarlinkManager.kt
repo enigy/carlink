@@ -4126,6 +4126,14 @@ class CarlinkManager(
         }
     }
 
+    private fun stopAfterBridgeHandoff(): Boolean {
+        val endReason = (transport as? BridgeBulkTransport)?.sessionEndReason() ?: return false
+        logInfo("[USB] $endReason", tag = Logger.Tags.USB)
+        if (endReason != BridgeContract.END_HANDOFF) return false
+        stopImpl()
+        return true
+    }
+
     private fun handleErrorImpl(
         error: String,
         erroredClient: OcbmClient?,
@@ -4140,6 +4148,7 @@ class CarlinkManager(
             logDebug("[ERROR] Duplicate error report after teardown, ignoring: $error", tag = Logger.Tags.ADAPTR)
             return
         }
+        if (stopAfterBridgeHandoff()) return
         // hadPriorSession is intentionally NOT reset here (only in stop()), so escalation can
         // distinguish "broken after a prior session" from "never connected".
 

@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.Process
+import android.os.RemoteException
 import android.util.Log
 
 /**
@@ -25,7 +26,6 @@ import android.util.Log
 class BridgeService : Service() {
     private lateinit var usbManager: UsbManager
     private lateinit var session: UsbSession
-    private lateinit var callers: CallerVerifier
     private lateinit var prompt: PermissionPrompt
 
     private val detachReceiver =
@@ -51,35 +51,29 @@ class BridgeService : Service() {
             override fun getApiVersion(): Int = BridgeContract.API_VERSION
 
             override fun hasPermission(deviceName: String?): Boolean {
-                enforceCaller()
                 return session.hasPermission(deviceName)
             }
 
             override fun open(deviceName: String?): ParcelFileDescriptor? {
-                enforceCaller()
-                return session.open(deviceName)
+                return session.open(legacyOwner(), deviceName)?.stream
             }
 
             override fun write(
                 data: ByteArray?,
                 timeoutMs: Int,
             ): Int {
-                enforceCaller()
-                return session.write(data, timeoutMs)
+                return session.write(legacyOwner(), data, timeoutMs)
             }
 
             override fun close() {
-                enforceCaller()
-                session.close("closed by display app")
+                session.close(BridgeContract.END_CLOSED, legacyOwner())
             }
 
             override fun getStatus(): String {
-                enforceCaller()
                 return describe()
             }
 
             override fun requestPermission(deviceName: String?): Int {
-                enforceCaller()
                 return prompt.request(deviceName)
             }
 
@@ -87,39 +81,40 @@ class BridgeService : Service() {
                 deviceName: String?,
                 trace: Boolean,
             ): Boolean {
-                enforceCaller()
-                return session.openOnRequest(deviceName, trace)
+                return session.open(legacyOwner(), deviceName, onRequest = true, trace = trace) != null
             }
 
             override fun read(
                 length: Int,
                 timeoutMs: Int,
             ): ByteArray? {
-                enforceCaller()
-                return session.read(length, timeoutMs)
+                return session.read(legacyOwner(), length, timeoutMs)
             }
 
             override fun clearHalt(inEndpoint: Boolean): Int {
-                enforceCaller()
-                return session.clearHalt(inEndpoint)
+                return session.clearHalt(legacyOwner(), inEndpoint)
             }
 
             override fun resetBulkOnly(): Boolean {
-                enforceCaller()
-                return session.resetBulkOnly()
+                return session.resetBulkOnly(legacyOwner())
             }
 
             override fun takeTrace(): String {
-                enforceCaller()
-                return session.takeTrace()
+                return session.takeTrace(legacyOwner())
+            }
+
+            override fun openSession(deviceName: String?, onRequest: Boolean, trace: Boolean, client: IBinder?): IUsbBridgeSession? {
+                val handle = UsbSessionHandle(session, client ?: return null)
+                return handle.open(deviceName, onRequest, trace)
             }
         }
+
+    private fun legacyOwner() = UsbSession.LegacyOwner(Binder.getCallingUid(), Binder.getCallingPid())
 
     override fun onCreate() {
         super.onCreate()
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
         session = UsbSession(usbManager)
-        callers = CallerVerifier(this, BuildConfig.CALLER_CERTS)
         prompt = PermissionPrompt(this, usbManager).apply { register() }
         val filter = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -135,23 +130,15 @@ class BridgeService : Service() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         // Last client gone (display app stopped or died) — release the adapter.
-        session.close("display app unbound")
-        callers.forget()
+        session.close(BridgeContract.END_CLIENT_GONE)
         return false
     }
 
     override fun onDestroy() {
-        session.close("bridge service destroyed")
+        session.close(BridgeContract.END_BRIDGE_STOPPED)
         unregisterReceiver(detachReceiver)
         prompt.unregister()
         super.onDestroy()
-    }
-
-    private fun enforceCaller() {
-        val reason = callers.rejectReason(Binder.getCallingUid()) ?: return
-        Log.w(TAG, "Rejected caller: $reason")
-        BridgeStats.event("rejected $reason")
-        throw SecurityException(reason)
     }
 
     /**
@@ -192,5 +179,68 @@ class BridgeService : Service() {
 
         // UserHandle.PER_USER_RANGE (hidden): uid = userId * 100000 + appId.
         const val PER_USER_RANGE = 100_000
+    }
+}
+
+/** The Binder object is the capability for one open, independent of subsequent owners. */
+private class UsbSessionHandle(
+    private val session: UsbSession,
+    private val client: IBinder,
+) : IUsbBridgeSession.Stub(), UsbSession.Owner, IBinder.DeathRecipient {
+    private val streamLock = Any()
+    private var pendingStream: ParcelFileDescriptor? = null
+    @Volatile private var reason: String? = null
+
+    override val isAlive: Boolean get() = client.isBinderAlive
+
+    fun open(deviceName: String?, onRequest: Boolean, trace: Boolean): UsbSessionHandle? {
+        try {
+            client.linkToDeath(this, 0)
+        } catch (_: RemoteException) {
+            return null
+        }
+        val opened = session.open(this, deviceName, onRequest, trace)
+        if (opened == null) {
+            unlinkClient()
+            return null
+        }
+        synchronized(streamLock) {
+            if (reason == null) pendingStream = opened.stream else runCatching { opened.stream?.close() }
+        }
+        return this
+    }
+
+    override fun takeStream(): ParcelFileDescriptor? = synchronized(streamLock) {
+        pendingStream.also { pendingStream = null }
+    }
+
+    override fun write(data: ByteArray?, timeoutMs: Int): Int = session.write(this, data, timeoutMs)
+
+    override fun read(length: Int, timeoutMs: Int): ByteArray? = session.read(this, length, timeoutMs)
+
+    override fun clearHalt(inEndpoint: Boolean): Int = session.clearHalt(this, inEndpoint)
+
+    override fun resetBulkOnly(): Boolean = session.resetBulkOnly(this)
+
+    override fun takeTrace(): String = session.takeTrace(this)
+
+    override fun close() = session.close(BridgeContract.END_CLOSED, this)
+
+    override fun getEndReason(): String? = reason
+
+    override fun binderDied() = session.close(BridgeContract.END_CLIENT_GONE, this)
+
+    override fun ended(reason: String) {
+        synchronized(streamLock) {
+            this.reason = reason
+            runCatching { pendingStream?.close() }
+            pendingStream = null
+        }
+        unlinkClient()
+    }
+
+    private fun unlinkClient() {
+        // Binder may have already removed the recipient when the caller died.
+        runCatching { client.unlinkToDeath(this, 0) }
     }
 }

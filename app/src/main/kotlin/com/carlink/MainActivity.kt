@@ -472,8 +472,6 @@ class MainActivity : ComponentActivity() {
         DriveLogging.apply(this)
 
         logInfo("Carlink Native starting - version $appVersion", tag = "MAIN")
-        // The USB bridge pins this fingerprint (security review M3); logged so a Play build's real
-        // app-signing certificate can be checked against the pin in a drive log.
         logWarn("[APP] signing certificate SHA-256 ${SigningCerts.sha256(packageManager, packageName)}", tag = "MAIN")
         logInfo(
             "[LOGGING] Debug logging: ${if (isDebugBuild) "ENABLED" else "DISABLED (release build)"}; " +
