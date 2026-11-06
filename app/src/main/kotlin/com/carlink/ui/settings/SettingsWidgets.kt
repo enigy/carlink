@@ -181,7 +181,7 @@ internal fun SettingRow(
 }
 
 /** A row whose whole width toggles [checked]; the switch is the visible state. */
-@Suppress("LongParameterList") // title, subtitle, state, callback, icon and the usual modifier
+@Suppress("LongParameterList") // title, subtitle, state, callback, icon, enabled and the usual modifier
 @Composable
 internal fun SwitchRow(
     title: String,
@@ -190,14 +190,15 @@ internal fun SwitchRow(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    enabled: Boolean = true,
 ) {
     SettingRow(
         title = title,
         subtitle = subtitle,
         icon = icon,
-        modifier = modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
+        modifier = modifier.toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange),
     ) {
-        Switch(checked = checked, onCheckedChange = null)
+        Switch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
 }
 

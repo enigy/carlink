@@ -18,7 +18,7 @@ package com.enigy.carlink2.bridge
  */
 object BridgeContract {
     /** Bump when ICarlinkBridge gains methods or changes semantics; the display app checks [MIN_API_VERSION]. */
-    const val API_VERSION = 5
+    const val API_VERSION = 6
 
     /**
      * Carlink3: from this API the bridge relays the adapter's bulk stream RAW — chunks as read from
@@ -46,6 +46,30 @@ object BridgeContract {
      */
     const val SESSION_API_VERSION = 5
 
+    /**
+     * From this API (bridge 1.0.8) the owner may let other apps use the adapter (off by default: then the
+     * bridge is Carlink's alone, exactly as before). An app gets in only once the owner approved it, by
+     * package and signing certificate, in Carlink, and only while Carlink hands the adapter over to it
+     * (ICarlinkBridge.handOver); any open of Carlink's takes it back. An approved app may use openSession,
+     * its session handles, getStatus (a short form), hasPermission and requestPermission, on adapters
+     * only ([ADAPTER_IDS]). The access calls (getAccess … setAccessListener) are Carlink's alone.
+     */
+    const val ACCESS_API_VERSION = 6
+
+    /** USB vendor:product ids of the devices an approved app may open: Carlinkit adapters. */
+    val ADAPTER_IDS: Set<Pair<Int, Int>> = setOf(0x1314 to 0x2d00, 0x1314 to 0x1520, 0x1314 to 0x1521)
+
+    fun isAdapter(
+        vendorId: Int,
+        productId: Int,
+    ): Boolean = (vendorId to productId) in ADAPTER_IDS
+
+    /** A handover with no session of the app's this long ends by itself: the app never came, or left. */
+    const val HANDOVER_GRACE_MS = 60_000L
+
+    /** Requests the bridge keeps (getAccess "requests"); the oldest is dropped for a newer one. */
+    const val MAX_ACCESS_REQUESTS = 8
+
     // IUsbBridgeSession.getEndReason results: why a session ended.
 
     /** The display app closed it. */
@@ -68,6 +92,12 @@ object BridgeContract {
 
     /** Every client unbound from the bridge. */
     const val END_UNBOUND = "the display app unbound"
+
+    /** Carlink took the adapter back from the app it had handed it to (takeBack, or an open of Carlink's). */
+    const val END_TAKEN_BACK = "Carlink took the adapter back"
+
+    /** The owner removed the app's approval, or turned other apps' access off. */
+    const val END_ACCESS_REVOKED = "the owner removed this app's access"
 
     /** The bridge's service was destroyed. */
     const val END_BRIDGE_STOPPED = "bridge stopped"
@@ -93,7 +123,7 @@ object BridgeContract {
     const val BRIDGE_PACKAGE = "android.car.usb.handler"
     const val BRIDGE_SERVICE_CLASS = "com.enigy.carlink2.bridge.BridgeService"
 
-    /** The only package the bridge serves. Play guarantees nobody else can publish it. */
+    /** The package the bridge serves, and the only one unless the owner approves others (API 6). Play guarantees nobody else can publish it. */
     const val DISPLAY_PACKAGE = "com.enigy.carlink3"
 
     const val CLUSTER_ICON_AUTHORITY =

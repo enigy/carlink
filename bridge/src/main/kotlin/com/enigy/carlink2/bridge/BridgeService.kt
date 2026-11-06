@@ -24,13 +24,25 @@ import android.util.Log
  * and so missed that grant ([205]).
  *
  * Every call but getApiVersion() is the display app's alone ([CallerVerifier]), a session
- * handle's ([Handle], API 5) included.
+ * handle's ([Handle], API 5) included. From API 6 the owner may let apps it approves in Carlink use
+ * openSession, their own handles, getStatus, hasPermission and requestPermission, while Carlink hands
+ * the adapter over and on adapters only ([AccessControl]); off, the default, changes nothing.
  */
 class BridgeService : Service() {
     private lateinit var usbManager: UsbManager
     private lateinit var usb: UsbSession
     private lateinit var callers: CallerVerifier
     private lateinit var prompt: PermissionPrompt
+    private lateinit var apps: AccessControl
+
+    /** Who called: Carlink, or an approved app (API 6). */
+    private sealed interface Caller {
+        data object Carlink : Caller
+
+        data class App(
+            val packageName: String,
+        ) : Caller
+    }
 
     private val detachReceiver =
         object : BroadcastReceiver() {
@@ -50,17 +62,31 @@ class BridgeService : Service() {
             }
         }
 
+    // A package added, replaced or removed may be a caller under a new key, or Carlink gone: verify again.
+    private val packageReceiver =
+        object : BroadcastReceiver() {
+            override fun onReceive(
+                context: Context,
+                intent: Intent,
+            ) {
+                callers.forget()
+                apps.forget()
+                if (intent.data?.schemeSpecificPart == BridgeContract.DISPLAY_PACKAGE) apps.isOn()
+            }
+        }
+
     private val binder =
         object : ICarlinkBridge.Stub() {
             override fun getApiVersion(): Int = BridgeContract.API_VERSION
 
             override fun hasPermission(deviceName: String?): Boolean {
-                enforceCaller()
+                if (enforceCaller(appsToo = true) is Caller.App && !apps.isAdapter(deviceName)) return false
                 return usb.hasPermission(deviceName)
             }
 
             override fun open(deviceName: String?): ParcelFileDescriptor? {
                 enforceCaller()
+                apps.carlinkOpening()
                 // Returned through AIDL with PARCELABLE_WRITE_RETURN_VALUE, which closes our copy.
                 return usb.open(deviceName, onRequest = false, trace = false)?.takeStream()
             }
@@ -75,16 +101,17 @@ class BridgeService : Service() {
 
             override fun close() {
                 enforceCaller()
-                usb.close(BridgeContract.END_CLOSED, "closed by display app")
+                usb.close(BridgeContract.END_CLOSED, "closed by display app", onlyCarlinks = true)
             }
 
-            override fun getStatus(): String {
-                enforceCaller()
-                return describe()
-            }
+            override fun getStatus(): String =
+                when (val caller = enforceCaller(appsToo = true)) {
+                    is Caller.App -> apps.shortStatus(caller.packageName)
+                    Caller.Carlink -> describe()
+                }
 
             override fun requestPermission(deviceName: String?): Int {
-                enforceCaller()
+                if (enforceCaller(appsToo = true) is Caller.App && !apps.isAdapter(deviceName)) return BridgeContract.PERMISSION_NO_DEVICE
                 return prompt.request(deviceName)
             }
 
@@ -93,6 +120,7 @@ class BridgeService : Service() {
                 trace: Boolean,
             ): Boolean {
                 enforceCaller()
+                apps.carlinkOpening()
                 return usb.open(deviceName, onRequest = true, trace = trace) != null
             }
 
@@ -125,15 +153,75 @@ class BridgeService : Service() {
                 trace: Boolean,
                 client: IBinder?,
             ): IUsbBridgeSession? {
-                enforceCaller()
+                val caller = enforceCaller(appsToo = true)
                 requireNotNull(client) { "openSession needs a Binder of the caller's own" }
-                val handle = Handle(client)
-                handle.session = usb.open(deviceName, onRequest, trace, onEnded = { handle.unwatch() }) ?: return null
+                val owner =
+                    when (caller) {
+                        is Caller.App -> {
+                            if (!apps.mayOpen(caller.packageName, deviceName)) return null
+                            caller.packageName
+                        }
+                        Caller.Carlink -> {
+                            apps.carlinkOpening()
+                            BridgeContract.DISPLAY_PACKAGE
+                        }
+                    }
+                val handle = Handle(client, Binder.getCallingUid(), owner)
+                val onEnded: (String) -> Unit = { reason ->
+                    handle.unwatch()
+                    if (caller is Caller.App) apps.onAppSessionEnded(owner, reason)
+                }
+                handle.session = usb.open(deviceName, onRequest, trace, onEnded, owner) ?: return null
                 if (!handle.watch()) {
-                    usb.end(handle.session, BridgeContract.END_CLIENT_GONE, "the display app's process died while it opened $deviceName")
+                    val who = if (caller is Caller.App) owner else "the display app"
+                    usb.end(handle.session, BridgeContract.END_CLIENT_GONE, "$who's process died while it opened $deviceName")
                     return null
                 }
+                if (caller is Caller.App && !apps.onAppOpened(caller.packageName, handle.session)) return null
                 return handle
+            }
+
+            override fun getAccess(): String {
+                enforceCaller()
+                return apps.json()
+            }
+
+            override fun setOtherAppsAllowed(on: Boolean) {
+                enforceCaller()
+                apps.setOn(on)
+            }
+
+            override fun approve(
+                packageName: String?,
+                sha256: String?,
+            ) {
+                enforceCaller()
+                apps.approve(requireNotNull(packageName), sha256)
+            }
+
+            override fun revoke(packageName: String?) {
+                enforceCaller()
+                apps.revoke(requireNotNull(packageName))
+            }
+
+            override fun dismissRequest(packageName: String?) {
+                enforceCaller()
+                apps.dismissRequest(requireNotNull(packageName))
+            }
+
+            override fun handOver(packageName: String?) {
+                enforceCaller()
+                apps.handOver(requireNotNull(packageName))
+            }
+
+            override fun takeBack() {
+                enforceCaller()
+                apps.takeBack()
+            }
+
+            override fun setAccessListener(listener: IBridgeAccessListener?) {
+                enforceCaller()
+                apps.setListener(listener)
             }
         }
 
@@ -142,9 +230,15 @@ class BridgeService : Service() {
      * session only (the bridge's API ≤ 4 calls act on whichever session is open) and are the display app's
      * alone, like the bridge's. It watches the client's Binder, so the session ends when the client's process
      * dies, and stops watching once the session has ended: Carlink opens a session per connect.
+     *
+     * API 6: a handle an approved app opened is that app's alone: its uid ([openerUid]). It needs no approval
+     * check per call, as the session ends when the approval or the handover does, and the app can still ask
+     * why it ended.
      */
     private inner class Handle(
         private val client: IBinder,
+        private val openerUid: Int,
+        private val owner: String,
     ) : IUsbBridgeSession.Stub(),
         IBinder.DeathRecipient {
         @Volatile lateinit var session: UsbSession.Session
@@ -177,12 +271,24 @@ class BridgeService : Service() {
             }
         }
 
+        private fun enforceOwner() {
+            if (owner == BridgeContract.DISPLAY_PACKAGE) {
+                enforceCaller()
+                return
+            }
+            val uid = Binder.getCallingUid()
+            if (uid == openerUid) return
+            val reason = "uid $uid didn't open this session; $owner did"
+            Log.w(TAG, "Rejected caller: $reason")
+            throw SecurityException(reason)
+        }
+
         override fun binderDied() {
             usb.end(session, BridgeContract.END_CLIENT_GONE)
         }
 
         override fun takeStream(): ParcelFileDescriptor? {
-            enforceCaller()
+            enforceOwner()
             // Returned through AIDL with PARCELABLE_WRITE_RETURN_VALUE, which closes our copy.
             return session.takeStream()
         }
@@ -191,7 +297,7 @@ class BridgeService : Service() {
             data: ByteArray?,
             timeoutMs: Int,
         ): Int {
-            enforceCaller()
+            enforceOwner()
             return session.write(data, timeoutMs)
         }
 
@@ -199,32 +305,32 @@ class BridgeService : Service() {
             length: Int,
             timeoutMs: Int,
         ): ByteArray? {
-            enforceCaller()
+            enforceOwner()
             return session.read(length, timeoutMs)
         }
 
         override fun clearHalt(inEndpoint: Boolean): Int {
-            enforceCaller()
+            enforceOwner()
             return session.clearHalt(inEndpoint)
         }
 
         override fun resetBulkOnly(): Boolean {
-            enforceCaller()
+            enforceOwner()
             return session.resetBulkOnly()
         }
 
         override fun takeTrace(): String {
-            enforceCaller()
+            enforceOwner()
             return session.takeTrace()
         }
 
         override fun close() {
-            enforceCaller()
-            usb.end(session, BridgeContract.END_CLOSED, "closed by display app")
+            enforceOwner()
+            usb.end(session, BridgeContract.END_CLOSED, "closed by ${if (owner == BridgeContract.DISPLAY_PACKAGE) "display app" else owner}")
         }
 
         override fun getEndReason(): String? {
-            enforceCaller()
+            enforceOwner()
             return session.endReason
         }
     }
@@ -235,14 +341,29 @@ class BridgeService : Service() {
         usb = UsbSession(usbManager)
         callers = CallerVerifier(this, BuildConfig.CALLER_CERTS)
         prompt = PermissionPrompt(this, usbManager).apply { register() }
-        val filter = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(detachReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(detachReceiver, filter)
-        }
+        apps = AccessControl(this, usbManager, usb, callers)
+        register(detachReceiver, IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED))
+        val packages =
+            IntentFilter().apply {
+                addAction(Intent.ACTION_PACKAGE_ADDED)
+                addAction(Intent.ACTION_PACKAGE_REPLACED)
+                addAction(Intent.ACTION_PACKAGE_REMOVED)
+                addDataScheme("package")
+            }
+        register(packageReceiver, packages)
         BridgeStats.event("service created")
         Log.i(TAG, "Bridge service created: ${describe()}")
+    }
+
+    private fun register(
+        receiver: BroadcastReceiver,
+        filter: IntentFilter,
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(receiver, filter)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -251,18 +372,36 @@ class BridgeService : Service() {
         // Last client gone (display app stopped or died) — release the adapter.
         usb.close(BridgeContract.END_UNBOUND, "display app unbound")
         callers.forget()
+        apps.forget()
         return false
     }
 
     override fun onDestroy() {
         usb.close(BridgeContract.END_BRIDGE_STOPPED, "bridge service destroyed")
         unregisterReceiver(detachReceiver)
+        unregisterReceiver(packageReceiver)
         prompt.unregister()
         super.onDestroy()
     }
 
-    private fun enforceCaller() {
-        val reason = callers.rejectReason(Binder.getCallingUid()) ?: return
+    /**
+     * Carlink, by the pin; with [appsToo], an approved app too (API 6, access on). An approved app calling one of
+     * Carlink's own calls is refused, and an app that isn't approved is recorded as a request ([AccessControl.check]).
+     */
+    private fun enforceCaller(appsToo: Boolean = false): Caller {
+        val uid = Binder.getCallingUid()
+        val carlinkRefusal = callers.rejectReason(uid) ?: return Caller.Carlink
+        val reason =
+            when (val verdict = apps.check(uid)) {
+                AccessControl.Verdict.NotAnApp -> carlinkRefusal
+                is AccessControl.Verdict.Refused -> verdict.reason
+                is AccessControl.Verdict.Approved ->
+                    if (appsToo) {
+                        return Caller.App(verdict.packageName)
+                    } else {
+                        "${verdict.packageName} is approved for adapter sessions only (openSession, getStatus, hasPermission, requestPermission); this call is Carlink's"
+                    }
+            }
         Log.w(TAG, "Rejected caller: $reason")
         BridgeStats.event("rejected $reason")
         throw SecurityException(reason)
@@ -288,7 +427,7 @@ class BridgeService : Service() {
             }
         return "bridge api=${BridgeContract.API_VERSION} v=${BuildConfig.VERSION_NAME} " +
             "user=${Process.myUid() / PER_USER_RANGE} handler=${fixedHandlerComponent()} " +
-            "devices=$devices session=$sessionText ${prompt.describe()} ${BridgeStats.describe()}"
+            "devices=$devices session=$sessionText ${apps.describe()} ${prompt.describe()} ${BridgeStats.describe()}"
     }
 
     @SuppressLint("DiscouragedApi")

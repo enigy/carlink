@@ -75,6 +75,7 @@ import com.carlink.ui.components.BridgeSetupPanel
 import com.carlink.ui.components.CarlinkDialog
 import com.carlink.ui.components.ConversionPanelOr
 import com.carlink.ui.components.ForestFogEffect
+import com.carlink.ui.components.HandedOverPanel
 import com.carlink.ui.components.InstallPanelOr
 import com.carlink.ui.components.LoadingStatusView
 import com.carlink.ui.components.LoadingSteps
@@ -89,6 +90,7 @@ import com.carlink.ui.pane.SplitPane
 import com.carlink.ui.settings.BackgroundLogoStore
 import com.carlink.ui.settings.ResetConnectionDialog
 import com.carlink.ui.theme.AutomotiveDimens
+import com.carlink.usb.BridgeAccessHub
 import com.carlink.usb.CarlinkBridge
 import com.carlink.util.EdgeInsets
 import kotlinx.coroutines.delay
@@ -500,10 +502,18 @@ private fun ConnectingWords(
     projectionMode: Byte,
     onOpenAppInfo: () -> Boolean,
 ) {
+    val access by BridgeAccessHub.state.collectAsState()
+    val handedTo = access.handedToLabel
     when {
         // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
         !bridge.installed -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
         statusText.startsWith(BRIDGE_TROUBLE_PREFIX) -> BridgeNotStartingPanel(onOpenAppInfo = onOpenAppInfo)
+        // Bridge API 6: another app has the adapter; Take back works while driving.
+        handedTo != null ->
+            HandedOverPanel(handedTo) {
+                logInfo("[UI_ACTION] Take back the adapter (connecting screen)", tag = "UI")
+                carlinkManager.takeBackAdapter()
+            }
         // A stock adapter's conversion, then an adapter update in flight or just ended, then the adapter's
         // one-file install (its trial and way back), then pairing an iPhone, before the words; the adapter's own
         // projection mode starts the last step: it flips to WIRELESS_CP/WIRED_CP when CarPlay really begins,

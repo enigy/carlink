@@ -1,6 +1,7 @@
 package com.enigy.carlink2.bridge;
 
 import android.os.ParcelFileDescriptor;
+import com.enigy.carlink2.bridge.IBridgeAccessListener;
 import com.enigy.carlink2.bridge.IUsbBridgeSession;
 
 /**
@@ -17,7 +18,9 @@ import com.enigy.carlink2.bridge.IUsbBridgeSession;
  * returns a handle of the session's own (IUsbBridgeSession), whose calls act on that session only.
  *
  * Methods other than getApiVersion() throw SecurityException for callers that are not the
- * display app, and so do a session handle's. Add new methods at the END only — transaction
+ * display app, and so do a session handle's. From API 6 the owner may let apps it approves use
+ * openSession(), getStatus(), hasPermission() and requestPermission() while Carlink hands the
+ * adapter over (BridgeContract.ACCESS_API_VERSION); the access calls stay the display app's alone. Add new methods at the END only — transaction
  * codes follow declaration order, and the two apps are updated independently.
  */
 interface ICarlinkBridge {
@@ -94,4 +97,46 @@ interface ICarlinkBridge {
      * ends. Ends the session before it like open(). Returns null on failure (reason in getStatus()).
      */
     IUsbBridgeSession openSession(String deviceName, boolean onRequest, boolean trace, IBinder client);
+
+    /**
+     * API 6. Other apps' access as JSON: {"v":1,"on","carlinkVerified","approved":[{"package","label",
+     * "sha256","installer","approvedAt","lastUsedAt","sessions"}],"requests":[{"package","label","sha256",
+     * "installer","firstAt","lastAt","count","keyChanged"}],"handedTo":{"package","since"} or null,
+     * "holder": the package whose session is open, or null}. Times are epoch milliseconds.
+     */
+    String getAccess();
+
+    /**
+     * API 6. Let approved apps use the adapter (on), or not (off, the default). Off ends an app's
+     * session (END_ACCESS_REVOKED) and forgets every approval and request.
+     */
+    void setOtherAppsAllowed(boolean on);
+
+    /**
+     * API 6. Approve packageName signed by sha256 (64 hex digits, colons optional), as a request
+     * recorded it. Throws IllegalArgumentException when no such request is recorded, and
+     * IllegalStateException while access is off. Replaces an approval of the package by another key.
+     */
+    void approve(String packageName, String sha256);
+
+    /** API 6. Remove packageName's approval; ends its session and handover (END_ACCESS_REVOKED). */
+    void revoke(String packageName);
+
+    /** API 6. Forget packageName's requests. */
+    void dismissRequest(String packageName);
+
+    /**
+     * API 6. Hand the adapter to packageName, an approved app, until takeBack(), any open of the
+     * display app's, a revoke, access turned off, the app's session client dying, or
+     * BridgeContract.HANDOVER_GRACE_MS without a session of the app's. Throws
+     * IllegalStateException (why, in its message) while a session of the display app's is open, or
+     * when the app isn't approved.
+     */
+    void handOver(String packageName);
+
+    /** API 6. End the handover, and the app's session with it (END_TAKEN_BACK). Nothing when none. */
+    void takeBack();
+
+    /** API 6. Tell listener of every change to getAccess(); null forgets every listener. Dead ones are dropped. */
+    void setAccessListener(IBridgeAccessListener listener);
 }

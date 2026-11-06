@@ -2,7 +2,6 @@ package com.enigy.carlink2.bridge
 
 import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
 import android.util.Log
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -62,15 +61,22 @@ internal class CallerVerifier(
         return null
     }
 
-    @Suppress("DEPRECATION") // getInstallerPackageName is the only call below API 30 (minSdk 29)
-    private fun installer(pm: PackageManager): String? =
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                pm.getInstallSourceInfo(BridgeContract.DISPLAY_PACKAGE).installingPackageName
-            } else {
-                pm.getInstallerPackageName(BridgeContract.DISPLAY_PACKAGE)
-            }
-        }.getOrNull()
+    /**
+     * API 6: whether the installed [BridgeContract.DISPLAY_PACKAGE], whoever calls, passes the same pin by package:
+     * other apps' access counts only while it does ([AccessControl]). False when it isn't installed.
+     */
+    fun displayAppPasses(): Boolean {
+        val pm = context.packageManager
+        if (!PackageFacts.installed(pm, BridgeContract.DISPLAY_PACKAGE)) return false
+        val pinned =
+            allowedCerts.isEmpty() ||
+                allowedCerts.any {
+                    runCatching { pm.hasSigningCertificate(BridgeContract.DISPLAY_PACKAGE, it, PackageManager.CERT_INPUT_SHA256) }.getOrDefault(false)
+                }
+        return pinned || installer(pm) == PLAY_STORE
+    }
+
+    private fun installer(pm: PackageManager): String? = PackageFacts.installer(pm, BridgeContract.DISPLAY_PACKAGE)
 
     /** The display app's signing certificate SHA-256 as AA:BB:…, for the log; "unknown" if unreadable. */
     private fun signer(pm: PackageManager): String =

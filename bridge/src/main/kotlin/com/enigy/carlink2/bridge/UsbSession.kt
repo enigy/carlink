@@ -32,6 +32,9 @@ import java.io.IOException
  * Ending a session never waits out a transfer: it releases the interface first, which makes a transfer
  * in flight on it return -1 at once, and the connection closes when the last transfer has left it
  * ([Session.end]), so no transfer runs on a closed, maybe reused, file descriptor.
+ *
+ * API 6: each session has an [Session.owner], the package that opened it: Carlink's, or an app the owner
+ * handed the adapter to. The API ≤ 4 calls are Carlink's and act on its sessions only.
  */
 internal class UsbSession(
     private val usbManager: UsbManager,
@@ -44,6 +47,8 @@ internal class UsbSession(
     class Session internal constructor(
         val id: Int,
         val deviceName: String,
+        // The package that opened it: BridgeContract.DISPLAY_PACKAGE, or an app the adapter was handed to.
+        val owner: String,
         private val connection: UsbDeviceConnection,
         private val iface: UsbInterface,
         private val bulkIn: UsbEndpoint,
@@ -217,7 +222,13 @@ internal class UsbSession(
     @Volatile var lastCloseReason: String = "never opened"
         private set
 
-    val openDeviceName: String? get() = active?.let { "${it.deviceName} #${it.id}${if (it.onRequest) " on request" else ""}" }
+    val openDeviceName: String? get() = active?.let { "${it.deviceName} #${it.id}${if (it.onRequest) " on request" else ""}${if (it.owner != BridgeContract.DISPLAY_PACKAGE) " by ${it.owner}" else ""}" }
+
+    /** The open session, whoever opened it; null when none is. */
+    val current: Session? get() = active
+
+    // The API ≤ 4 calls act on Carlink's open session only, never on an app's.
+    private val carlinks: Session? get() = active?.takeIf { it.owner == BridgeContract.DISPLAY_PACKAGE }
 
     fun hasPermission(deviceName: String?): Boolean {
         val device = deviceName?.let { usbManager.deviceList[it] } ?: return false
@@ -230,15 +241,17 @@ internal class UsbSession(
      * Otherwise the pump relays the IN endpoint into a socket whose other end is [Session.takeStream]'s.
      * [onEnded] runs once, with why, when the session ends. Null on failure, reason in [lastError]; an open
      * that fails before it can claim the device (not attached, no permission, no bulk interface) leaves the
-     * open session alone.
+     * open session alone. [owner]: the package opening it. An app's open never ends a session of Carlink's: it fails.
      */
     fun open(
         deviceName: String?,
         onRequest: Boolean,
         trace: Boolean,
         onEnded: ((String) -> Unit)? = null,
+        owner: String = BridgeContract.DISPLAY_PACKAGE,
     ): Session? {
         synchronized(lock) {
+            if (owner != BridgeContract.DISPLAY_PACKAGE && carlinks != null) return fail("$owner can't open $deviceName: Carlink's session is open")
             val device = deviceName?.let { usbManager.deviceList[it] } ?: return fail("$deviceName is not attached")
             if (!usbManager.hasPermission(device)) return fail("no USB permission for $deviceName")
             val (iface, bulkIn, bulkOut) = findBulkEndpoints(device) ?: return fail("no interface with bulk IN and OUT on $deviceName")
@@ -265,6 +278,7 @@ internal class UsbSession(
                 Session(
                     nextId++,
                     device.deviceName,
+                    owner,
                     connection,
                     iface,
                     bulkIn,
@@ -283,7 +297,7 @@ internal class UsbSession(
                     start()
                 }
             }
-            val how = if (onRequest) " on request (trace=$trace)" else ""
+            val how = (if (onRequest) " on request (trace=$trace)" else "") + (if (owner != BridgeContract.DISPLAY_PACKAGE) " by $owner" else "")
             BridgeStats.event("open $deviceName #${session.id}$how")
             Log.i(
                 TAG,
@@ -309,33 +323,34 @@ internal class UsbSession(
         }
     }
 
-    /** API ≤ 4: [Session.write] on whichever session is open; -1 when none is. */
+    /** API ≤ 4: [Session.write] on whichever session of Carlink's is open; -1 when none is. */
     fun write(
         data: ByteArray?,
         timeoutMs: Int,
-    ): Int = active?.write(data, timeoutMs) ?: -1
+    ): Int = carlinks?.write(data, timeoutMs) ?: -1
 
-    /** API 4: [Session.read] on whichever session is open. */
+    /** API 4: [Session.read] on whichever session of Carlink's is open. */
     fun read(
         length: Int,
         timeoutMs: Int,
-    ): ByteArray? = active?.read(length, timeoutMs)
+    ): ByteArray? = carlinks?.read(length, timeoutMs)
 
-    /** API 4: [Session.clearHalt] on whichever session is open. */
-    fun clearHalt(inbound: Boolean): Int = active?.clearHalt(inbound) ?: -1
+    /** API 4: [Session.clearHalt] on whichever session of Carlink's is open. */
+    fun clearHalt(inbound: Boolean): Int = carlinks?.clearHalt(inbound) ?: -1
 
-    /** API 4: [Session.resetBulkOnly] on whichever session is open. */
-    fun resetBulkOnly(): Boolean = active?.resetBulkOnly() ?: false
+    /** API 4: [Session.resetBulkOnly] on whichever session of Carlink's is open. */
+    fun resetBulkOnly(): Boolean = carlinks?.resetBulkOnly() ?: false
 
-    /** API 4: the open session's transfer results since the last call, one per line. */
-    fun takeTrace(): String = active?.takeTrace().orEmpty()
+    /** API 4: the open session's transfer results since the last call, one per line; Carlink's sessions only. */
+    fun takeTrace(): String = carlinks?.takeTrace().orEmpty()
 
-    /** End whichever session is open. */
+    /** End whichever session is open; with [onlyCarlinks], only one of Carlink's (the API ≤ 4 close). */
     fun close(
         reason: String,
         detail: String = reason,
+        onlyCarlinks: Boolean = false,
     ) {
-        synchronized(lock) { active?.let { end(it, reason, detail) } }
+        synchronized(lock) { (if (onlyCarlinks) carlinks else active)?.let { end(it, reason, detail) } }
     }
 
     fun onDetached(deviceName: String?) {

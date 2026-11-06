@@ -65,6 +65,7 @@ import com.carlink.ui.components.settingsSlideIn
 import com.carlink.ui.settings.AdapterPane
 import com.carlink.ui.settings.BackgroundLogoConfig
 import com.carlink.ui.settings.BackgroundLogoStore
+import com.carlink.ui.settings.BridgePane
 import com.carlink.ui.settings.CallAudioStore
 import com.carlink.ui.settings.CallsPane
 import com.carlink.ui.settings.ClusterPane
@@ -87,6 +88,8 @@ import com.carlink.ui.settings.SettingsStyle
 import com.carlink.ui.settings.TroubleshootPane
 import com.carlink.ui.settings.rememberSettingsLiveState
 import com.carlink.ui.theme.LocalCarlinkColors
+import com.carlink.usb.BridgeAccessHub
+import com.carlink.usb.BridgeAccessText
 import com.carlink.util.EdgeInsets
 
 /**
@@ -198,6 +201,12 @@ private fun SettingsBody(
     // Another iPhone's profile is for parked editing: driving puts Settings back on the one in use.
     LaunchedEffect(panes.live.driving) { if (panes.live.driving) DriverProfiles.edit(context, null) }
     val summaries = categorySummaries(panes, savedMode)
+    // Bridge API 6: read other apps' access each time Settings opens; Bridge Configuration is listed only while it is on.
+    LaunchedEffect(visible) { if (visible) BridgeAccessHub.refresh(context) }
+    val bridgeAccess by BridgeAccessHub.state.collectAsState()
+    val bridgeOn = bridgeAccess.on
+    val categories = SettingsCategory.entries.filter { it != SettingsCategory.BRIDGE || bridgeOn }
+    LaunchedEffect(bridgeOn) { if (!bridgeOn && selected == SettingsCategory.BRIDGE) selected = SettingsCategory.ADAPTER }
 
     LaunchedEffect(selected) { logInfo("[UI_STATE] Settings category: $selected", tag = "UI") }
     val pick: (SettingsCategory) -> Unit = {
@@ -220,11 +229,11 @@ private fun SettingsBody(
     Box(modifier = modifier.fillMaxWidth()) {
         if (twoPane) {
             Row(modifier = Modifier.fillMaxSize()) {
-                CategoryList(selected, summaries, onSelect = pick, modifier = Modifier.width((window.widthDp * 0.33f).dp.coerceIn(360.dp, 780.dp)))
+                CategoryList(categories, selected, summaries, onSelect = pick, modifier = Modifier.width((window.widthDp * 0.33f).dp.coerceIn(360.dp, 780.dp)))
                 DetailPane(selected, modifier = Modifier.weight(1f)) { CategoryPane(selected, panes, savedMode, applyMode, applyLayout, openProfile) }
             }
         } else if (!paneOpen) {
-            CategoryList(selected, summaries, onSelect = pick, modifier = Modifier.fillMaxWidth())
+            CategoryList(categories, selected, summaries, onSelect = pick, modifier = Modifier.fillMaxWidth())
         } else {
             BackHandler(enabled = visible) { paneOpen = false }
             DetailPane(selected, modifier = Modifier.fillMaxSize()) {
@@ -254,6 +263,7 @@ private fun CategoryPane(
         SettingsCategory.CLUSTER -> ClusterPane(panes.live, onResetCluster = panes.actions.onResetCluster)
         SettingsCategory.TROUBLESHOOT -> TroubleshootPane(panes.carlinkManager, panes.live, connected = panes.connected)
         SettingsCategory.ADAPTER -> AdapterPane(panes.carlinkManager, panes.live)
+        SettingsCategory.BRIDGE -> BridgePane(panes.carlinkManager, panes.live)
     }
 }
 
@@ -271,6 +281,7 @@ private fun categorySummaries(
     val laneGuidance by remember { LaneGuidanceStore.get(context) }.flow.collectAsState()
     val layout by remember { LayoutStore.get(context) }.flow.collectAsState()
     val live = panes.live
+    val access by BridgeAccessHub.state.collectAsState()
     return mapOf(
         SettingsCategory.PHONES to SettingsModel.phonesSummary(live.connectedPhone, live.devices.size),
         SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo, layout.layout),
@@ -278,11 +289,13 @@ private fun categorySummaries(
         SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn, laneGuidance.anyOn),
         SettingsCategory.TROUBLESHOOT to SettingsModel.troubleshootSummary(live.driveLog, live.driveLogTrouble != null),
         SettingsCategory.ADAPTER to SettingsModel.adapterSummary(panes.carlinkManager.adapterName, live.box),
+        SettingsCategory.BRIDGE to BridgeAccessText.summary(access),
     )
 }
 
 @Composable
 private fun CategoryList(
+    categories: List<SettingsCategory>,
     selected: SettingsCategory,
     summaries: Map<SettingsCategory, String>,
     onSelect: (SettingsCategory) -> Unit,
@@ -296,7 +309,7 @@ private fun CategoryList(
                 .padding(start = 40.dp, end = 32.dp, top = 4.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        SettingsCategory.entries.forEach { category ->
+        categories.forEach { category ->
             CategoryItem(category, summaries[category].orEmpty(), selected = category == selected, onClick = { onSelect(category) })
         }
     }

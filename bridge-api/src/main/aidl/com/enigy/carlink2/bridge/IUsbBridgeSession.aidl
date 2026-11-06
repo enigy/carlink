@@ -9,7 +9,8 @@ import android.os.ParcelFileDescriptor;
  * the device detached, the client's process died, the bridge stopped), the transfer calls fail
  * as they do on a closed session (-1, null or false) and never reach a later session, and
  * getEndReason() says why it ended. The calls throw SecurityException for callers that are not
- * the display app, like ICarlinkBridge's. Add new methods at the END only.
+ * the display app, like ICarlinkBridge's; from API 6, a handle an approved app opened is that
+ * app's alone. Add new methods at the END only.
  */
 interface IUsbBridgeSession {
     /**

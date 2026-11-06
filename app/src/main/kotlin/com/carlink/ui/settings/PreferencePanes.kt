@@ -99,7 +99,7 @@ internal fun ClusterPane(
     var otherOn by remember(other, view.revision) { mutableStateOf(other?.let { ClusterNavigation.isEnabled(context, it.mac) } ?: true) }
     val directions = if (other != null) otherOn else live.clusterOn
     Column(modifier = modifier.widthIn(max = PANE_MAX_WIDTH), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        PaneHeader(title = "Cluster")
+        PaneHeader(title = "Cluster & HUD")
         ProfileBar(
             view = view,
             connectedMac = live.phone.btMac,

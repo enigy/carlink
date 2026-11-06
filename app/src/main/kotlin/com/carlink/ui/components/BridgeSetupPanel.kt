@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -21,12 +22,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.carlink.ui.theme.AutomotiveDimens
+import kotlinx.coroutines.launch
 
 /** Where the bridge APK is published; shown so a new user can put it on a USB drive. */
 private const val BRIDGE_APK_LOCATION = "github.com/enigy/carlink → app/carlink_bridge.apk, or Releases"
@@ -56,7 +59,7 @@ fun BridgeSetupPanel(onOpenFiles: () -> Boolean) {
             buttonIcon = Icons.Default.FolderOpen,
             failureText = "This head unit's Files app couldn't be opened. Install the bridge with adb instead.",
         ),
-        onClick = onOpenFiles,
+        onClick = { if (onOpenFiles()) null else "" },
     )
 }
 
@@ -78,7 +81,31 @@ fun BridgeNotStartingPanel(onOpenAppInfo: () -> Boolean) {
             buttonIcon = Icons.Default.Info,
             failureText = "Settings has no App info page for the bridge. Restart the head unit.",
         ),
-        onClick = onOpenAppInfo,
+        onClick = { if (onOpenAppInfo()) null else "" },
+    )
+}
+
+/**
+ * Bridge API 6: the owner handed the adapter to another app ([label]) in Settings › Bridge Configuration, so
+ * Carlink leaves it alone until it is taken back or the app is done.
+ */
+@Composable
+fun HandedOverPanel(
+    label: String,
+    // Null once the adapter is Carlink's again; otherwise the bridge's refusal.
+    onTakeBack: suspend () -> String?,
+) {
+    SetupPanel(
+        SetupPanelSpec(
+            title = "$label is using the adapter",
+            body =
+                "You handed the adapter to $label, so CarPlay is off. Take it back to use CarPlay again; " +
+                    "Carlink connects by itself once $label is done.",
+            buttonLabel = "Take back",
+            buttonIcon = Icons.Default.Usb,
+            failureText = "The USB bridge didn't take the adapter back. Try again, or restart the head unit.",
+        ),
+        onClick = onTakeBack,
     )
 }
 
@@ -91,12 +118,18 @@ private data class SetupPanelSpec(
     val failureText: String,
 )
 
+/**
+ * [onClick] answers null when it worked; otherwise the panel shows [SetupPanelSpec.failureText], then the answer
+ * when it isn't blank (the bridge's refusal, say). The button waits while [onClick] runs.
+ */
 @Composable
 private fun SetupPanel(
     spec: SetupPanelSpec,
-    onClick: () -> Boolean,
+    onClick: suspend () -> String?,
 ) {
-    var failed by remember { mutableStateOf(false) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    var running by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     Column(
         modifier =
             Modifier
@@ -109,7 +142,18 @@ private fun SetupPanel(
         Text(text = spec.body, style = MaterialTheme.typography.bodyLarge, color = TextColor)
         Spacer(modifier = Modifier.height(24.dp))
         FilledTonalButton(
-            onClick = { failed = !onClick() },
+            onClick = {
+                running = true
+                scope.launch {
+                    failure =
+                        try {
+                            onClick()
+                        } finally {
+                            running = false
+                        }
+                }
+            },
+            enabled = !running,
             modifier = Modifier.height(AutomotiveDimens.ButtonMinHeight),
             contentPadding = PaddingValues(horizontal = AutomotiveDimens.ButtonPaddingHorizontal, vertical = AutomotiveDimens.ButtonPaddingVertical),
         ) {
@@ -117,9 +161,13 @@ private fun SetupPanel(
             Spacer(modifier = Modifier.width(8.dp))
             Text(text = spec.buttonLabel, style = MaterialTheme.typography.titleLarge)
         }
-        if (failed) {
+        failure?.let { detail ->
             Spacer(modifier = Modifier.height(16.dp))
-            Text(text = spec.failureText, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
+            Text(
+                text = if (detail.isBlank()) spec.failureText else "${spec.failureText}\n$detail",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }

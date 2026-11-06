@@ -32,7 +32,7 @@ In addition, you now have the capability of adding a media pane on the side, sim
 
 ## Your cluster and HUD, upgraded
 
-Turn on **Settings › Cluster › Directions on cluster** and CarPlay's route lands on GM's driver display: turn card, distance, road and lanes, drawn by GM itself.
+Turn on **Settings › Cluster & HUD › Directions on cluster** and CarPlay's route lands on GM's driver display: turn card, distance, road and lanes, drawn by GM itself.
 
 GM's native Carplay experience strips lane guidance from the vehicle's Cluster and HUD screens.  But with Carlink, we can deliver this capability to the Cluster and HUD
 
@@ -46,7 +46,7 @@ Every icon is drawn from the junction Apple sends with the maneuver, at the real
 
 ### Lane guidance
 
-Know your lane before the exit. **Settings › Cluster › Lane guidance**, kept for each iPhone:
+Know your lane before the exit. **Settings › Cluster & HUD › Lane guidance**, kept for each iPhone:
 
 | Setting | Factory setting | What it does |
 | --- | --- | --- |
@@ -59,11 +59,11 @@ Settings also shows the last lanes the iPhone sent, or why none have arrived.
 
 The lane strip is always 6:1. GM fits it into a lane area at most 74 dp tall (the Car App Library's 500 × 74 dp box), and a calibration card in the lane area showed 6:1 is the widest shape that keeps that height. The lanes share the full width, each arrow centered and widened to fill its lane, so turns read wider than they are tall.
 
-> ![Settings › Cluster › Lane guidance](docs/readme/settings-lane-guidance.png)
+> ![Settings › Cluster & HUD › Lane guidance](docs/readme/settings-lane-guidance.png)
 
 ### Turn alert
 
-Get a heads-up before your turn. **Settings › Cluster › Turn alert** (off by factory setting, kept for each iPhone) flashes the turn icon between its normal frame and a colored one as you close in on the next turn or exit. The faster you go, the earlier it starts:
+Get a heads-up before your turn. **Settings › Cluster & HUD › Turn alert** (off by factory setting, kept for each iPhone) flashes the turn icon between its normal frame and a colored one as you close in on the next turn or exit. The faster you go, the earlier it starts:
 
 | Start alerting | Up to 35 mph | 36–59 mph | 60–69 mph | 70 mph and up |
 | --- | --- | --- | --- | --- |
@@ -80,7 +80,7 @@ Carlink can read the truck's speed, so make it yours:
 
 Nothing flashes when you're stopped, on straight-ahead or follow-the-road steps, or on arrival.
 
-> ![Settings › Cluster › Turn alert](docs/readme/settings-turn-alert.png)
+> ![Settings › Cluster & HUD › Turn alert](docs/readme/settings-turn-alert.png)
 
 ## A tour of the new Settings page:
 
@@ -108,19 +108,23 @@ Display mode, the loading screen photo, the driver's seat, and **Limit features 
 
 > <img src="docs/readme/settings-display-1.png" alt="Settings › Display" width="49%"> <img src="docs/readme/settings-display-2.png" alt="Display mode" width="49%"> <img src="docs/readme/settings-display-3.png" alt="Loading screen" width="49%"> <img src="docs/readme/settings-display-4.png" alt="Driver's seat and driving limits" width="49%">
 
+### Cluster & HUD
+
+**Directions on cluster**, **Reconnect cluster**, the **Turn alert** with a live preview of the flash, and **Lane guidance**.
+
+> ![Settings › Cluster & HUD › Turn alert](docs/readme/settings-turn-alert.png)
+
+> ![Settings › Cluster & HUD › Lane guidance](docs/readme/settings-lane-guidance.png)
+
 ### Calls
 
 The call microphone, the call audio buffer, and echo and voice tests.
 
 > ![Settings › Calls](docs/readme/settings-calls.png)
 
-### Cluster
+### Bridge Configuration
 
-**Directions on cluster**, **Reconnect cluster**, the **Turn alert** with a live preview of the flash, and **Lane guidance**.
-
-> ![Settings › Cluster › Turn alert](docs/readme/settings-turn-alert.png)
-
-> ![Settings › Cluster › Lane guidance](docs/readme/settings-lane-guidance.png)
+Listed only while **Let other apps use the adapter** is on (Adapter and about › USB bridge): who has the adapter, with **Take back**; the apps you approved, with **Hand over** and **Remove**; the apps asking for access, with **Approve** and **Dismiss**; and turning other apps' access off. See [Using the USB bridge from another app](#using-the-usb-bridge-from-another-app).
 
 ### Troubleshoot
 
@@ -141,7 +145,7 @@ Below them are the logs:
 
 ### Adapter and about
 
-The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them.
+The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
 
 ## Install in four steps
 
@@ -155,6 +159,17 @@ First, the adapter needs lvalen91's OCBM userspace, installed per his documentat
 ### About the bridge
 
 The bridge uses the same package name as Carlink-legacy's (`android.car.usb.handler`, the name GM's head unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink-legacy's bridge. From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store. 1.0.6 adds a second way to open a device, for the USB stick a stock adapter shares while Carlink converts it; Carlink's connection to the adapter is unchanged, so 1.0.5 still works for everything else.
+
+### Using the USB bridge from another app
+
+From bridge 1.0.8 you may let another app use the adapter, for a tool of your own or a bench probe. It's off by default, and while it's off the bridge answers only Carlink, as before.
+
+1. While parked, open Settings › Adapter and about and turn on **Let other apps use the adapter**. Read the warning: an app you approve can control the adapter while it has it, including its root console, its Apple authentication chip, installing software on it, and touch input to your iPhone.
+2. Open the other app and let it connect to the bridge. The bridge refuses it, and Carlink lists it under Settings › **Bridge Configuration** › Asking for access, with its package, signing certificate and installer.
+3. **Approve** it while parked. An approval is for that package signed by that key. If the app is later signed by another key, it has to ask again, and Carlink marks the request in red.
+4. **Hand over** the adapter while parked. CarPlay stops, and the app gets the adapter until you **Take back** (in Settings, or on Carlink's connecting screen; this works while driving), until Carlink opens the adapter itself, or until the app has had no session for a minute. Then Carlink connects again by itself.
+
+An approved app gets the adapter only (Carlinkit's USB ids 1314:2d00, 1314:1520 and 1314:1521), only through a session handle (`openSession`), and a short status line. Carlink's own calls stay Carlink's. **Remove** ends an app's access; turning the switch off removes every approval and request. Approvals count only while the installed Carlink passes the bridge's pin. App developers: see `bridge-api/` (`ICarlinkBridge.aidl`, `BridgeContract.ACCESS_API_VERSION`), and `tools/bridge-probe` for a working client.
 
 ### Check the download
 
