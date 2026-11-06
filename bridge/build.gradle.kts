@@ -35,8 +35,8 @@ android {
         applicationId = "android.car.usb.handler"
         minSdk = 29
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.0.6"
+        versionCode = 8
+        versionName = "1.0.7"
 
         buildConfigField("String", "CALLER_CERTS", "\"$callerCerts\"")
     }
@@ -80,8 +80,17 @@ android {
     buildFeatures {
         buildConfig = true
     }
+
+    testOptions {
+        // Robolectric reads the merged manifest (the service, the provider) and the bridge's resources.
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
     implementation(project(":bridge-api"))
+
+    // The same test libraries as :app's.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.16.1")
 }

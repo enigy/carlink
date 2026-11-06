@@ -6,6 +6,7 @@ import android.hardware.usb.UsbManager
 import android.os.ParcelFileDescriptor
 import com.enigy.carlink2.bridge.BridgeContract
 import com.enigy.carlink2.bridge.ICarlinkBridge
+import com.enigy.carlink2.bridge.IUsbBridgeSession
 import java.io.FileInputStream
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -27,9 +28,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * The bridge relays ONE session ([BridgeSession]): only the transport opened last ([open]) writes to or
  * closes it; a superseded one's writes are refused and its [stop] leaves the bridge's session alone.
+ * From bridge API 5 ([BridgeContract.SESSION_API_VERSION]) the transport works through its session's own
+ * handle ([session]): the bridge refuses it too once superseded, and says why the session ended, which
+ * the read loop's EOF and a failed write put in the log.
  */
 class BridgeBulkTransport private constructor(
     private val bridge: ICarlinkBridge,
+    // API 5: this open's own session; null on an older bridge, whose calls act on whichever session is open.
+    private val session: IUsbBridgeSession?,
     private val stream: ParcelFileDescriptor,
     val deviceName: String,
     private val log: com.carlink.logging.ProbeLog.Logger,
@@ -50,9 +56,35 @@ class BridgeBulkTransport private constructor(
             log: com.carlink.logging.ProbeLog.Logger,
         ): BridgeBulkTransport? =
             synchronized(BridgeSession.lock) {
-                val stream = runCatching { bridge.open(deviceName) }.getOrNull() ?: return null
-                BridgeBulkTransport(bridge, stream, deviceName, log).also { BridgeSession.owner = it }
+                val t = runCatching { openLocked(bridge, deviceName, log) }.getOrNull() ?: return null
+                t.also { BridgeSession.owner = it }
             }
+
+        /** API 5: a session with a handle of its own, its stream taken from the handle; before that, the one session's socket. */
+        private fun openLocked(
+            bridge: ICarlinkBridge,
+            deviceName: String,
+            log: com.carlink.logging.ProbeLog.Logger,
+        ): BridgeBulkTransport? {
+            if (bridge.apiVersion < BridgeContract.SESSION_API_VERSION) {
+                val stream = bridge.open(deviceName) ?: return null
+                return BridgeBulkTransport(bridge, null, stream, deviceName, log)
+            }
+            val session = bridge.openSession(deviceName, false, false, BridgeSession.client) ?: return null
+            val stream = runCatching { session.takeStream() }.getOrNull()
+            if (stream == null) {
+                log.w("the bridge's session on $deviceName ended before its stream was taken: ${endReasonOf(session) ?: "no reason given"}")
+                runCatching { session.close() }
+                return null
+            }
+            return BridgeBulkTransport(bridge, session, stream, deviceName, log)
+        }
+
+        /** Why the bridge ended [session], or why it can't say; null while the session is open. */
+        private fun endReasonOf(session: IUsbBridgeSession): String? = runCatching { session.endReason }.getOrElse { "the bridge didn't answer (${it.javaClass.simpleName})" }
+
+        /** The read loop's EOF, with why the bridge ended [session] when it says (API 5). */
+        private fun eofReason(session: IUsbBridgeSession?): String = "bridge closed the session (EOF${session?.let { endReasonOf(it) }?.let { ": $it" }.orEmpty()})"
 
         /** The OCBM adapter if attached, by VID/PID — readable without USB permission. */
         fun findAdapter(context: Context): UsbDevice? {
@@ -110,7 +142,7 @@ class BridgeBulkTransport private constructor(
             while (running.get()) {
                 val n = input.read(buf, 0, buf.size)
                 if (n < 0) {
-                    reason = "bridge closed the session (EOF)"
+                    reason = eofReason(session)
                     break
                 }
                 bytesRead += n
@@ -146,16 +178,23 @@ class BridgeBulkTransport private constructor(
             while (off < data.size) {
                 val len = minOf(WRITE_CHUNK, data.size - off)
                 val chunk = if (off == 0 && len == data.size) data else data.copyOfRange(off, off + len)
+                var threw = false
                 val n =
                     try {
-                        bridge.write(chunk, WRITE_TIMEOUT_MS)
+                        session?.write(chunk, WRITE_TIMEOUT_MS) ?: bridge.write(chunk, WRITE_TIMEOUT_MS)
                     } catch (t: Throwable) {
                         lastError = "bridge.write threw ${t.javaClass.simpleName}: ${t.message}"
+                        threw = true
                         -1
                     }
                 if (n != len) {
                     writeFailures++
-                    if (n >= 0) lastError = "bridge wrote $n of $len bytes at offset $off"
+                    if (n >= 0) {
+                        lastError = "bridge wrote $n of $len bytes at offset $off"
+                    } else if (!threw) {
+                        // A timeout or USB failure, or (API 5) a session the bridge has ended: say which.
+                        lastError = sessionEndReason()?.let { "the bridge ended the session: $it" } ?: "bridge write failed (a timeout or a USB error)"
+                    }
                     log.w("write FAILED: $lastError (consecutive=$writeFailures)")
                     return false
                 }
@@ -182,13 +221,23 @@ class BridgeBulkTransport private constructor(
         val mine =
             synchronized(BridgeSession.lock) {
                 (BridgeSession.owner === this).also {
-                    if (it) {
-                        BridgeSession.owner = null
+                    if (it) BridgeSession.owner = null
+                    // Its own session (API 5) is always its own to close; an older bridge's one session only while it owns it.
+                    val own = session
+                    if (own != null) {
+                        runCatching { own.close() }
+                    } else if (it) {
                         runCatching { bridge.close() }
                     }
                 }
             }
-        log.i("bridge transport closed${if (mine) "" else " (superseded: the bridge's session was left alone)"}")
+        val how =
+            when {
+                session != null -> " (its session: ${sessionEndReason() ?: "still open"})"
+                mine -> ""
+                else -> " (superseded: the bridge's session was left alone)"
+            }
+        log.i("bridge transport closed$how")
     }
 
     /** This end's counters only: no call into the bridge, which may be the part that is stuck. */
@@ -196,6 +245,9 @@ class BridgeBulkTransport private constructor(
 
     /** One-line diagnostics from the bridge process (handler config, permission, counters). */
     fun bridgeStatus(): String = runCatching { bridge.status }.getOrElse { "bridge status unavailable: ${it.message}" }
+
+    /** API 5: why the bridge ended this transport's session (a BridgeContract END_ value); null while it is open, or on an older bridge. */
+    fun sessionEndReason(): String? = session?.let { endReasonOf(it) }
 
     /** Bridge API this transport was opened against; raw-stream relay requires [BridgeContract.RAW_STREAM_API_VERSION]. */
     fun apiVersion(): Int = runCatching { bridge.apiVersion }.getOrDefault(-1)
