@@ -69,6 +69,11 @@ sealed interface PhoneSetupPhase {
         val body: String,
     ) : PhoneSetupPhase
 
+    /** A paired iPhone answered the adapter and reset the link twice: it has most likely forgotten the pairing (BTP_BOND_LOST). */
+    data class PhoneForgot(
+        val name: String,
+    ) : PhoneSetupPhase
+
     /**
      * MGMT_PAIR_WINDOW came back non-zero while the adapter's Bluetooth may still be starting: about 15 s from
      * power-on (firmware ~10 s, attach ~13 s; the dev adapter in the truck, 5 Nov). The request is tried again until
@@ -279,11 +284,32 @@ class PhoneSetup(
 
     /** CT_BT_PHASE while the window is open: the progress line. */
     fun onBtPhase(phase: Byte) {
+        if (phase == Ocbm.BTP_BOND_LOST) {
+            phoneForgot()
+            return
+        }
         val text = progressText(phase) ?: return
         synchronized(lock) {
             val now = phaseState.value as? PhoneSetupPhase.Pairing ?: return
             phaseState.value = now.copy(progress = text)
         }
+    }
+
+    /**
+     * BTP_BOND_LOST: a paired iPhone answered the adapter's call and reset the link twice, so it most likely forgot the
+     * pairing (5 Nov bench: six pages, each answered and reset, and pairing offered only after a minute's wait). Say so
+     * at once, with how to re-pair. Not while a phone is connected or the driver is already pairing.
+     */
+    private fun phoneForgot() {
+        val shown =
+            synchronized(lock) {
+                val now = phaseState.value
+                if (connected || now is PhoneSetupPhase.Pairing || now is PhoneSetupPhase.PhoneForgot) return
+                timer?.cancel()
+                phaseState.value = PhoneSetupPhase.PhoneForgot(nameNow())
+                now
+            }
+        logWarn("[PAIRING] BT_PHASE BOND_LOST: a paired iPhone reset the link twice; asking for a re-pair (was $shown)", tag = Logger.Tags.ADAPTR)
     }
 
     /** CT_PAIRING_CODE while the window is open (empty clears it); the Pair / Cancel prompt itself is the manager's. */
@@ -411,7 +437,11 @@ class PhoneSetup(
     private fun refused(status: Int?): Boolean = status != null && status != 0
 
     /** The driver asked from this screen: a prompt, a failure on it, or Bluetooth still starting is up. */
-    private fun onThisScreen(p: PhoneSetupPhase): Boolean = p is PhoneSetupPhase.Prompt || p is PhoneSetupPhase.NotPaired || p is PhoneSetupPhase.BluetoothStarting
+    private fun onThisScreen(p: PhoneSetupPhase): Boolean =
+        when (p) {
+            is PhoneSetupPhase.Prompt, is PhoneSetupPhase.NotPaired, is PhoneSetupPhase.BluetoothStarting, is PhoneSetupPhase.PhoneForgot -> true
+            else -> false
+        }
 
     private fun nameNow(): String = adapterName ?: phones?.name ?: DEFAULT_NAME
 
@@ -446,6 +476,7 @@ class PhoneSetup(
                 is PhoneSetupPhase.NotPaired -> p.copy(name = name, body = if (p.title == NOT_PAIRED) notPairedBody(name) else p.body)
                 is PhoneSetupPhase.BluetoothDown -> p.copy(name = name)
                 is PhoneSetupPhase.BluetoothStarting -> p.copy(name = name)
+                is PhoneSetupPhase.PhoneForgot -> p.copy(name = name)
                 is PhoneSetupPhase.Waiting -> p.copy(name = name)
                 PhoneSetupPhase.None -> p
             }

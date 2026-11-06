@@ -141,6 +141,26 @@ class PhoneSetupTest {
     }
 
     @Test
+    fun `a paired iPhone that forgot the adapter is asked to re-pair at once`() {
+        // The 5 Nov bench: it answered six pages and reset each, and pairing was offered only after a minute's wait.
+        box.devices = """["AA:BB:CC:DD:EE:FF"]"""
+        setup.onSubscribed()
+        waitUntil { box.reads.get() == 1 }
+        setup.onBtPhase(Ocbm.BTP_BOND_LOST)
+        assertEquals(PhoneSetupPhase.PhoneForgot("CarLink-9C1A"), setup.phase.value)
+        setup.onPhoneConnected() // it was a still-paired phone after all: the question goes at once
+        assertEquals(PhoneSetupPhase.None, setup.phase.value)
+        setup.reset()
+        setup.onSubscribed()
+        waitUntil { box.reads.get() >= 3 } // the re-read on connect, then this session's
+        setup.onBtPhase(Ocbm.BTP_BOND_LOST)
+        setup.pair()
+        await<PhoneSetupPhase.Pairing>()
+        setup.onBtPhase(Ocbm.BTP_BOND_LOST)
+        assertTrue("not over a pairing under way", setup.phase.value is PhoneSetupPhase.Pairing)
+    }
+
+    @Test
     fun `phones paired but none comes - keep waiting, then offer to pair a new one`() {
         box.devices = """["AA:BB:CC:DD:EE:FF"]"""
         setup.onSubscribed()
