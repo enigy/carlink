@@ -74,6 +74,29 @@ internal class AccessControl(
 
     private val graceCheck = Runnable { expireIdleHandover() }
 
+    // The requests, held here and written through to [store], except a refused app's repeat calls (count, lastAt):
+    // those are written at most every [REQUEST_WRITE_MS] per package, so an app retrying in a loop doesn't rewrite
+    // the preferences on every call. Guarded by [lock]; [cachedRequests] is loaded on first use.
+    private var cachedRequests: List<AccessRequest>? = null
+    private val lastRequestWrite = HashMap<String, Long>()
+    private var requestsDirty = false
+    private var flushPending = false
+    private val flushRequests =
+        Runnable {
+            synchronized(lock) {
+                flushPending = false
+                if (requestsDirty) writeRequestsLocked(requestsLocked())
+            }
+        }
+
+    private fun requestsLocked(): List<AccessRequest> = cachedRequests ?: store.requests.also { cachedRequests = it }
+
+    private fun writeRequestsLocked(value: List<AccessRequest>) {
+        cachedRequests = value
+        store.requests = value
+        requestsDirty = false
+    }
+
     /** On, and the installed Carlink passes the pin. When it doesn't, access is turned off and cleared here. */
     fun isOn(): Boolean {
         if (!store.on) return false
@@ -118,13 +141,26 @@ internal class AccessControl(
         val now = System.currentTimeMillis()
         val isNew: Boolean
         synchronized(lock) {
-            val all = store.requests
+            val all = requestsLocked()
             val old = all.find { it.packageName == packageName && it.sha256 == sha256 }
             isNew = old == null || old.keyChanged != keyChanged
             val request =
                 old?.copy(label = label, installer = installer, lastAt = now, count = old.count + 1, keyChanged = keyChanged)
                     ?: AccessRequest(packageName, label, sha256, installer, now, now, 1, keyChanged)
-            store.requests = (all.filterNot { it === old } + request).sortedBy { it.lastAt }.takeLast(BridgeContract.MAX_ACCESS_REQUESTS)
+            val next = (all.filterNot { it === old } + request).sortedBy { it.lastAt }.takeLast(BridgeContract.MAX_ACCESS_REQUESTS)
+            val uptime = SystemClock.uptimeMillis()
+            val lastWrite = lastRequestWrite[packageName]
+            if (isNew || lastWrite == null || uptime - lastWrite >= REQUEST_WRITE_MS) {
+                lastRequestWrite[packageName] = uptime
+                writeRequestsLocked(next)
+            } else {
+                cachedRequests = next
+                requestsDirty = true
+                if (!flushPending) {
+                    flushPending = true
+                    handler.postDelayed(flushRequests, REQUEST_WRITE_MS)
+                }
+            }
         }
         if (isNew) {
             BridgeStats.event("access request from $packageName${if (keyChanged) " (key changed)" else ""}")
@@ -148,6 +184,9 @@ internal class AccessControl(
     private fun turnOff(detail: String) {
         synchronized(lock) {
             store.clear()
+            cachedRequests = emptyList()
+            requestsDirty = false
+            lastRequestWrite.clear()
             approvedUids.clear()
         }
         if (!endHandover(BridgeContract.END_ACCESS_REVOKED, detail)) endAppSession(null, BridgeContract.END_ACCESS_REVOKED, detail)
@@ -165,12 +204,12 @@ internal class AccessControl(
         requireNotNull(wanted) { "$sha256 isn't a SHA-256 fingerprint" }
         val replaced: Approval?
         synchronized(lock) {
-            val request = store.requests.find { it.packageName == packageName && it.sha256 == wanted }
+            val request = requestsLocked().find { it.packageName == packageName && it.sha256 == wanted }
             requireNotNull(request) { "No request from $packageName signed by $wanted: open the app and let it connect first" }
             replaced = store.approved.find { it.packageName == packageName }
             store.approved = store.approved.filterNot { it.packageName == packageName } +
                 Approval(packageName, request.label, wanted, request.installer, System.currentTimeMillis(), 0L, 0)
-            store.requests = store.requests.filterNot { it.packageName == packageName }
+            writeRequestsLocked(requestsLocked().filterNot { it.packageName == packageName })
             approvedUids.values.removeIf { it == packageName }
         }
         if (replaced != null && replaced.sha256 != wanted) {
@@ -196,7 +235,7 @@ internal class AccessControl(
     }
 
     fun dismissRequest(packageName: String) {
-        synchronized(lock) { store.requests = store.requests.filterNot { it.packageName == packageName } }
+        synchronized(lock) { writeRequestsLocked(requestsLocked().filterNot { it.packageName == packageName }) }
         notifyListeners()
     }
 
@@ -372,7 +411,7 @@ internal class AccessControl(
             .put("carlinkVerified", carlinkPasses ?: callers.displayAppPasses())
             .put("approved", JSONArray(store.approved.map { it.toJson() }))
             // Kept oldest first ([record]); newest first here.
-            .put("requests", JSONArray(store.requests.asReversed().map { it.toJson() }))
+            .put("requests", JSONArray(synchronized(lock) { requestsLocked() }.asReversed().map { it.toJson() }))
             .put("handedTo", handedTo?.let { JSONObject().put("package", it.packageName).put("since", it.since) } ?: JSONObject.NULL)
             .put("holder", usb.current?.owner ?: JSONObject.NULL)
             .toString()
@@ -382,7 +421,7 @@ internal class AccessControl(
     fun describe(): String {
         if (!store.on) return "access=off"
         val handover = handedTo?.let { " handedTo=${it.packageName}" }.orEmpty()
-        return "access=on(approved=${store.approved.size} requests=${store.requests.size}$handover)"
+        return "access=on(approved=${store.approved.size} requests=${synchronized(lock) { requestsLocked() }.size}$handover)"
     }
 
     /** getStatus() for an approved app: the versions, the adapters only, who holds the adapter, and whether it is handed to the caller. */
@@ -407,5 +446,8 @@ internal class AccessControl(
     private companion object {
         const val TAG = "Carlink2Bridge"
         const val MS_PER_S = 1_000
+
+        // How often a refused app's repeat calls may rewrite the requests (count, lastAt) per package.
+        const val REQUEST_WRITE_MS = 5_000L
     }
 }

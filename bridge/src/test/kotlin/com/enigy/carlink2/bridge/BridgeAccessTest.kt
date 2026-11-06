@@ -99,6 +99,23 @@ class BridgeAccessTest {
     }
 
     @Test
+    fun `a refused app retrying in a loop is counted in memory and written at most every few seconds`() {
+        bridge.setOtherAppsAllowed(true)
+        repeat(5) { calling(PROBE_UID) { assertThrows(SecurityException::class.java) { bridge.status } } }
+        assertEquals("counted at once", 5, access().getJSONArray("requests").getJSONObject(0).getInt("count"))
+        assertEquals("only the first call was written", 1, storedCount())
+        idle(Duration.ofSeconds(6))
+        assertEquals("the rest followed within the window", 5, storedCount())
+        calling(PROBE_UID) { assertThrows(SecurityException::class.java) { bridge.status } }
+        assertEquals("a call after the window writes at once", 6, storedCount())
+    }
+
+    private fun storedCount(): Int {
+        val prefs = controller.get().getSharedPreferences("bridge_access", android.content.Context.MODE_PRIVATE)
+        return org.json.JSONArray(prefs.getString("requests", "[]")).getJSONObject(0).getInt("count")
+    }
+
+    @Test
     fun `an approved app opens nothing until it is handed the adapter, and then only the adapter`() {
         approve(PROBE, PROBE_UID, PROBE_KEY)
         assertNull(calling(PROBE_UID) { bridge.openSession(ADAPTER, false, false, Binder()) })

@@ -503,7 +503,6 @@ private fun ConnectingWords(
     onOpenAppInfo: () -> Boolean,
 ) {
     val access by BridgeAccessHub.state.collectAsState()
-    val scope = rememberCoroutineScope()
     val handedTo = access.handedToLabel
     when {
         // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
@@ -513,8 +512,7 @@ private fun ConnectingWords(
         handedTo != null ->
             HandedOverPanel(handedTo) {
                 logInfo("[UI_ACTION] Take back the adapter (connecting screen)", tag = "UI")
-                scope.launch { carlinkManager.takeBackAdapter() }
-                true
+                carlinkManager.takeBackAdapter()
             }
         // A stock adapter's conversion, then an adapter update in flight or just ended, then the adapter's
         // one-file install (its trial and way back), then pairing an iPhone, before the words; the adapter's own
