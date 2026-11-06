@@ -1,6 +1,14 @@
 package com.carlink.usb
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -116,6 +124,23 @@ class BridgeAccessTest {
         }
 
     @Test
+    fun `take back and a refused hand over answer at once, while the connect they start is still running`() =
+        runBlocking {
+            val manager = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val connects = ArrayList<Job>()
+            val connect: () -> Unit = { connects += manager.launch { awaitCancellation() } }
+            try {
+                val refused = AdapterHandover({}, { "Carlink's session is still open" }, { null }, connect)
+                assertEquals("Carlink's session is still open", withTimeout(ANSWER_MS) { refused.handOver("com.example.probe") })
+                assertNull(withTimeout(ANSWER_MS) { refused.takeBack() })
+                assertEquals(2, connects.size)
+                assertTrue("the connects run on, apart from the caller", connects.all { it.isActive })
+            } finally {
+                manager.cancel()
+            }
+        }
+
+    @Test
     fun `a refused take-back doesn't connect`() =
         runBlocking {
             var connected = false
@@ -125,6 +150,7 @@ class BridgeAccessTest {
         }
 
     private companion object {
+        const val ANSWER_MS = 2_000L
         val KEY = List(32) { "11" }.joinToString(":")
         val DOCUMENT =
             """

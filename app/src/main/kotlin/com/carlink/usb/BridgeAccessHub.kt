@@ -135,12 +135,16 @@ object BridgeAccessHub {
  * The order Carlink gives the adapter away and takes it back in, apart from CarlinkManager so it is testable: hand
  * over stops Carlink's session first (the bridge refuses while one is open), and a refusal reconnects; take back
  * asks the bridge, then connects as usual.
+ *
+ * [connect] only starts the connect, on CarlinkManager's own scope, and returns at once: hand over and take back
+ * answer with the bridge's word without waiting for it. The callers run in UI scopes (a panel, Settings), and a
+ * start cancelled there would strand CONNECTING with no cleanup, so later starts all skip.
  */
 class AdapterHandover(
     private val stopSession: suspend () -> Unit,
     private val bridgeHandOver: suspend (String) -> String?,
     private val bridgeTakeBack: suspend () -> String?,
-    private val connect: suspend () -> Unit,
+    private val connect: () -> Unit,
 ) {
     /** Null when [packageName] has the adapter now; otherwise the refusal, and Carlink connects again. */
     suspend fun handOver(packageName: String): String? {

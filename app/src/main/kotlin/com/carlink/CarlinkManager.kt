@@ -1351,7 +1351,8 @@ class CarlinkManager(
             stopSession = { lifecycleMutex.withLock { withContext(Dispatchers.IO) { stopImpl() } } },
             bridgeHandOver = { BridgeAccessHub.handOver(context, it) },
             bridgeTakeBack = { BridgeAccessHub.takeBack(context) },
-            connect = { startIfDisconnected("the adapter is Carlink's again") },
+            // On this manager's scope, never the caller's: a UI scope cancelled mid-start would strand CONNECTING.
+            connect = { scope.launch { startIfDisconnected("the adapter is Carlink's again") } },
         )
 
     /**
