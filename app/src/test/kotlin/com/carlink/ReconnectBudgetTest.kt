@@ -47,6 +47,16 @@ class ReconnectBudgetTest {
     }
 
     @Test
+    fun `a long session, then a dead adapter, still gives up after five`() {
+        val b = budget()
+        b.linkUp(0)
+        assertEquals("the long session earned a fresh chain", 2_000L, b.next(STABLE))
+        // The adapter never answers again: no linkUp, so the stable link is spent and the chain climbs.
+        assertEquals(listOf(4_000L, 8_000L, 16_000L, 30_000L), List(4) { b.next(STABLE * 10) })
+        assertNull("a dead adapter can't spin forever", b.next(STABLE * 10))
+    }
+
+    @Test
     fun `losses with no link up between them give up after five, and reset starts over at once`() {
         val b = budget()
         repeat(5) { b.next(0) }
