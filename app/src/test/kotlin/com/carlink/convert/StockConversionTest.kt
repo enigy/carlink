@@ -91,7 +91,7 @@ class StockConversionTest {
     @Test
     fun `an adapter that never answers is not offered the conversion`() {
         attach()
-        val offered = awaitPhase<ConversionPhase.Offered>(timeoutMs = 2_000)
+        val offered = awaitPhase<ConversionPhase.Offered>()
         assertEquals(Offer.UNSUPPORTED, offered.offer)
         assertEquals(StockInfo(), offered.info)
     }
@@ -167,13 +167,13 @@ class StockConversionTest {
         assertTrue(bench.claim("1314:1520"))
         bench.attach(adapter, "1314:1520")
         adapter.feed(frame(0xCC, "2025.10.15.1127CAY") + frame(0x19, """{"productType":"A15W"}"""))
-        waitUntil(1_000) { bench.phase.value is ConversionPhase.Offered }
+        waitUntil(PHASE_WAIT_MS) { bench.phase.value is ConversionPhase.Offered }
         usb.devices[EARLIER] = 0x46f4 to 0x0001
         assertFalse(bench.wantsStick(0x46f4, 0x0001, EARLIER))
         bench.convert()
-        waitUntil(1_000) { bench.phase.value == ConversionPhase.WaitingForStick }
+        waitUntil(PHASE_WAIT_MS) { bench.phase.value == ConversionPhase.WaitingForStick }
         assertTrue(bench.wantsStick(0x46f4, 0x0001, EARLIER))
-        waitUntil(1_000) { EARLIER in usb.opened } // found by looking: no attach broadcast for a stick plugged in first
+        waitUntil(PHASE_WAIT_MS) { EARLIER in usb.opened } // found by looking: no attach broadcast for a stick plugged in first
         assertEquals(ConversionPhase.ReadingStick, bench.phase.value)
         bench.reset()
     }
@@ -241,7 +241,7 @@ class StockConversionTest {
         awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
         usb.devices.remove(STICK)
         awaitPhase<ConversionPhase.AdapterUnplugged>()
-        Thread.sleep(100) // the look-out sees it off USB
+        seenGone()
         assertFalse("not offered: it is installing", conversion.claim("1314:1520"))
         assertTrue(conversion.phase.value is ConversionPhase.InstallingFromStick)
     }
@@ -261,7 +261,7 @@ class StockConversionTest {
         assertFalse(conversion.claim("1314:1520"))
         assertEquals("a stock claim without a replug is not one either", ConversionPhase.AdapterUnplugged, conversion.phase.value)
         usb.devices.remove(ADAPTER) // unplugged
-        Thread.sleep(100)
+        seenGone()
         usb.devices[ADAPTER] = 0x1314 to 0x1520 // and back
         awaitPhase<ConversionPhase.InstallingFromStick>()
     }
@@ -405,7 +405,7 @@ class StockConversionTest {
         // Factory adapter, 31 Oct: after a failed update stock showed for about a second, then left USB until a power cycle.
         val stick = toInstalling()
         val before = usb.searches.get()
-        awaitPhase<ConversionPhase.NotBack>(timeoutMs = 2_000)
+        awaitPhase<ConversionPhase.NotBack>()
         assertTrue("searched while waiting", usb.searches.get() - before >= 2)
         // Replugged with the stick in: stock shares it, with the installer's report and the image renamed .refused.
         val fs = fat32(stick)
@@ -420,7 +420,7 @@ class StockConversionTest {
     @Test
     fun `closing the hasn't-come-back panel offers no conversion again`() {
         toInstalling()
-        awaitPhase<ConversionPhase.NotBack>(timeoutMs = 2_000)
+        awaitPhase<ConversionPhase.NotBack>()
         conversion.dismiss()
         assertEquals(ConversionPhase.Declined, conversion.phase.value)
         assertFalse(conversion.claim("1314:1520"))
@@ -519,6 +519,7 @@ class StockConversionTest {
         awaitPhase<ConversionPhase.ReplugAdapter>(timeoutMs = 10_000)
         usb.devices.remove(STICK)
         awaitPhase<ConversionPhase.AdapterUnplugged>()
+        seenGone()
         usb.devices[ADAPTER] = 0x1314 to 0x1520 // plugged back in
         awaitPhase<ConversionPhase.InstallingFromStick>()
         usb.devices.remove(ADAPTER)
@@ -553,8 +554,14 @@ class StockConversionTest {
         return t.written.isEmpty()
     }
 
+    /** Off USB until the look-out has looked twice more: the second look began after now, so it saw the adapter gone. */
+    private fun seenGone() {
+        val looks = usb.adapterLooks.get()
+        waitUntil(PHASE_WAIT_MS) { usb.adapterLooks.get() >= looks + 2 }
+    }
+
     private inline fun <reified T : ConversionPhase> awaitPhase(
-        timeoutMs: Long = 1_000,
+        timeoutMs: Long = PHASE_WAIT_MS,
         crossinline where: (T) -> Boolean = { true },
     ): T {
         waitUntil(timeoutMs) { (conversion.phase.value as? T)?.let(where) == true }
@@ -646,10 +653,16 @@ class StockConversionTest {
         val searches = AtomicInteger()
         val opened = CopyOnWriteArrayList<String>()
 
+        // Looks that would see a stock adapter: only the replug look-out's, as the stick look-out takes sticks.
+        val adapterLooks = AtomicInteger()
+
         @Volatile var onOpen: ((String) -> Unit)? = null
 
-        override fun attached(accepts: (vendorId: Int, productId: Int) -> Boolean): Set<String> =
-            devices.filterValues { (vendor, product) -> accepts(vendor, product) }.keys.toSet()
+        override fun attached(accepts: (vendorId: Int, productId: Int) -> Boolean): Set<String> {
+            val seen = devices.filterValues { (vendor, product) -> accepts(vendor, product) }.keys.toSet()
+            if (accepts(0x1314, 0x1520)) adapterLooks.incrementAndGet()
+            return seen
+        }
 
         override fun searchAgain() {
             searches.incrementAndGet()
@@ -662,6 +675,10 @@ class StockConversionTest {
     }
 
     private companion object {
+        // How long a wait for a phase (or a condition) gives it before failing: margin only, as it returns as soon
+        // as the phase arrives. The 6 Nov builder failure was a race, not slowness ([seenGone]).
+        const val PHASE_WAIT_MS = 5_000L
+
         const val EARLIER = "/dev/bus/usb/001/004"
         const val STICK = "/dev/bus/usb/001/007"
         const val AGAIN = "/dev/bus/usb/001/009"
