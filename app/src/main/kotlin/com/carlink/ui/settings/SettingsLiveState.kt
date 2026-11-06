@@ -31,13 +31,13 @@ enum class SettingsCategory(
 ) {
     PHONES("Phones", Icons.Default.PhoneIphone),
     DISPLAY("Display", Icons.Default.DesktopWindows),
-    CALLS("Calls", Icons.Default.Mic),
     CLUSTER("Cluster", Icons.Default.Navigation),
-    TROUBLESHOOT("Troubleshoot", Icons.Default.Build),
-    ADAPTER("Adapter and about", Icons.Default.Memory),
+    CALLS("Calls", Icons.Default.Mic),
 
     /** Listed only while other apps' access is on (bridge API 6; Adapter and about › USB bridge). */
     BRIDGE("Bridge Configuration", Icons.Default.Usb),
+    TROUBLESHOOT("Troubleshoot", Icons.Default.Build),
+    ADAPTER("Adapter and about", Icons.Default.Memory),
 }
 
 /**

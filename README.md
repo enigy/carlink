@@ -108,12 +108,6 @@ Display mode, the loading screen photo, the driver's seat, and **Limit features 
 
 > <img src="docs/readme/settings-display-1.png" alt="Settings › Display" width="49%"> <img src="docs/readme/settings-display-2.png" alt="Display mode" width="49%"> <img src="docs/readme/settings-display-3.png" alt="Loading screen" width="49%"> <img src="docs/readme/settings-display-4.png" alt="Driver's seat and driving limits" width="49%">
 
-### Calls
-
-The call microphone, the call audio buffer, and echo and voice tests.
-
-> ![Settings › Calls](docs/readme/settings-calls.png)
-
 ### Cluster
 
 **Directions on cluster**, **Reconnect cluster**, the **Turn alert** with a live preview of the flash, and **Lane guidance**.
@@ -121,6 +115,16 @@ The call microphone, the call audio buffer, and echo and voice tests.
 > ![Settings › Cluster › Turn alert](docs/readme/settings-turn-alert.png)
 
 > ![Settings › Cluster › Lane guidance](docs/readme/settings-lane-guidance.png)
+
+### Calls
+
+The call microphone, the call audio buffer, and echo and voice tests.
+
+> ![Settings › Calls](docs/readme/settings-calls.png)
+
+### Bridge Configuration
+
+Listed only while **Let other apps use the adapter** is on (Adapter and about › USB bridge): who has the adapter, with **Take back**; the apps you approved, with **Hand over** and **Remove**; the apps asking for access, with **Approve** and **Dismiss**; and turning other apps' access off. See [Using the USB bridge from another app](#using-the-usb-bridge-from-another-app).
 
 ### Troubleshoot
 
