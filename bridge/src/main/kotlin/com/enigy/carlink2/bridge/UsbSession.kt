@@ -15,48 +15,201 @@ import java.io.FileOutputStream
 import java.io.IOException
 
 /**
- * One open CPC200 at a time: claims the bulk interface, forwards inbound messages into a
- * socket the display app reads, and performs outbound writes on the display app's behalf.
+ * One open device at a time: claims its bulk interface, relays the IN endpoint into a socket the
+ * display app reads ([pump]), and performs outbound writes on the display app's behalf.
  *
- * The pump reads the way the display app's direct-USB path always has — exactly 16 header
- * bytes, then the payload in ≤16 KB chunks — so the adapter sees the same request pattern.
- * It forwards a message only once it is complete, so the socket never holds a torn message
- * and the display app's parser can stay strictly aligned.
+ * API 4 adds a session opened on request ([open] with onRequest): no pump and no socket; the display
+ * app asks for each IN transfer with its exact length ([Session.read]), and may clear a halted endpoint
+ * or reset USB mass storage's Bulk-Only Transport ([Session.clearHalt], [Session.resetBulkOnly]). A USB
+ * stick needs that: it expects an IN only after a command block, of the length the command block gave.
  *
- * API 4 adds a session opened on request ([openOnRequest]): no pump and no socket; the display app
- * asks for each IN transfer with its exact length ([read]), and may clear a halted endpoint or reset
- * USB mass storage's Bulk-Only Transport ([clearHalt], [resetBulkOnly]). A USB stick needs that: it
- * expects an IN only after a command block, of the length the command block gave.
+ * API 5 gives each open a [Session] of its own, which [BridgeService] hands the display app as a handle
+ * (IUsbBridgeSession). A session's calls act on it only: once it has ended they fail as on a closed
+ * session and never reach the session after it, and [Session.endReason] says why it ended. The API ≤ 4
+ * calls here ([write], [read], [clearHalt], [resetBulkOnly], [takeTrace], [close]) act on whichever
+ * session is open, as they always have.
+ *
+ * Ending a session never waits out a transfer: it releases the interface first, which makes a transfer
+ * in flight on it return -1 at once, and the connection closes when the last transfer has left it
+ * ([Session.end]), so no transfer runs on a closed, maybe reused, file descriptor.
  */
 internal class UsbSession(
     private val usbManager: UsbManager,
 ) {
-    private class Active(
+    /**
+     * One open device: its connection and claimed interface, and for a streaming session the pump's end
+     * of the display app's socket. Open until [end]. Every transfer goes through [transfer], which
+     * refuses once the session has ended.
+     */
+    class Session internal constructor(
+        val id: Int,
         val deviceName: String,
-        val connection: UsbDeviceConnection,
-        val iface: UsbInterface,
-        val inEndpoint: UsbEndpoint,
-        val outEndpoint: UsbEndpoint,
-        // The display app's socket, fed by the pump; null for a session opened on request, which has neither.
-        val sink: ParcelFileDescriptor?,
-        val trace: TransferTrace?,
+        private val connection: UsbDeviceConnection,
+        private val iface: UsbInterface,
+        private val bulkIn: UsbEndpoint,
+        private val bulkOut: UsbEndpoint,
+        // The pump's end of the display app's socket; null for a session opened on request, which has no pump.
+        private val sink: ParcelFileDescriptor?,
+        // The display app's end until it takes it ([takeStream]).
+        stream: ParcelFileDescriptor?,
+        private val trace: TransferTrace?,
+        private val onEnded: ((String) -> Unit)?,
     ) {
-        @Volatile var running = true
+        private val guard = Any()
+        private val writeLock = Any()
+        private val readLock = Any()
+
+        // Transfers on the connection right now; it closes when the last one leaves after the end.
+        private var inFlight = 0
+        private var connectionClosed = false
+        private var stream: ParcelFileDescriptor? = stream
+
+        /** Null while the session is open; afterwards why it ended, one of BridgeContract's END_ values. */
+        @Volatile var endReason: String? = null
+            private set
+
+        val isOpen: Boolean get() = endReason == null
+
+        val onRequest: Boolean get() = sink == null
+
+        /** The display app's end of a streaming session's socket, once; null after that, on request, or once ended. */
+        fun takeStream(): ParcelFileDescriptor? = synchronized(guard) { stream.also { stream = null } }
+
+        fun write(
+            data: ByteArray?,
+            timeoutMs: Int,
+        ): Int {
+            if (data == null || data.size > BridgeContract.MAX_WRITE_BYTES) {
+                BridgeStats.writeErrors.incrementAndGet()
+                return -1
+            }
+            if (!isOpen) return -1
+            val started = System.nanoTime()
+            // UsbDeviceConnection.bulkTransfer is not documented thread-safe per endpoint, and
+            // the display app writes from its heartbeat, mic and UI threads.
+            val result =
+                synchronized(writeLock) {
+                    transfer(-1) { it.bulkTransfer(bulkOut, data, data.size, boundedTimeout(timeoutMs)) }
+                }
+            trace?.add("OUT $result of ${data.size} B in ${msSince(started)} ms")
+            if (result == data.size) BridgeStats.writes.incrementAndGet() else BridgeStats.writeErrors.incrementAndGet()
+            return result
+        }
+
+        /**
+         * On a session opened on request: IN transfers of at most [BridgeContract.READ_CHUNK_BYTES] until
+         * [length] bytes are in, a short packet ends the transfer, or one fails. Returns what came, maybe
+         * fewer than asked; null when the first transfer failed, on a streaming session, or once ended.
+         */
+        fun read(
+            length: Int,
+            timeoutMs: Int,
+        ): ByteArray? {
+            if (!onRequest || length <= 0 || length > BridgeContract.MAX_READ_BYTES) return null
+            val buf = ByteArray(length)
+            var got = 0
+            var failed = false
+            synchronized(readLock) {
+                var more = true
+                while (more) {
+                    val ask = minOf(BridgeContract.READ_CHUNK_BYTES, length - got)
+                    val started = System.nanoTime()
+                    val n = transfer(-1) { it.bulkTransfer(bulkIn, buf, got, ask, boundedTimeout(timeoutMs)) }
+                    trace?.add("IN $n of $ask B in ${msSince(started)} ms")
+                    failed = n < 0
+                    if (n > 0) got += n
+                    // A short packet ends the transfer, as does a failure.
+                    more = n == ask && got < length
+                }
+            }
+            if (got > 0) {
+                BridgeStats.messagesIn.incrementAndGet()
+                BridgeStats.bytesIn.addAndGet(got.toLong())
+            }
+            return if (failed && got == 0) null else buf.copyOf(got)
+        }
+
+        /** On a session opened on request: CLEAR_FEATURE(ENDPOINT_HALT) on the bulk IN or OUT endpoint; -1 otherwise. */
+        fun clearHalt(inbound: Boolean): Int {
+            if (!onRequest) return -1
+            val endpoint = if (inbound) bulkIn else bulkOut
+            val result = transfer(-1) { it.controlTransfer(TO_ENDPOINT, CLEAR_FEATURE, ENDPOINT_HALT, endpoint.address, null, 0, CONTROL_TIMEOUT_MS) }
+            trace?.add("CLEAR_FEATURE(ENDPOINT_HALT) 0x${endpoint.address.toString(16)}: $result")
+            return result
+        }
+
+        /**
+         * On a session opened on request: Bulk-Only Transport's reset recovery. Bulk-Only Mass Storage Reset
+         * (class request 0xFF to the interface), then CLEAR_FEATURE(ENDPOINT_HALT) on both endpoints.
+         */
+        fun resetBulkOnly(): Boolean {
+            if (!onRequest) return false
+            val reset = transfer(-1) { it.controlTransfer(CLASS_TO_INTERFACE, BULK_ONLY_RESET, 0, iface.id, null, 0, CONTROL_TIMEOUT_MS) }
+            trace?.add("Bulk-Only Mass Storage Reset (interface ${iface.id}): $reset")
+            val clearIn = clearHalt(inbound = true)
+            val clearOut = clearHalt(inbound = false)
+            return reset >= 0 && clearIn >= 0 && clearOut >= 0
+        }
+
+        /** The transfer results recorded since the last call, one per line; kept after the end for the display app's log. */
+        fun takeTrace(): String = trace?.take().orEmpty()
+
+        /** The pump's IN transfer of one chunk into [buf]: bytes read, or -1 on a timeout, a failure, or once ended. */
+        internal fun pumpRead(buf: ByteArray): Int = transfer(-1) { it.bulkTransfer(bulkIn, buf, buf.size, READ_TIMEOUT_MS) }
+
+        /**
+         * End the session with [reason]; false when it had already ended. Releases the interface, which makes a
+         * transfer in flight on it return -1, gives the display app EOF on a streaming session's socket, and
+         * closes the connection now or, when transfers are still in flight, as the last of them leaves it.
+         */
+        internal fun end(reason: String): Boolean {
+            synchronized(guard) {
+                if (endReason != null) return false
+                endReason = reason
+            }
+            runCatching { connection.releaseInterface(iface) }
+            // The reason is set first: a display app that reads EOF and asks why gets the answer.
+            sink?.let {
+                runCatching { Os.shutdown(it.fileDescriptor, OsConstants.SHUT_RDWR) }
+                closeQuietly(it)
+            }
+            takeStream()?.let { closeQuietly(it) }
+            synchronized(guard) { if (inFlight == 0) closeConnectionLocked() }
+            onEnded?.let { runCatching { it(reason) } }
+            return true
+        }
+
+        /** [call] on the connection unless the session has ended ([ended] then); the connection outlives every call in flight. */
+        private inline fun <T> transfer(
+            ended: T,
+            call: (UsbDeviceConnection) -> T,
+        ): T {
+            synchronized(guard) {
+                if (endReason != null) return ended
+                inFlight++
+            }
+            try {
+                return call(connection)
+            } finally {
+                synchronized(guard) {
+                    inFlight--
+                    if (endReason != null && inFlight == 0) closeConnectionLocked()
+                }
+            }
+        }
+
+        private fun closeConnectionLocked() {
+            if (connectionClosed) return
+            connectionClosed = true
+            connection.close()
+        }
     }
 
-    private data class Claimed(
-        val device: UsbDevice,
-        val connection: UsbDeviceConnection,
-        val iface: UsbInterface,
-        val inEndpoint: UsbEndpoint,
-        val outEndpoint: UsbEndpoint,
-    )
-
     private val lock = Any()
-    private val writeLock = Any()
-    private val readLock = Any()
 
-    @Volatile private var active: Active? = null
+    private var nextId = 1
+
+    @Volatile private var active: Session? = null
 
     @Volatile var lastError: String = ""
         private set
@@ -64,183 +217,131 @@ internal class UsbSession(
     @Volatile var lastCloseReason: String = "never opened"
         private set
 
-    val openDeviceName: String? get() = active?.let { if (it.sink == null) "${it.deviceName} on request" else it.deviceName }
+    val openDeviceName: String? get() = active?.let { "${it.deviceName} #${it.id}${if (it.onRequest) " on request" else ""}" }
 
     fun hasPermission(deviceName: String?): Boolean {
         val device = deviceName?.let { usbManager.deviceList[it] } ?: return false
         return usbManager.hasPermission(device)
     }
 
-    fun open(deviceName: String?): ParcelFileDescriptor? {
-        synchronized(lock) {
-            closeLocked("superseded by open($deviceName)")
-            val claimed = claimLocked(deviceName) ?: return null
-            val (device, connection, iface, inEndpoint, outEndpoint) = claimed
-
-            val pair =
-                try {
-                    ParcelFileDescriptor.createSocketPair()
-                } catch (e: IOException) {
-                    connection.releaseInterface(iface)
-                    connection.close()
-                    return fail("socket pair: ${e.message}")
-                }
-            enlargeSendBuffer(pair[0])
-
-            val session = Active(device.deviceName, connection, iface, inEndpoint, outEndpoint, pair[0], trace = null)
-            active = session
-            Thread({ pump(session) }, "Bridge-UsbPump").apply {
-                isDaemon = true
-                start()
-            }
-            lastError = ""
-            BridgeStats.event("open $deviceName")
-            Log.i(TAG, "Opened $deviceName (IN=0x${inEndpoint.address.toString(16)} OUT=0x${outEndpoint.address.toString(16)})")
-            // Returned through AIDL with PARCELABLE_WRITE_RETURN_VALUE, which closes our copy.
-            return pair[1]
-        }
-    }
-
     /**
-     * API 4: open [deviceName] for transfers on request. Like [open] it claims the bulk interface with
-     * force, but it starts no pump and makes no socket: nothing is read until [read] asks.
+     * Open [deviceName] and claim its bulk interface with force, ending the session before it. [onRequest]:
+     * no pump and no socket, nothing read until [Session.read] asks, and [trace] records each transfer.
+     * Otherwise the pump relays the IN endpoint into a socket whose other end is [Session.takeStream]'s.
+     * [onEnded] runs once, with why, when the session ends. Null on failure, reason in [lastError]; an open
+     * that fails before it can claim the device (not attached, no permission, no bulk interface) leaves the
+     * open session alone.
      */
-    fun openOnRequest(
+    fun open(
         deviceName: String?,
+        onRequest: Boolean,
         trace: Boolean,
-    ): Boolean {
+        onEnded: ((String) -> Unit)? = null,
+    ): Session? {
         synchronized(lock) {
-            closeLocked("superseded by openOnRequest($deviceName)")
-            val c = claimLocked(deviceName) ?: return false
-            active = Active(c.device.deviceName, c.connection, c.iface, c.inEndpoint, c.outEndpoint, sink = null, trace = if (trace) TransferTrace() else null)
+            val device = deviceName?.let { usbManager.deviceList[it] } ?: return fail("$deviceName is not attached")
+            if (!usbManager.hasPermission(device)) return fail("no USB permission for $deviceName")
+            val (iface, bulkIn, bulkOut) = findBulkEndpoints(device) ?: return fail("no interface with bulk IN and OUT on $deviceName")
+            val connection = usbManager.openDevice(device) ?: return fail("openDevice($deviceName) returned null")
+            val pair =
+                if (onRequest) {
+                    null
+                } else {
+                    try {
+                        ParcelFileDescriptor.createSocketPair()
+                    } catch (e: IOException) {
+                        connection.close()
+                        return fail("socket pair: ${e.message}")
+                    }
+                }
+            // The open goes ahead: the session before it ends here, which frees the interface to claim.
+            active?.let { end(it, BridgeContract.END_SUPERSEDED, "superseded by the open of $deviceName") }
+            if (!connection.claimInterface(iface, true)) {
+                pair?.forEach { closeQuietly(it) }
+                connection.close()
+                return fail("claimInterface failed on $deviceName")
+            }
+            val session =
+                Session(
+                    nextId++,
+                    device.deviceName,
+                    connection,
+                    iface,
+                    bulkIn,
+                    bulkOut,
+                    sink = pair?.get(0),
+                    stream = pair?.get(1),
+                    trace = if (onRequest && trace) TransferTrace() else null,
+                    onEnded = onEnded,
+                )
+            active = session
             lastError = ""
-            BridgeStats.event("open $deviceName on request")
+            if (pair != null) {
+                enlargeSendBuffer(pair[0])
+                Thread({ pump(session, pair[0]) }, "Bridge-UsbPump").apply {
+                    isDaemon = true
+                    start()
+                }
+            }
+            val how = if (onRequest) " on request (trace=$trace)" else ""
+            BridgeStats.event("open $deviceName #${session.id}$how")
             Log.i(
                 TAG,
-                "Opened $deviceName on request (interface ${c.iface.id}, IN=0x${c.inEndpoint.address.toString(16)} " +
-                    "OUT=0x${c.outEndpoint.address.toString(16)}, trace=$trace)",
+                "Opened $deviceName as session ${session.id}$how (interface ${iface.id}, " +
+                    "IN=0x${bulkIn.address.toString(16)} OUT=0x${bulkOut.address.toString(16)})",
             )
-            return true
+            return session
         }
     }
 
+    /** End [session] with [reason] ([detail] for the status line and the log) unless it has ended already. */
+    fun end(
+        session: Session,
+        reason: String,
+        detail: String = reason,
+    ) {
+        synchronized(lock) {
+            if (active === session) active = null
+            if (!session.end(reason)) return
+            lastCloseReason = detail
+            BridgeStats.event("close ${session.deviceName} #${session.id}: $detail")
+            Log.i(TAG, "Closed ${session.deviceName} (session ${session.id}): $detail")
+        }
+    }
+
+    /** API ≤ 4: [Session.write] on whichever session is open; -1 when none is. */
     fun write(
         data: ByteArray?,
         timeoutMs: Int,
-    ): Int {
-        if (data == null || data.size > BridgeContract.MAX_WRITE_BYTES) {
-            BridgeStats.writeErrors.incrementAndGet()
-            return -1
-        }
-        val session = active ?: return -1
-        val started = System.nanoTime()
-        // UsbDeviceConnection.bulkTransfer is not documented thread-safe per endpoint, and
-        // the display app writes from its heartbeat, mic and UI threads.
-        val result =
-            synchronized(writeLock) {
-                session.connection.bulkTransfer(session.outEndpoint, data, data.size, timeoutMs)
-            }
-        session.trace?.add("OUT $result of ${data.size} B in ${msSince(started)} ms")
-        if (result == data.size) BridgeStats.writes.incrementAndGet() else BridgeStats.writeErrors.incrementAndGet()
-        return result
-    }
+    ): Int = active?.write(data, timeoutMs) ?: -1
 
-    /**
-     * API 4, on a session opened on request: IN transfers of at most [BridgeContract.READ_CHUNK_BYTES]
-     * until [length] bytes are in, a short packet ends the transfer, or one fails. Returns what came,
-     * maybe fewer than asked; null when the first transfer failed or this is no on-request session.
-     */
+    /** API 4: [Session.read] on whichever session is open. */
     fun read(
         length: Int,
         timeoutMs: Int,
-    ): ByteArray? {
-        val session = active?.takeIf { it.sink == null } ?: return null
-        if (length <= 0 || length > BridgeContract.MAX_READ_BYTES) return null
-        val buf = ByteArray(length)
-        var got = 0
-        var failed = false
-        synchronized(readLock) {
-            var more = true
-            while (more) {
-                val ask = minOf(BridgeContract.READ_CHUNK_BYTES, length - got)
-                val started = System.nanoTime()
-                val n = session.connection.bulkTransfer(session.inEndpoint, buf, got, ask, timeoutMs)
-                session.trace?.add("IN $n of $ask B in ${msSince(started)} ms")
-                failed = n < 0
-                if (n > 0) got += n
-                // A short packet ends the transfer, as does a failure.
-                more = n == ask && got < length
-            }
-        }
-        if (got > 0) {
-            BridgeStats.messagesIn.incrementAndGet()
-            BridgeStats.bytesIn.addAndGet(got.toLong())
-        }
-        return if (failed && got == 0) null else buf.copyOf(got)
-    }
+    ): ByteArray? = active?.read(length, timeoutMs)
 
-    /** API 4, on a session opened on request: CLEAR_FEATURE(ENDPOINT_HALT) on the bulk IN or OUT endpoint. */
-    fun clearHalt(inEndpoint: Boolean): Int {
-        val session = active?.takeIf { it.sink == null } ?: return -1
-        val endpoint = if (inEndpoint) session.inEndpoint else session.outEndpoint
-        val result = session.connection.controlTransfer(TO_ENDPOINT, CLEAR_FEATURE, ENDPOINT_HALT, endpoint.address, null, 0, CONTROL_TIMEOUT_MS)
-        session.trace?.add("CLEAR_FEATURE(ENDPOINT_HALT) 0x${endpoint.address.toString(16)}: $result")
-        return result
-    }
+    /** API 4: [Session.clearHalt] on whichever session is open. */
+    fun clearHalt(inbound: Boolean): Int = active?.clearHalt(inbound) ?: -1
 
-    /**
-     * API 4, on a session opened on request: Bulk-Only Transport's reset recovery. Bulk-Only Mass Storage
-     * Reset (class request 0xFF to the interface), then CLEAR_FEATURE(ENDPOINT_HALT) on both endpoints.
-     */
-    fun resetBulkOnly(): Boolean {
-        val session = active?.takeIf { it.sink == null } ?: return false
-        val reset = session.connection.controlTransfer(CLASS_TO_INTERFACE, BULK_ONLY_RESET, 0, session.iface.id, null, 0, CONTROL_TIMEOUT_MS)
-        session.trace?.add("Bulk-Only Mass Storage Reset (interface ${session.iface.id}): $reset")
-        val clearIn = clearHalt(inEndpoint = true)
-        val clearOut = clearHalt(inEndpoint = false)
-        return reset >= 0 && clearIn >= 0 && clearOut >= 0
-    }
+    /** API 4: [Session.resetBulkOnly] on whichever session is open. */
+    fun resetBulkOnly(): Boolean = active?.resetBulkOnly() ?: false
 
-    /** API 4: the transfer results recorded since the last call, one per line. */
-    fun takeTrace(): String = active?.trace?.take().orEmpty()
+    /** API 4: the open session's transfer results since the last call, one per line. */
+    fun takeTrace(): String = active?.takeTrace().orEmpty()
 
-    fun close(reason: String) {
-        synchronized(lock) { closeLocked(reason) }
+    /** End whichever session is open. */
+    fun close(
+        reason: String,
+        detail: String = reason,
+    ) {
+        synchronized(lock) { active?.let { end(it, reason, detail) } }
     }
 
     fun onDetached(deviceName: String?) {
         synchronized(lock) {
-            if (deviceName != null && active?.deviceName == deviceName) closeLocked("device detached")
+            active?.takeIf { deviceName != null && it.deviceName == deviceName }?.let { end(it, BridgeContract.END_DETACHED) }
         }
-    }
-
-    private fun closeOwn(
-        session: Active,
-        reason: String,
-    ) {
-        synchronized(lock) {
-            if (active === session) closeLocked(reason)
-        }
-    }
-
-    private fun closeLocked(reason: String) {
-        val session = active ?: return
-        active = null
-        session.running = false
-        try {
-            session.connection.releaseInterface(session.iface)
-        } catch (_: Exception) {
-        }
-        // Closing the connection makes a bulkTransfer blocked in the pump return -1.
-        session.connection.close()
-        // The display app sees EOF on its end of the socket.
-        try {
-            session.sink?.close()
-        } catch (_: IOException) {
-        }
-        lastCloseReason = reason
-        BridgeStats.event("close ${session.deviceName}: $reason")
-        Log.i(TAG, "Closed ${session.deviceName}: $reason")
     }
 
     /**
@@ -248,20 +349,24 @@ internal class UsbSession(
      * to the socket as-is; the bridge knows nothing about OCBM framing — the display app's OCBM
      * client reassembles frames, exactly as it does over a direct USB connection. (Carlink2's
      * bridge parsed the stock 16-byte 0x55AA55AA header here; that framing does not exist on an
-     * OCBM adapter.) `messagesIn` now counts chunks.
+     * OCBM adapter.) `messagesIn` now counts chunks. Runs until the session ends, or ends it.
      */
-    private fun pump(session: Active) {
+    private fun pump(
+        session: Session,
+        sink: ParcelFileDescriptor,
+    ) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY - 2)
-        val out = FileOutputStream(session.sink?.fileDescriptor ?: return)
+        val out = FileOutputStream(sink.fileDescriptor)
         val buf = ByteArray(BridgeContract.READ_CHUNK_BYTES)
-        var reason = "pump stopped"
+        var reason = BridgeContract.END_PUMP_FAILED
+        val detail: String
         try {
-            while (session.running) {
-                val n = session.connection.bulkTransfer(session.inEndpoint, buf, buf.size, READ_TIMEOUT_MS)
+            while (session.isOpen) {
+                val n = session.pumpRead(buf)
+                if (!session.isOpen) return
                 if (n < 0) {
                     // Timeout (idle link) or a hard failure; bulkTransfer does not tell them apart.
-                    // closeLocked() flips `running` and closes the connection, so a dead device
-                    // exits here on the next iteration rather than spinning.
+                    // A device that left ends the session (the detach broadcast), and this loop with it.
                     Thread.sleep(FAILED_READ_BACKOFF_MS)
                     continue
                 }
@@ -270,34 +375,17 @@ internal class UsbSession(
                 BridgeStats.messagesIn.incrementAndGet()
                 BridgeStats.bytesIn.addAndGet(n.toLong())
             }
+            return
         } catch (e: IOException) {
-            reason = "display app stopped reading (${e.message})"
+            reason = BridgeContract.END_STREAM_CLOSED
+            detail = "display app stopped reading (${e.message})"
         } catch (e: InterruptedException) {
-            reason = "pump interrupted"
+            detail = "pump interrupted"
         } catch (e: Exception) {
-            reason = "pump error: ${e.javaClass.simpleName}: ${e.message}"
-            Log.e(TAG, reason, e)
-        } finally {
-            closeOwn(session, reason)
+            detail = "pump error: ${e.javaClass.simpleName}: ${e.message}"
+            Log.e(TAG, detail, e)
         }
-    }
-
-    /** Open [deviceName], find its bulk endpoints and claim their interface with force; null (reason in [lastError]) on failure. */
-    private fun claimLocked(deviceName: String?): Claimed? {
-        val device = deviceName?.let { usbManager.deviceList[it] } ?: return fail("$deviceName is not attached")
-        if (!usbManager.hasPermission(device)) return fail("no USB permission for $deviceName")
-        val connection = usbManager.openDevice(device) ?: return fail("openDevice($deviceName) returned null")
-        val endpoints = findBulkEndpoints(device)
-        if (endpoints == null) {
-            connection.close()
-            return fail("no interface with bulk IN and OUT on $deviceName")
-        }
-        val (iface, inEndpoint, outEndpoint) = endpoints
-        if (!connection.claimInterface(iface, true)) {
-            connection.close()
-            return fail("claimInterface failed on $deviceName")
-        }
-        return Claimed(device, connection, iface, inEndpoint, outEndpoint)
+        end(session, reason, detail)
     }
 
     private fun <T> fail(reason: String): T? {
@@ -306,8 +394,6 @@ internal class UsbSession(
         Log.w(TAG, "open failed: $reason")
         return null
     }
-
-    private fun msSince(started: Long): Long = (System.nanoTime() - started) / NANOS_PER_MS
 
     // Lowest-index interface with both bulk IN and bulk OUT — same rule as the display app.
     private fun findBulkEndpoints(device: UsbDevice): Triple<UsbInterface, UsbEndpoint, UsbEndpoint>? {
@@ -352,12 +438,25 @@ internal class UsbSession(
         const val ENDPOINT_HALT = 0
         const val BULK_ONLY_RESET = 0xFF
         const val CONTROL_TIMEOUT_MS = 2_000
+
+        fun msSince(started: Long): Long = (System.nanoTime() - started) / NANOS_PER_MS
+
+        fun closeQuietly(fd: ParcelFileDescriptor) {
+            runCatching { fd.close() }
+        }
     }
 }
 
 /**
+ * A transfer's timeout as the bridge passes it to USB: at most [BridgeContract.MAX_TRANSFER_TIMEOUT_MS], and
+ * that for 0 or less, which USB would take as "wait forever" and which would then hold a session's end.
+ */
+internal fun boundedTimeout(timeoutMs: Int): Int =
+    if (timeoutMs <= 0) BridgeContract.MAX_TRANSFER_TIMEOUT_MS else minOf(timeoutMs, BridgeContract.MAX_TRANSFER_TIMEOUT_MS)
+
+/**
  * The results of an on-request session's transfers, for the display app's log: the head unit has no
- * adb, so [UsbSession.takeTrace] is the bench's only view of the read side. Also in logcat.
+ * adb, so [UsbSession.Session.takeTrace] is the bench's only view of the read side. Also in logcat.
  */
 internal class TransferTrace {
     private val lines = ArrayList<String>()

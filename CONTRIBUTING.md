@@ -22,7 +22,7 @@ Every commit passes the gate, and every push and pull request runs it in CI
 
 ```sh
 python3 tools/proto_check.py
-./gradlew :app:assembleDebug :bridge:assembleDebug :app:ktlintCheck :app:detekt :app:testSideloadDebugUnitTest
+./gradlew :app:assembleDebug :bridge:assembleDebug :app:ktlintCheck :app:detekt :app:testSideloadDebugUnitTest :bridge:testDebugUnitTest
 ```
 
 It builds the app and the USB bridge, then runs ktlint, detekt and the unit tests. A pull request
@@ -40,7 +40,8 @@ merges only with the gate green.
 ## Writing tests
 
 Tests live in `app/src/test/kotlin`, next to the package they test (`com.carlink.convert` ->
-`app/src/test/kotlin/com/carlink/convert`). JUnit 4, with Robolectric where Android is involved.
+`app/src/test/kotlin/com/carlink/convert`), and the USB bridge's in `bridge/src/test/kotlin`. JUnit 4,
+with Robolectric where Android is involved.
 
 **What needs a test**
 

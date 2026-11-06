@@ -18,7 +18,7 @@ package com.enigy.carlink2.bridge
  */
 object BridgeContract {
     /** Bump when ICarlinkBridge gains methods or changes semantics; the display app checks [MIN_API_VERSION]. */
-    const val API_VERSION = 4
+    const val API_VERSION = 5
 
     /**
      * Carlink3: from this API the bridge relays the adapter's bulk stream RAW — chunks as read from
@@ -36,6 +36,47 @@ object BridgeContract {
      * 16 KiB read (bench, 29 Oct). The adapter itself still uses open() and the pump.
      */
     const val ON_REQUEST_API_VERSION = 4
+
+    /**
+     * From this API (bridge 1.0.7) ICarlinkBridge.openSession opens a session with a handle of its own
+     * (IUsbBridgeSession). The handle's calls act on that session only, fail once it has ended and never
+     * reach the session after it, and its getEndReason says why it ended (one of the END_ values below).
+     * The bridge also ends a session when the process that opened it dies. Ending a session never waits
+     * out a transfer in flight, and every transfer's timeout is bounded ([MAX_TRANSFER_TIMEOUT_MS]).
+     */
+    const val SESSION_API_VERSION = 5
+
+    // IUsbBridgeSession.getEndReason results: why a session ended.
+
+    /** The display app closed it. */
+    const val END_CLOSED = "closed"
+
+    /** A newer open (open, openOnRequest or openSession) took the bridge. */
+    const val END_SUPERSEDED = "superseded by a newer open"
+
+    /** The device left USB. */
+    const val END_DETACHED = "device detached"
+
+    /** A streaming session's socket broke: the display app closed its end, or stopped reading. */
+    const val END_STREAM_CLOSED = "the display app's end of the stream closed"
+
+    /** A streaming session's read pump failed; the bridge's status line says how. */
+    const val END_PUMP_FAILED = "read pump failed"
+
+    /** The process that opened it died. */
+    const val END_CLIENT_GONE = "the display app's process died"
+
+    /** Every client unbound from the bridge. */
+    const val END_UNBOUND = "the display app unbound"
+
+    /** The bridge's service was destroyed. */
+    const val END_BRIDGE_STOPPED = "bridge stopped"
+
+    /**
+     * From [SESSION_API_VERSION] the bridge caps every transfer's timeout here, and treats 0 or less (USB's
+     * "wait forever") as this. The stick's longest is 10 s and the adapter's 2 s, so neither changes.
+     */
+    const val MAX_TRANSFER_TIMEOUT_MS = 30_000
 
     /** Oldest bridge API the display app can drive. */
     const val MIN_API_VERSION = 3

@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.Process
+import android.os.RemoteException
 import android.util.Log
 
 /**
@@ -21,10 +22,13 @@ import android.util.Log
  * the [UsbSession] and the [PermissionPrompt]. USB permission normally arrives from the
  * platform's fixed-handler grant; the prompt is only for an adapter that attached during boot
  * and so missed that grant ([205]).
+ *
+ * Every call but getApiVersion() is the display app's alone ([CallerVerifier]), a session
+ * handle's ([Handle], API 5) included.
  */
 class BridgeService : Service() {
     private lateinit var usbManager: UsbManager
-    private lateinit var session: UsbSession
+    private lateinit var usb: UsbSession
     private lateinit var callers: CallerVerifier
     private lateinit var prompt: PermissionPrompt
 
@@ -42,7 +46,7 @@ class BridgeService : Service() {
                         @Suppress("DEPRECATION")
                         intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
                     }
-                session.onDetached(device?.deviceName)
+                usb.onDetached(device?.deviceName)
             }
         }
 
@@ -52,12 +56,13 @@ class BridgeService : Service() {
 
             override fun hasPermission(deviceName: String?): Boolean {
                 enforceCaller()
-                return session.hasPermission(deviceName)
+                return usb.hasPermission(deviceName)
             }
 
             override fun open(deviceName: String?): ParcelFileDescriptor? {
                 enforceCaller()
-                return session.open(deviceName)
+                // Returned through AIDL with PARCELABLE_WRITE_RETURN_VALUE, which closes our copy.
+                return usb.open(deviceName, onRequest = false, trace = false)?.takeStream()
             }
 
             override fun write(
@@ -65,12 +70,12 @@ class BridgeService : Service() {
                 timeoutMs: Int,
             ): Int {
                 enforceCaller()
-                return session.write(data, timeoutMs)
+                return usb.write(data, timeoutMs)
             }
 
             override fun close() {
                 enforceCaller()
-                session.close("closed by display app")
+                usb.close(BridgeContract.END_CLOSED, "closed by display app")
             }
 
             override fun getStatus(): String {
@@ -88,7 +93,7 @@ class BridgeService : Service() {
                 trace: Boolean,
             ): Boolean {
                 enforceCaller()
-                return session.openOnRequest(deviceName, trace)
+                return usb.open(deviceName, onRequest = true, trace = trace) != null
             }
 
             override fun read(
@@ -96,29 +101,138 @@ class BridgeService : Service() {
                 timeoutMs: Int,
             ): ByteArray? {
                 enforceCaller()
-                return session.read(length, timeoutMs)
+                return usb.read(length, timeoutMs)
             }
 
             override fun clearHalt(inEndpoint: Boolean): Int {
                 enforceCaller()
-                return session.clearHalt(inEndpoint)
+                return usb.clearHalt(inEndpoint)
             }
 
             override fun resetBulkOnly(): Boolean {
                 enforceCaller()
-                return session.resetBulkOnly()
+                return usb.resetBulkOnly()
             }
 
             override fun takeTrace(): String {
                 enforceCaller()
-                return session.takeTrace()
+                return usb.takeTrace()
+            }
+
+            override fun openSession(
+                deviceName: String?,
+                onRequest: Boolean,
+                trace: Boolean,
+                client: IBinder?,
+            ): IUsbBridgeSession? {
+                enforceCaller()
+                requireNotNull(client) { "openSession needs a Binder of the caller's own" }
+                val handle = Handle(client)
+                handle.session = usb.open(deviceName, onRequest, trace, onEnded = { handle.unwatch() }) ?: return null
+                if (!handle.watch()) {
+                    usb.end(handle.session, BridgeContract.END_CLIENT_GONE, "the display app's process died while it opened $deviceName")
+                    return null
+                }
+                return handle
             }
         }
+
+    /**
+     * API 5: the handle ICarlinkBridge.openSession returns, on one [UsbSession.Session]. Its calls act on that
+     * session only (the bridge's API ≤ 4 calls act on whichever session is open) and are the display app's
+     * alone, like the bridge's. It watches the client's Binder, so the session ends when the client's process
+     * dies, and stops watching once the session has ended: Carlink opens a session per connect.
+     */
+    private inner class Handle(
+        private val client: IBinder,
+    ) : IUsbBridgeSession.Stub(),
+        IBinder.DeathRecipient {
+        @Volatile lateinit var session: UsbSession.Session
+
+        private val watchLock = Any()
+        private var watching = false
+        private var ended = false
+
+        /** Watch the client's Binder; false when its process has already died. */
+        fun watch(): Boolean =
+            synchronized(watchLock) {
+                if (ended) return true
+                try {
+                    client.linkToDeath(this, 0)
+                    watching = true
+                    true
+                } catch (_: RemoteException) {
+                    false
+                }
+            }
+
+        /** The session ended: stop watching the client's Binder. */
+        fun unwatch() {
+            synchronized(watchLock) {
+                ended = true
+                if (!watching) return
+                watching = false
+                // Binder drops the link itself when the client dies.
+                runCatching { client.unlinkToDeath(this, 0) }
+            }
+        }
+
+        override fun binderDied() {
+            usb.end(session, BridgeContract.END_CLIENT_GONE)
+        }
+
+        override fun takeStream(): ParcelFileDescriptor? {
+            enforceCaller()
+            // Returned through AIDL with PARCELABLE_WRITE_RETURN_VALUE, which closes our copy.
+            return session.takeStream()
+        }
+
+        override fun write(
+            data: ByteArray?,
+            timeoutMs: Int,
+        ): Int {
+            enforceCaller()
+            return session.write(data, timeoutMs)
+        }
+
+        override fun read(
+            length: Int,
+            timeoutMs: Int,
+        ): ByteArray? {
+            enforceCaller()
+            return session.read(length, timeoutMs)
+        }
+
+        override fun clearHalt(inEndpoint: Boolean): Int {
+            enforceCaller()
+            return session.clearHalt(inEndpoint)
+        }
+
+        override fun resetBulkOnly(): Boolean {
+            enforceCaller()
+            return session.resetBulkOnly()
+        }
+
+        override fun takeTrace(): String {
+            enforceCaller()
+            return session.takeTrace()
+        }
+
+        override fun close() {
+            enforceCaller()
+            usb.end(session, BridgeContract.END_CLOSED, "closed by display app")
+        }
+
+        override fun getEndReason(): String? {
+            enforceCaller()
+            return session.endReason
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
-        session = UsbSession(usbManager)
+        usb = UsbSession(usbManager)
         callers = CallerVerifier(this, BuildConfig.CALLER_CERTS)
         prompt = PermissionPrompt(this, usbManager).apply { register() }
         val filter = IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED)
@@ -135,13 +249,13 @@ class BridgeService : Service() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         // Last client gone (display app stopped or died) — release the adapter.
-        session.close("display app unbound")
+        usb.close(BridgeContract.END_UNBOUND, "display app unbound")
         callers.forget()
         return false
     }
 
     override fun onDestroy() {
-        session.close("bridge service destroyed")
+        usb.close(BridgeContract.END_BRIDGE_STOPPED, "bridge service destroyed")
         unregisterReceiver(detachReceiver)
         prompt.unregister()
         super.onDestroy()
@@ -165,12 +279,12 @@ class BridgeService : Service() {
                 "${device.deviceName} ${hex4(device.vendorId)}:${hex4(device.productId)} " +
                     "perm=${usbManager.hasPermission(device)}"
             }
-        val openDevice = session.openDeviceName
+        val openDevice = usb.openDeviceName
         val sessionText =
             when {
                 openDevice != null -> "open($openDevice)"
-                session.lastError.isNotEmpty() -> "closed(last=${session.lastCloseReason}; error=${session.lastError})"
-                else -> "closed(last=${session.lastCloseReason})"
+                usb.lastError.isNotEmpty() -> "closed(last=${usb.lastCloseReason}; error=${usb.lastError})"
+                else -> "closed(last=${usb.lastCloseReason})"
             }
         return "bridge api=${BridgeContract.API_VERSION} v=${BuildConfig.VERSION_NAME} " +
             "user=${Process.myUid() / PER_USER_RANGE} handler=${fixedHandlerComponent()} " +
