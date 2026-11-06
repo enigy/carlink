@@ -35,8 +35,8 @@ android {
         applicationId = "android.car.usb.handler"
         minSdk = 29
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 9
+        versionName = "1.0.8"
 
         buildConfigField("String", "CALLER_CERTS", "\"$callerCerts\"")
     }
