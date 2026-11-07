@@ -35,17 +35,18 @@ object AdapterUpdates {
      */
     val PINNED: PinnedPackage? =
         PinnedPackage(
-            tag = "v1.0.3",
-            url = "https://github.com/enigy/ocbm/releases/download/v1.0.3/ocbm-update-1.0.3.tgz",
-            sizeBytes = 20_287L,
-            sha256 = "5430fe02a1095067dbff86e3c31845b363e35c86552e80cb497a350c56a6f27e",
-            // "1.0.3 ocbm c90701d" from 1.0.1: ocbm_boot.sh, ocbm_dispatch.sh, ocbm_restore.sh, ocbm_update.sh (Scott, 5 Nov).
+            tag = "v1.0.4",
+            url = "https://github.com/enigy/ocbm/releases/download/v1.0.4/ocbm-update-1.0.4.tgz",
+            sizeBytes = 348_273L,
+            sha256 = "59f26f474db4cb2c8a61585cb7b207aa7cfa07c243aa3e368369c7381ed527fe",
+            // "1.0.4 ocbm 317b3eb" from 1.0.1: btd (the Mac's build of 4a2586b), ocbm_boot.sh, ocbm_dispatch.sh, ocbm_restore.sh,
+            // ocbm_update.sh (Scott, 6 Nov).
             pkg =
                 UpdatePackage(
-                    version = "1.0.3",
+                    version = "1.0.4",
                     fromMin = "1.0.1",
-                    needKb = 431,
-                    notes = "Stops the Android Auto prompt on GM head units, and an update is kept only once the adapter answers Carlink.",
+                    needKb = 857,
+                    notes = "Tells Carlink when your iPhone has forgotten the adapter, so it can ask you to pair again.",
                 ),
         )
 
