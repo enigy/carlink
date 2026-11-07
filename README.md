@@ -152,13 +152,13 @@ The app version, the privacy policy's address (with Open, for a head unit that h
 First, the adapter needs lvalen91's OCBM userspace, installed per his documentation (`ocbm/docs/ops/`). Then:
 
 1. Install Carlink3 from Google Play.
-2. Copy [`app/carlink_bridge.apk`](app/carlink_bridge.apk) (Carlink USB Bridge 1.0.6) to a USB drive. It is also attached to the 2.01 release as [`carlink_bridge-1.0.6.apk`](https://github.com/enigy/carlink/releases/download/v201/carlink_bridge-1.0.6.apk). SHA-256: `d9a2232f9f018bda2f0dc96715dbae1ee6b0f88afc93512deb453bc49d2bf58f`
+2. Copy [`app/carlink_bridge.apk`](app/carlink_bridge.apk) (Carlink USB Bridge 1.0.8) to a USB drive. It is also attached to the 2.20 release as [`carlink_bridge-1.0.8.apk`](https://github.com/enigy/carlink/releases/download/v220/carlink_bridge-1.0.8.apk). SHA-256: `df7b0c2b70283708a335b615d27f8af27e85cf7756073757be03fdeb7f4a8e6d`
 3. While parked, open Carlink. It shows **USB bridge not installed** with an **Open Files** button that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK. If asked, allow Files to install apps.
 4. When the install finishes, tap the Carlink notification (or press Home and open Carlink).
 
 ### About the bridge
 
-The bridge uses the same package name as Carlink-legacy's (`android.car.usb.handler`, the name GM's head unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink-legacy's bridge. From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store. 1.0.6 adds a second way to open a device, for the USB stick a stock adapter shares while Carlink converts it; Carlink's connection to the adapter is unchanged, so 1.0.5 still works for everything else.
+The bridge uses the same package name as Carlink-legacy's (`android.car.usb.handler`, the name GM's head unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink-legacy's bridge. From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store. 1.0.6 adds a second way to open a device, for the USB stick a stock adapter shares while Carlink converts it; Carlink's connection to the adapter is unchanged, so 1.0.5 still works for everything else. 1.0.7 gives each open a handle of its own that says why it ended, and 1.0.8 adds the owner's opt-in for other apps (off by default; [Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)). Carlink 2.20 still works with 1.0.6, without Bridge Configuration.
 
 ### Using the USB bridge from another app
 
@@ -179,7 +179,7 @@ An approved app gets the adapter only (Carlinkit's USB ids 1314:2d00, 1314:1520 
 | Linux | `sha256sum carlink_bridge.apk` |
 | Windows PowerShell | `Get-FileHash carlink_bridge.apk -Algorithm SHA256` |
 
-Each [GitHub Release](https://github.com/enigy/carlink/releases) also attaches the bridge as `carlink_bridge-<version>.apk`. The release workflow rebuilds it only when `bridge/` or `bridge-api/` changed since this file was last committed; otherwise it attaches this file. So the hash above holds until the next bridge change (v201 built 1.0.6; earlier releases' attachments have their own hashes). When the bridge changes, replace `app/carlink_bridge.apk` with the release's signed APK and update the version and SHA-256 above.
+Each [GitHub Release](https://github.com/enigy/carlink/releases) also attaches the bridge as `carlink_bridge-<version>.apk`. The release workflow rebuilds it only when `bridge/` or `bridge-api/` changed since this file was last committed; otherwise it attaches this file. So the hash above holds until the next bridge change (v220 built 1.0.8; earlier releases' attachments have their own hashes). When the bridge changes, replace `app/carlink_bridge.apk` with the release's signed APK and update the version and SHA-256 above.
 
 ## Under the hood
 
