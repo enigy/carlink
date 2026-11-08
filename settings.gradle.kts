@@ -33,3 +33,7 @@ include(":bridge-api")
 // Bench only, never released: "another app" for the bridge's API 6 access path (tools/bridge-probe).
 include(":bridge-probe")
 project(":bridge-probe").projectDir = file("tools/bridge-probe")
+
+// Truck research only, never released: what the head unit offers the LIVI-inspired work (tools/car-probe).
+include(":car-probe")
+project(":car-probe").projectDir = file("tools/car-probe")

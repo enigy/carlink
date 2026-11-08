@@ -65,6 +65,7 @@ import com.carlink.navigation.compose.ComposedIconStore
 import com.carlink.ocbm.AdapterPhone
 import com.carlink.ocbm.AdapterUpdateSession
 import com.carlink.ocbm.AdapterUpdateStore
+import com.carlink.ocbm.BenchConfigExtra
 import com.carlink.ocbm.BinaryPlist
 import com.carlink.ocbm.BoxLogEntry
 import com.carlink.ocbm.BridgeBulkTransport
@@ -1628,7 +1629,8 @@ class CarlinkManager(
 
         // THE APP IS THE IGNITION: this is the presence latch that brings the box's radios up.
         setStatusText("Starting projection...")
-        if (!c.subscribe(VehicleConfigYaml.renderBytes(vehicleConfigSpec()))) {
+        // A debug build may append the bench levers of ocbm/vehicle-config-extra.yaml ([BenchConfigExtra]).
+        if (!c.subscribe(VehicleConfigYaml.renderBytes(vehicleConfigSpec()) + BenchConfigExtra.bytes(context))) {
             handleError("usb — CT_SUBSCRIBE write failed")
             return
         }
