@@ -28,7 +28,7 @@ class OcbmShellInputTest {
         payload: ByteArray,
     ) = feed(Framing.frame(channel, Ocbm.F_BOTH, 0, payload))
 
-    private fun helloAck(): ByteArray = byteArrayOf(Ocbm.CT_HELLO_ACK, Ocbm.VERSION, Ocbm.CAP_MFI.toByte(), 0, 0, 0, Ocbm.MODE_PROJECTION)
+    private fun helloAck(): ByteArray = byteArrayOf(Ocbm.CT_HELLO_ACK, Ocbm.VERSION, Ocbm.CAP_CONSOLE.toByte(), 0, 0, 0, Ocbm.MODE_PROJECTION)
 
     private fun FakeTransport.awaitFrameOn(
         channel: Int,

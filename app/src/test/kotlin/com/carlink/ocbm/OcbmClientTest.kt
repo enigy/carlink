@@ -46,7 +46,7 @@ class OcbmClientTest {
     ) = feed(Framing.frame(channel, Ocbm.F_BOTH, 0, payload))
 
     /** `[CT_HELLO_ACK][ver][caps u32 LE][mode]` — enough for handleCtrl to latch helloAcked. */
-    private fun helloAck(caps: Int = Ocbm.CAP_MFI): ByteArray =
+    private fun helloAck(caps: Int = Ocbm.CAP_CONSOLE): ByteArray =
         byteArrayOf(
             Ocbm.CT_HELLO_ACK,
             Ocbm.VERSION,

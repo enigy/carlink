@@ -92,7 +92,6 @@ private const val BACKWARD_HOLD_MS = 8_000L
 internal fun LoadingStatusView(
     statusText: String,
     phoneConnected: Boolean,
-    androidAuto: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val target = LoadingSteps.classify(statusText, phoneConnected)
@@ -114,7 +113,7 @@ internal fun LoadingStatusView(
         )
 
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        EtherealLine(text = LoadingSteps.label(shown.step, androidAuto), style = words)
+        EtherealLine(text = LoadingSteps.label(shown.step), style = words)
         StepDots(step = shown.step)
         Crossfade(targetState = shown.action, label = "loadingAction") { action ->
             if (action != null) {

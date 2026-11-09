@@ -33,7 +33,6 @@ class OcbmClient(
     private val running = AtomicBoolean(false)
 
     private val ctrlQ = LinkedBlockingQueue<ByteArray>()
-    private val mfiQ = LinkedBlockingQueue<ByteArray>()
     private val mgmtQ = LinkedBlockingQueue<ByteArray>()
 
     // One MGMT request at a time: each clears [mgmtQ] and waits for its own answer, so two at once (the
@@ -64,8 +63,6 @@ class OcbmClient(
 
     @Volatile var bytesIn = 0L
         private set
-
-    val hasMfi: Boolean get() = (caps and Ocbm.CAP_MFI) != 0
 
     /** Receives the box's CH_LOG lines once [setBoxLogStream] armed them. Runs on the transport read thread. */
     @Volatile var onBoxLog: ((List<BoxLogEntry>) -> Unit)? = null
@@ -184,7 +181,7 @@ class OcbmClient(
     @Volatile var uplinkChannels = 0
         private set
 
-    /** Negotiated uplink codec (`MicProfile.CODEC_PCM` 0 / `CODEC_MSBC` 4); 0 while the gate is down or on a 7-byte gate. */
+    /** Negotiated uplink codec (`MicProfile.CODEC_PCM` 0, the only one an adapter sends); 0 while the gate is down or on a 7-byte gate. */
     @Volatile var uplinkCodec = 0
         private set
 
@@ -398,7 +395,7 @@ class OcbmClient(
     private fun dispatch(f: OcbmFrame) {
         when (f.channel) {
             Ocbm.CH_CTRL -> handleCtrl(f.payload)
-            Ocbm.CH_MFI, Ocbm.CH_MGMT, Ocbm.CH_FILE -> replyQueue(f.channel).offer(f.payload)
+            Ocbm.CH_MGMT, Ocbm.CH_FILE -> replyQueue(f.channel).offer(f.payload)
             Ocbm.CH_VIDEO -> lanes?.feedVideo(f.payload) ?: dropAv(f)
             Ocbm.CH_MEDIA_AUDIO -> lanes?.feedMedia(f.payload) ?: dropAv(f)
             Ocbm.CH_ALT_AUDIO -> lanes?.feedVoice(f.payload) ?: dropAv(f)
@@ -447,7 +444,6 @@ class OcbmClient(
     /** The request/reply channels each park their replies on a queue the blocking caller polls. */
     private fun replyQueue(channel: Int): LinkedBlockingQueue<ByteArray> =
         when (channel) {
-            Ocbm.CH_MFI -> mfiQ
             Ocbm.CH_MGMT -> mgmtQ
             else -> fileQ
         }
@@ -519,7 +515,7 @@ class OcbmClient(
                         (pl[2].toInt() and 0xFF) or ((pl[3].toInt() and 0xFF) shl 8) or
                             ((pl[4].toInt() and 0xFF) shl 16) or ((pl[5].toInt() and 0xFF) shl 24)
                     val ch = pl[6].toInt() and 0xFF
-                    // Byte 7 (additive, lib.rs CT_UPLINK): the SCO codec — 0 PCM/CVSD, 4 mSBC. A 7-byte
+                    // Byte 7 (additive, lib.rs CT_UPLINK): the uplink codec — 0 PCM (4, mSBC, is retired). A 7-byte
                     // gate from an older box is PCM; OFF carries no format at all.
                     val codec = if (pl.size >= 8) pl[7].toInt() and 0xFF else 0
                     log.i("<< UPLINK ${if (on) "ON" else "OFF"} ${rate}Hz ${ch}ch codec=$codec (mic gate)")
@@ -867,7 +863,6 @@ class OcbmClient(
                                 if (activeMode == Ocbm.MODE_CONSOLE) "CONSOLE" else "PROJECTION",
                             ),
                     )
-                    if (!hasMfi) log.w("!! CAP_MFI is NOT set — the box has no MFi chip access (/dev/i2c-1 failed)")
                     return true
                 }
             }
@@ -1040,67 +1035,6 @@ class OcbmClient(
         heartbeatThread = t
         t.start()
         log.i(">> heartbeat started at ${Ocbm.HEARTBEAT_MS}ms (box watchdog is ${Ocbm.HEARTBEAT_GRACE_MS}ms)")
-    }
-
-    // ---- CH_MFI relay ---------------------------------------------------------------------------
-
-    /**
-     * Serializes ALL CH_MFI traffic. The channel has TWO concurrent consumers — the native receiver
-     * core's MFi relay (on control-connection threads) and any probe/bring-up cert/sign — and the
-     * wire response carries no opcode echo or request id, so without a lock a certificate can be
-     * returned as the answer to a signature request (auth-setup then fails and the session drops).
-     */
-    private val mfiLock = Any()
-
-    private fun mfiRequest(
-        req: ByteArray,
-        timeoutMs: Long,
-        expectedOk: (ByteArray) -> Boolean,
-    ): Mfi.Response? {
-        synchronized(mfiLock) {
-            // Drain stale/late replies from a previous request UNDER the lock, so this request's poll
-            // cannot pick up an earlier answer that arrived after that caller's timeout.
-            while (mfiQ.poll() != null) { /* discard */ }
-            if (!send(Ocbm.CH_MFI, req)) return null
-            val deadline = System.currentTimeMillis() + timeoutMs
-            while (true) {
-                val remaining = deadline - System.currentTimeMillis()
-                if (remaining <= 0) return null
-                val pl = mfiQ.poll(remaining, TimeUnit.MILLISECONDS) ?: return null
-                val resp = Mfi.parse(pl, pl.size) ?: continue
-                // Weak length correlation until the protocol grows a request id: an OK reply whose
-                // payload length doesn't match this op is a stale/mismatched answer — keep waiting.
-                // Error statuses carry no payload and are accepted as-is (a misattributed transient
-                // FAILED just triggers the caller's retry, which is benign).
-                if (resp.ok && !expectedOk(resp.payload)) {
-                    log.w("!! CH_MFI stale/mismatched OK reply (${resp.payload.size}B) discarded")
-                    continue
-                }
-                return resp
-            }
-        }
-    }
-
-    /**
-     * Fetch the MFi certificate. Generous timeout: the box takes a bounded flock on
-     * /tmp/carplay_mfi.lock with a 10 s deadline, and MFi blocks its single-threaded dispatch.
-     */
-    fun mfiCertificate(timeoutMs: Long = 12_000): Mfi.Response? {
-        log.i(">> CH_MFI copy_certificate")
-        // A certificate is ~945 B; a 128-B OK reply is the signature answer to another request.
-        return mfiRequest(Mfi.certRequest(), timeoutMs) { it.size > Mfi.SIG_LEN }
-    }
-
-    /**
-     * Sign a 20-byte SHA-1 digest. The chip sequence alone runs up to ~2.1 s, and with lock
-     * contention the worst case approaches 12 s.
-     */
-    fun mfiSign(
-        digest: ByteArray,
-        timeoutMs: Long = 15_000,
-    ): Mfi.Response? {
-        log.i(">> CH_MFI create_signature (${digest.size}B digest)")
-        return mfiRequest(Mfi.signRequest(digest), timeoutMs) { it.size == Mfi.SIG_LEN }
     }
 
     // ---- CH_MGMT --------------------------------------------------------------------------------

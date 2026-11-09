@@ -515,8 +515,8 @@ class CarlinkManager(
     val phoneOnWifi: Int?
         get() =
             when (projectionMode) {
-                Ocbm.PM_WIRELESS_CP, Ocbm.PM_WIRELESS_AA -> 1
-                Ocbm.PM_WIRED_CP, Ocbm.PM_WIRED_AA -> 0
+                Ocbm.PM_WIRELESS_CP -> 1
+                Ocbm.PM_WIRED_CP -> 0
                 else -> currentWifi
             }
 
@@ -3006,9 +3006,8 @@ class CarlinkManager(
     ) {
         voiceRouter?.onUplinkGate(on)
         if (on) {
-            // A renegotiation (CVSD -> mSBC keeps the rate at 16 kHz) must restart capture: the
-            // early-return in startMicrophoneCapture would otherwise leave a PCM uplink running on
-            // a wideband SCO socket — silent corruption with no local symptom.
+            // A renegotiated format must restart capture: the early-return in startMicrophoneCapture
+            // would otherwise keep uplinking at the old rate.
             if (isMicrophoneCapturing && microphoneManager?.matchesFormat(rate, channels, codec) == false) {
                 logInfo("[MIC] uplink format changed (${rate}Hz ${channels}ch codec=$codec) — restarting capture", tag = Logger.Tags.MIC)
                 stopMicrophoneCapture()
@@ -3031,24 +3030,17 @@ class CarlinkManager(
         if (isMicrophoneCapturing) return
         val mgr = microphoneManager ?: return
 
-        // mSBC captures 16 kHz mono whatever the gate said (MicProfile.captureFormatFor); log a
-        // disagreement rather than silently encode pitch-shifted speech.
-        val (r, c) = MicProfile.captureFormatFor(rate, channels, codec)
-        if (r != rate || c != channels) {
-            logWarn("[MIC] gate said ${rate}Hz ${channels}ch but codec $codec captures ${r}Hz ${c}ch", tag = Logger.Tags.MIC)
-        }
         val input = callMicInput()
-        if (!mgr.start(captureProfileFor(r, c), codec, input)) {
+        if (!mgr.start(captureProfileFor(rate, channels), codec, input)) {
             logError("[MIC] Capture failed to start", tag = Logger.Tags.MIC)
             return
         }
         isMicrophoneCapturing = true
         micInput = input
 
-        // 20 ms of PCM per tick, matching the box's own RTP packetization (PCM); for mSBC up to a
-        // few whole 60-byte packets per tick with the ring buffer carrying the 7.5 ms remainder.
-        // The cadence and the drain size must change together or the stream underruns.
-        val chunkSize = MicProfile.uplinkDrainBytes(rate, channels, codec)
+        // 20 ms of PCM per tick, matching the box's own RTP packetization. The cadence and the drain
+        // size must change together or the stream underruns.
+        val chunkSize = MicProfile.chunkBytes(rate, channels)
         val generation = micSendGeneration.incrementAndGet()
         micSendFuture?.cancel(false)
         var failures = 0
@@ -3066,8 +3058,8 @@ class CarlinkManager(
                 }
             }, 0, MicProfile.TICK_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
 
-        logInfo("[MIC] Capture started at ${r}Hz ${c}ch codec=$codec (drain ${chunkSize}B/tick)", tag = Logger.Tags.MIC)
-        startEchoMonitor(r, c)
+        logInfo("[MIC] Capture started at ${rate}Hz ${channels}ch (drain ${chunkSize}B/tick)", tag = Logger.Tags.MIC)
+        startEchoMonitor(rate, channels)
     }
 
     /**
@@ -3093,10 +3085,7 @@ class CarlinkManager(
             startMicrophoneCapture(micRate, micChannels, micCodec)
             return
         }
-        if (callEchoMonitor == null) {
-            val (r, c) = MicProfile.captureFormatFor(micRate, micChannels, micCodec)
-            startEchoMonitor(r, c)
-        }
+        if (callEchoMonitor == null) startEchoMonitor(micRate, micChannels)
     }
 
     // ---- Call echo monitor (ported from Carlink2 [223]) ------------------------------------------
@@ -3349,8 +3338,7 @@ class CarlinkManager(
         if (!isMicrophoneCapturing) return
         // PCM: S16LE straight out to CH_MIC — the box converts to the big-endian the iPhone wants.
         // Do NOT "symmetry-fix" this against the big-endian DOWNLINK: a swapped uplink reaches
-        // Siri as noise with no local symptom. mSBC: each callback is one 60-byte eSCO packet, one
-        // CH_MIC message each (MIC_CHUNK = 16384 never splits it).
+        // Siri as noise with no local symptom.
         microphoneManager?.drainUplink(chunkSize) { client?.sendMicPcm(it) }
     }
 
