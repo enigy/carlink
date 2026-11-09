@@ -736,6 +736,9 @@ class CarlinkManager(
 
     @Volatile private var helloReplayJob: Job? = null
 
+    /** When this phone's session reaches STREAMING: its media once keyed, or its key when its media came first. */
+    private val streamingStamp = StreamingStamp()
+
     /** One-time [initialize] work (mic manager, MediaSession attach) has run. */
     private var initializedOnce = false
 
@@ -1743,6 +1746,7 @@ class CarlinkManager(
         phoneSetup.reset()
         helloReplayJob?.cancel()
         helloReplay.reset()
+        streamingStamp.reset()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
@@ -2303,6 +2307,7 @@ class CarlinkManager(
      */
     private fun holdHelloReplay() {
         helloReplayJob?.cancel()
+        streamingStamp.reset()
         helloReplay.start()
         helloReplayJob =
             scope.launch {
@@ -2346,6 +2351,7 @@ class CarlinkManager(
         phoneSetup.onPhoneLeft()
         clearCachedMediaMetadata()
         client?.reannounceKeyed()
+        streamingStamp.reset()
     }
 
     /** Main thread. The hold is over: apply what was held when it is this session's, drop it when it was the last host's. */
@@ -2357,6 +2363,7 @@ class CarlinkManager(
         if (!r.live) {
             logInfo("[SESSION] the box's replayed session ended at once ($why): the last host's; its phone and video key dropped", tag = Logger.Tags.ADAPTR)
             client?.reannounceKeyed()
+            streamingStamp.reset()
             r.mode?.let(::applyProjMode)
             return
         }
@@ -3034,7 +3041,12 @@ class CarlinkManager(
     /** Main thread. The session's first video key, once [helloReplay] lets it through: a paired, keyed phone is here. */
     private fun sessionKeyed() {
         hadPriorSession = true
-        setState(State.DEVICE_CONNECTED)
+        // Never back from STREAMING, and STREAMING now when this phone's media came first ([StreamingStamp]).
+        when (streamingStamp.onKeyed(state)) {
+            State.STREAMING -> markStreaming()
+            State.DEVICE_CONNECTED -> setState(State.DEVICE_CONNECTED)
+            else -> Unit
+        }
         setStatusText("Phone connected")
         phoneSetup.onPhoneConnected()
         currentPhoneType = PhoneType.CARPLAY
@@ -4100,7 +4112,11 @@ class CarlinkManager(
      * start of the window a short-lived session is measured against.
      */
     private fun markStreamingIfFirstMedia() {
-        if (state != State.DEVICE_CONNECTED) return
+        if (streamingStamp.onMedia(state) == State.STREAMING) markStreaming()
+    }
+
+    /** STREAMING: at this phone's first media once keyed, or at its key when the media came first ([StreamingStamp]). */
+    private fun markStreaming() {
         lastStreamingStartMs = SystemClock.elapsedRealtime()
         setState(State.STREAMING)
         noteCarPlaySession()
