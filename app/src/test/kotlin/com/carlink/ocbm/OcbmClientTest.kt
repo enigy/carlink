@@ -1,6 +1,7 @@
 package com.carlink.ocbm
 
 import com.carlink.logging.ProbeLog
+import com.carlink.ocbm.seam.SeamCrypto
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -534,6 +535,31 @@ class OcbmClientTest {
         verb: Byte,
         status: Int,
     ) = byteArrayOf(Ocbm.MGMT_ACK, verb, status.toByte())
+
+    /** A video seam key message, as the box sends one at each seam connect: `[u32 BE len][SEAV][0x00][key 32][scid 8]`. */
+    private fun videoKey(): ByteArray {
+        val body = byteArrayOf(SeamCrypto.MARK_KEY.toByte()) + ByteArray(32) { it.toByte() } + ByteArray(8)
+        val len = 4 + body.size
+        return byteArrayOf((len ushr 24).toByte(), (len ushr 16).toByte(), (len ushr 8).toByte(), len.toByte()) + SeamCrypto.SEAM_MAGIC + body
+    }
+
+    @Test
+    fun `the keyed edge comes once per generation, and once more after each reannounce`() {
+        // 9 Nov bench (eb41fcab): after a phone switch inside one generation nothing raised it, so the second phone
+        // never reached the pairing screen as connected. The manager re-arms it when a phone's session ends.
+        val t = FakeTransport()
+        val c = subscribedClient(t)
+        var keyed = 0
+        c.onSessionKeyed = { keyed++ }
+        t.deliver(Ocbm.CH_VIDEO, videoKey())
+        t.deliver(Ocbm.CH_VIDEO, videoKey())
+        assertEquals("a re-key in one phone's session is not a new phone", 1, keyed)
+        c.reannounceKeyed()
+        t.deliver(Ocbm.CH_VIDEO, videoKey())
+        assertEquals("the next phone's first key is its own edge", 2, keyed)
+        t.deliver(Ocbm.CH_VIDEO, videoKey())
+        assertEquals(2, keyed)
+    }
 
     @Test
     fun `a late answer to a request that gave up is not the next request's answer`() {

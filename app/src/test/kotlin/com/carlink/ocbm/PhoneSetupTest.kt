@@ -281,6 +281,23 @@ class PhoneSetupTest {
     }
 
     @Test
+    fun `a second phone in the session clears pairing and stops the window's clock`() {
+        // 9 Nov bench (eb41fcab): Add phone, then another iPhone paired and connected, and two minutes on the window
+        // "ran out with no phone" over it: only the generation's first phone had raised onPhoneConnected.
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        setup.onPhoneConnected() // the first phone
+        setup.onPhoneLeft()
+        setup.pair()
+        await<PhoneSetupPhase.Pairing>()
+        setup.onPhoneConnected() // the next phone, in the same session
+        assertEquals(PhoneSetupPhase.None, setup.phase.value)
+        Thread.sleep(timing.windowSeconds * 1_000L + 300)
+        assertEquals("the window's clock stopped", PhoneSetupPhase.None, setup.phase.value)
+    }
+
+    @Test
     fun `a window request that never ends is given up as no answer`() {
         // 9 Nov bench: two opens btd applied never logged a status. Every request now ends, and says how.
         val quick = PhoneSetup(box, scope, timing.copy(windowTimeoutMs = 300))

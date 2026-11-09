@@ -2336,10 +2336,16 @@ class CarlinkManager(
      * is connected for the pairing screen, and the next phone starts from no track. On the 9 Nov bench a phone that
      * played nothing showed the last phone's track, app and art: its first, empty frame was merged with the cache, which
      * only a stop, an adapter reboot or an error cleared.
+     *
+     * The keyed edge is re-armed too, so the next phone's first video key runs [sessionKeyed] as the first phone's did.
+     * The client raises it once per A/V generation, and after a switch nothing told the pairing screen a phone was
+     * connected: an Add phone window opened before the switch ran out over the connected phone and said "No iPhone
+     * paired" (9 Nov bench, eb41fcab).
      */
     private fun phoneSessionEnded() {
         phoneSetup.onPhoneLeft()
         clearCachedMediaMetadata()
+        client?.reannounceKeyed()
     }
 
     /** Main thread. The hold is over: apply what was held when it is this session's, drop it when it was the last host's. */

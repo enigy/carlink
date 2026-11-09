@@ -269,7 +269,7 @@ class OcbmClient(
      *
      * This is the earliest truthful "device connected" edge available — earlier than the first decoded
      * frame, and unlike a phone-presence event it proves the crypto handshake completed. Fires on the
-     * read thread, once per generation.
+     * read thread, once per generation, and once more after each [reannounceKeyed].
      */
     var onSessionKeyed: (() -> Unit)? = null
 
@@ -279,8 +279,9 @@ class OcbmClient(
     private val videoKeyedThisGeneration = AtomicBoolean(false)
 
     /**
-     * Let the next video key raise [onSessionKeyed] again in this generation: the key that raised it belonged to the
-     * last host's session, which the box replayed at SUBSCRIBE and then ended ([com.carlink.ocbm.HelloReplay]).
+     * Let the next video key raise [onSessionKeyed] again in this generation: the session whose key raised it ended. That
+     * is the last host's session, replayed at SUBSCRIBE and then ended ([com.carlink.ocbm.HelloReplay]), or a phone's
+     * session within the generation, so the next phone's first key is its own "device connected" edge.
      */
     fun reannounceKeyed() {
         videoKeyedThisGeneration.set(false)
