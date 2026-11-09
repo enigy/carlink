@@ -160,6 +160,8 @@ class AdapterUpdateSessionTest {
         waitUntil(2000) { session.phase.value == UpdatePhase.Checking("1.1.0") }
         box?.infoJson = info(update = "committed", result = "committed 1.1.0 ocbm eec9db5 (from 1.0.0 ocbm f8f18c8)")
         waitUntil(2000) { session.phase.value == UpdatePhase.Updated("1.1.0") }
+        // Updated is published just before host.updated() runs, on the session's thread: wait for the read.
+        waitUntil(2000) { updated.get() >= 1 }
         assertEquals("the install is read again, for its new version", 1, updated.get())
 
         session.dismiss()

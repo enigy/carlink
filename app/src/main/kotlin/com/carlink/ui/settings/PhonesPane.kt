@@ -87,6 +87,7 @@ internal fun PhonesPane(
             PairPhoneCard(
                 adapterName = adapterName,
                 boxSaysOpen = live.pairWindowOpen,
+                noPhonePaired = live.noPhoneBonded,
                 onOpen = { carlinkManager.setPairWindow(PAIR_WINDOW_SECONDS) },
                 onClose = { carlinkManager.setPairWindow(0) },
                 bluetoothStarting = setupPhase is PhoneSetupPhase.BluetoothStarting,

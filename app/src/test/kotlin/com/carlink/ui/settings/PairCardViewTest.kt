@@ -50,6 +50,19 @@ class PairCardViewTest {
     }
 
     @Test
+    fun `with no phone paired the adapter is open with no countdown and no Stop`() {
+        // btd keeps a box with no bonds pairable, so BH_PAIR_WINDOW stays set: the card counted down to 0:00 and stayed.
+        val v = pairCardView(boxSaysOpen = true, bluetoothStarting = false, tappedAt = 0, stoppedAt = 0, endsAt = 0, now = 500_000, noPhonePaired = true)
+        assertTrue(v.open)
+        assertFalse("no countdown, no Stop", v.timed)
+        assertFalse(v.ticking)
+        assertFalse(v.unanswered)
+        val boxClosed = pairCardView(false, false, tappedAt = 0, stoppedAt = 0, endsAt = 0, now = 500_000, noPhonePaired = true)
+        assertFalse("a box that says closed is closed", boxClosed.open)
+        assertTrue("and offers Add phone", boxClosed.timed)
+    }
+
+    @Test
     fun `stop shows closed at once, and open again if the box still says so`() {
         val stopping = pairCardView(boxSaysOpen = true, bluetoothStarting = false, tappedAt = 0, stoppedAt = 10_000, endsAt = ends, now = 11_000)
         assertFalse(stopping.open)

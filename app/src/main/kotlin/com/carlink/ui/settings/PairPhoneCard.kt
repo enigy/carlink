@@ -48,6 +48,8 @@ internal data class PairCardView(
     val unanswered: Boolean,
     /** Something can still change by itself: the countdown, a tap the box hasn't answered, a Stop it hasn't followed. */
     val ticking: Boolean,
+    /** A window the driver opened, with a countdown and Stop; false while the adapter is pairable for want of a phone. */
+    val timed: Boolean = true,
 )
 
 /**
@@ -56,8 +58,12 @@ internal data class PairCardView(
  * answers: for [OPEN_CONFIRM_MS], or while the adapter's Bluetooth starts and Carlink asks again; after that it is
  * [PairCardView.unanswered]. A Stop ([stoppedAt]) shows it closed at once, and open again if the box still says so
  * [OPEN_CONFIRM_MS] later. [endsAt] is the countdown's end, 0 when there is none yet.
+ *
+ * An adapter with no paired phone ([noPhonePaired]) stays pairable without a window (btd: `pairing_allowed = window ||
+ * bonds == 0`), so the box says open all along: shown open, with no countdown and no Stop. On the 9 Nov bench the card
+ * counted down to 0:00 and stayed there, and Stop showed closed for [OPEN_CONFIRM_MS], then open again.
  */
-@Suppress("LongParameterList") // the box's word, the driver's two taps and the clock
+@Suppress("LongParameterList") // the box's word, the adapter's phones, the driver's two taps and the clock
 internal fun pairCardView(
     boxSaysOpen: Boolean,
     bluetoothStarting: Boolean,
@@ -65,8 +71,10 @@ internal fun pairCardView(
     stoppedAt: Long,
     endsAt: Long,
     now: Long,
+    noPhonePaired: Boolean = false,
 ): PairCardView {
-    val waiting = tappedAt != 0L && !boxSaysOpen && (bluetoothStarting || now - tappedAt <= OPEN_CONFIRM_MS)
+    if (noPhonePaired && boxSaysOpen) return PairCardView(open = true, secondsLeft = 0L, unanswered = false, ticking = false, timed = false)
+    val waiting = tapWaiting(boxSaysOpen, bluetoothStarting, tappedAt, now)
     val stopping = stoppedAt != 0L && boxSaysOpen && now - stoppedAt <= OPEN_CONFIRM_MS
     val open = (boxSaysOpen && !stopping) || waiting
     val ends = if (endsAt != 0L) endsAt else now + PAIR_WINDOW_SECONDS * TICK_MS
@@ -78,6 +86,14 @@ internal fun pairCardView(
     )
 }
 
+/** A tap ([tappedAt], 0 for none) the box hasn't answered yet: within [OPEN_CONFIRM_MS], or while its Bluetooth starts. */
+private fun tapWaiting(
+    boxSaysOpen: Boolean,
+    bluetoothStarting: Boolean,
+    tappedAt: Long,
+    now: Long,
+): Boolean = tappedAt != 0L && !boxSaysOpen && (bluetoothStarting || now - tappedAt <= OPEN_CONFIRM_MS)
+
 /**
  * "Add phone" for a box that gates Bluetooth pairing (security plan 2026-10-21 §3): new phones can
  * pair only while the window is open, and only paired phones are given the adapter's Wi-Fi details.
@@ -86,6 +102,7 @@ internal fun pairCardView(
  * down while the box says the window is open (it closes early once a new phone has paired), and says so when a tap
  * isn't answered.
  */
+@Suppress("LongParameterList") // what the box says, and the driver's two buttons
 @Composable
 internal fun PairPhoneCard(
     adapterName: String,
@@ -94,17 +111,19 @@ internal fun PairPhoneCard(
     onClose: () -> Unit,
     // The adapter's Bluetooth is still starting, and Carlink asks again until it answers (PhoneSetupPhase.BluetoothStarting).
     bluetoothStarting: Boolean = false,
+    // The adapter holds no paired phone, so it stays pairable without a window (CarlinkManager.noPhoneBonded).
+    noPhonePaired: Boolean = false,
 ) {
     val card = remember { PairCardClock() }
     LaunchedEffect(boxSaysOpen) { card.boxSays(boxSaysOpen) }
-    LaunchedEffect(boxSaysOpen, bluetoothStarting, card.tappedAt, card.stoppedAt) {
+    LaunchedEffect(boxSaysOpen, bluetoothStarting, noPhonePaired, card.tappedAt, card.stoppedAt) {
         while (true) {
             card.now = SystemClock.elapsedRealtime()
-            if (!card.view(boxSaysOpen, bluetoothStarting).ticking) break
+            if (!card.view(boxSaysOpen, bluetoothStarting, noPhonePaired).ticking) break
             delay(TICK_MS)
         }
     }
-    val view = card.view(boxSaysOpen, bluetoothStarting)
+    val view = card.view(boxSaysOpen, bluetoothStarting, noPhonePaired)
     val counting = view.open
 
     PairCardFrame {
@@ -115,27 +134,29 @@ internal fun PairPhoneCard(
             modifier = Modifier.size(32.dp),
         )
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(pairText(counting, adapterName, view.secondsLeft), style = SettingsStyle.Body)
+            Text(pairText(view, adapterName), style = SettingsStyle.Body)
             if (bluetoothStarting) {
                 Text("The adapter's Bluetooth is starting. Pairing opens as soon as it's ready.", style = SettingsStyle.RowSubtitle)
             } else if (view.unanswered) {
                 Text("The adapter hasn't opened pairing. Check it is connected, then try again.", style = SettingsStyle.RowSubtitle, color = SettingsStyle.ErrorText)
             }
         }
-        RowAction(
-            label = if (counting) "Stop" else "Add phone",
-            onClick = {
-                if (counting) {
-                    logWarn("[UI_ACTION] Pairing window: stop", tag = "UI")
-                    onClose()
-                    card.tapStop()
-                } else {
-                    logWarn("[UI_ACTION] Pairing window: add phone", tag = "UI")
-                    onOpen()
-                    card.tapOpen()
-                }
-            },
-        )
+        if (view.timed) {
+            RowAction(
+                label = if (counting) "Stop" else "Add phone",
+                onClick = {
+                    if (counting) {
+                        logWarn("[UI_ACTION] Pairing window: stop", tag = "UI")
+                        onClose()
+                        card.tapStop()
+                    } else {
+                        logWarn("[UI_ACTION] Pairing window: add phone", tag = "UI")
+                        onOpen()
+                        card.tapOpen()
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -149,7 +170,8 @@ private class PairCardClock {
     fun view(
         boxSaysOpen: Boolean,
         bluetoothStarting: Boolean,
-    ): PairCardView = pairCardView(boxSaysOpen, bluetoothStarting, tappedAt, stoppedAt, endsAt, now)
+        noPhonePaired: Boolean,
+    ): PairCardView = pairCardView(boxSaysOpen, bluetoothStarting, tappedAt, stoppedAt, endsAt, now, noPhonePaired)
 
     fun tapOpen() {
         val at = SystemClock.elapsedRealtime()
@@ -199,12 +221,18 @@ private fun PairCardFrame(
 
 @Composable
 private fun pairText(
-    counting: Boolean,
+    view: PairCardView,
     adapterName: String,
-    secondsLeft: Long,
 ) = buildAnnotatedString {
     val accent = SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
-    if (counting) {
+    val secondsLeft = view.secondsLeft
+    if (view.open && !view.timed) {
+        // No phone is paired, so the adapter stays open to the first one.
+        withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append("Pairing is open until the first phone pairs. ") }
+        append("On the iPhone, open Settings › General › CarPlay and choose ")
+        withStyle(accent) { append(adapterName) }
+        append(".")
+    } else if (view.open) {
         withStyle(SpanStyle(fontWeight = FontWeight.Medium)) {
             append("Pairing open for %d:%02d. ".format(secondsLeft / SECONDS_PER_MINUTE, secondsLeft % SECONDS_PER_MINUTE))
         }

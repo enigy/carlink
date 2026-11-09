@@ -34,6 +34,25 @@ class VideoStallWatchTest {
     }
 
     @Test
+    fun `input that stops is no stall`() {
+        // 9 Nov bench: one last access unit, then the phone's session ended; rebuilt 6 s later with nothing to decode.
+        assertFalse(watch.sample(1, 0, bytesIn = 1_000, framesRendered = 50))
+        assertFalse(watch.sample(1, 2_000, bytesIn = 1_100, framesRendered = 50))
+        for (t in 2..20) assertFalse("at ${t * 2_000} ms", watch.sample(1, t * 2_000L, bytesIn = 1_100, framesRendered = 50))
+    }
+
+    @Test
+    fun `a gap in the input starts the count again`() {
+        watch.sample(1, 0, 0, 0)
+        watch.sample(1, 2_000, 100, 0)
+        watch.sample(1, 4_000, 200, 0)
+        assertFalse("nothing arrived", watch.sample(1, 6_000, 200, 0))
+        assertFalse(watch.sample(1, 8_000, 300, 0))
+        assertFalse(watch.sample(1, 12_000, 500, 0))
+        assertTrue(watch.sample(1, 14_000, 600, 0))
+    }
+
+    @Test
     fun `a frame drawn mid-stall starts the count again`() {
         watch.sample(1, 0, 0, 0)
         watch.sample(1, 2_000, 100, 0)

@@ -999,6 +999,13 @@ class CarlinkManager(
      */
     val canForget: Boolean get() = client != null && bondsRead
 
+    /**
+     * This session's MGMT_INFO says the adapter holds no paired phone. btd keeps such an adapter pairable with no window
+     * (`pairing_allowed = window || bonds == 0`), so BH_PAIR_WINDOW stays set and Settings shows pairing open with no
+     * countdown (9 Nov bench: it counted down to 0:00 and stayed there).
+     */
+    val noPhoneBonded: Boolean get() = client != null && bondsRead && bondedMacs.isEmpty()
+
     /** The adapter's list of paired wireless devices. */
     val pairedDevices: List<DeviceInfo> get() = _pairedDevices
 
@@ -2317,11 +2324,22 @@ class CarlinkManager(
         }
     }
 
-    /** Main thread. A phone's session ending (a mode to NONE) is the phone leaving, for the pairing screen too. */
+    /** Main thread. A phone's session ending (a mode to NONE) is the phone leaving ([phoneSessionEnded]). */
     private fun applyProjMode(mode: Byte) {
         val before = projectionMode
         onBoxStatus(mode, boxHealth, boxHealthKnown)
-        if (mode == Ocbm.PM_NONE && before != Ocbm.PM_NONE) phoneSetup.onPhoneLeft()
+        if (mode == Ocbm.PM_NONE && before != Ocbm.PM_NONE) phoneSessionEnded()
+    }
+
+    /**
+     * Main thread. The phone's session ended inside this Carlink session (PROJ_MODE to NONE, SEV_PHONE_ABSENT): no phone
+     * is connected for the pairing screen, and the next phone starts from no track. On the 9 Nov bench a phone that
+     * played nothing showed the last phone's track, app and art: its first, empty frame was merged with the cache, which
+     * only a stop, an adapter reboot or an error cleared.
+     */
+    private fun phoneSessionEnded() {
+        phoneSetup.onPhoneLeft()
+        clearCachedMediaMetadata()
     }
 
     /** Main thread. The hold is over: apply what was held when it is this session's, drop it when it was the last host's. */
@@ -2946,7 +2964,7 @@ class CarlinkManager(
                 if (!present) {
                     markPhoneLeft()
                     adapterPhone.absent()
-                    phoneSetup.onPhoneLeft()
+                    phoneSessionEnded()
                 }
                 _phoneNews.update { it + 1 }
                 if (present || state == State.DISCONNECTED) return@launch
@@ -3505,8 +3523,10 @@ class CarlinkManager(
         if (json.isEmpty()) {
             markPhoneLeft()
             // The adapter cleared it: that phone's session is over, so no phone is Connected until the next one
-            // names itself (11-03 bench: the old phone's row read "Connected" through a switch).
+            // names itself (11-03 bench: the old phone's row read "Connected" through a switch), and none of its
+            // track carries over to the next one.
             adapterPhone.identity(null)
+            clearCachedMediaMetadata()
             _phoneNews.update { it + 1 }
             return
         }
@@ -3518,6 +3538,8 @@ class CarlinkManager(
         val name = obj.optString("name")
         val mac = obj.optString("deviceID").lowercase()
         if (mac.isEmpty()) return
+        // Another phone with no session end seen between: none of the last one's track carries over (9 Nov bench).
+        if (adapterPhone.identified?.let { it != mac } == true) clearCachedMediaMetadata()
         adapterPhone.identity(mac)
         if (name.isNotEmpty()) phoneNames[mac] = name
         applyDriverProfile(mac, name)
