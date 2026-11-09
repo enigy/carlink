@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -31,6 +32,7 @@ class PhoneSetupTest {
             restartPollMs = 20,
             restartDownMs = 600,
             reopenCheckMs = 200,
+            windowTimeoutMs = 3_000,
         )
     private val setup = PhoneSetup(box, scope, timing)
 
@@ -254,6 +256,46 @@ class PhoneSetupTest {
     }
 
     @Test
+    fun `after the phone has left, a window after a Forget waits for the restart and Bluetooth again`() {
+        // 9 Nov bench: the iPhone left, then Forget and Add phone. Still taken as connected, the window skipped the
+        // restart wait, got status 1 while btd restarted and gave up after two tries: "btd isn't reachable".
+        box.devices = """["AA:BB:CC:DD:EE:FF"]"""
+        setup.onSubscribed()
+        waitUntil { box.reads.get() == 1 }
+        setup.onPhoneConnected()
+        setup.onPhoneLeft()
+        box.wireless = true
+        setup.onForgetSent()
+        var status: Int? = -1
+        val asked = scope.launch { status = setup.window(timing.windowSeconds) }
+        Thread.sleep(150)
+        assertTrue("not before the restart has begun", box.windows.isEmpty())
+        box.wireless = false
+        Thread.sleep(100)
+        box.windowStatus = 1 // btd is still starting when the window goes out
+        box.wireless = true
+        waitUntil { box.windows.size >= 2 }
+        box.windowStatus = 0
+        waitUntil(2_000) { asked.isCompleted }
+        assertEquals("tried again until btd answered", 0, status)
+    }
+
+    @Test
+    fun `a window request that never ends is given up as no answer`() {
+        // 9 Nov bench: two opens btd applied never logged a status. Every request now ends, and says how.
+        val quick = PhoneSetup(box, scope, timing.copy(windowTimeoutMs = 300))
+        box.devices = "[]"
+        quick.onSubscribed()
+        waitUntil(timeoutMs = 1_000) { quick.phase.value is PhoneSetupPhase.Prompt }
+        box.windowDelayMs = 10_000
+        val started = System.currentTimeMillis()
+        quick.pair()
+        waitUntil(timeoutMs = 2_000) { quick.phase.value is PhoneSetupPhase.NotPaired }
+        assertTrue("within its time limit", System.currentTimeMillis() - started < 1_500)
+        assertEquals(PhoneSetup.NO_ANSWER, (quick.phase.value as PhoneSetupPhase.NotPaired).title)
+    }
+
+    @Test
     fun `phones paired but none comes - keep waiting, then offer to pair a new one`() {
         box.devices = """["AA:BB:CC:DD:EE:FF"]"""
         setup.onSubscribed()
@@ -370,8 +412,11 @@ class PhoneSetupTest {
 
         override val gatesPairing: Boolean get() = gates
 
+        @Volatile var windowDelayMs = 0L
+
         override fun pairWindow(seconds: Int): Int? {
             windows += seconds
+            if (windowDelayMs > 0) Thread.sleep(windowDelayMs)
             return windowStatus
         }
 

@@ -60,7 +60,7 @@ class OcbmShellInputTest {
         val c = subscribed(t)
         var mode: Byte? = null
         var health: Int? = null
-        c.onProjMode = { mode = it }
+        c.onProjMode = { m, _ -> mode = m }
         c.onBoxHealth = { health = it }
 
         assertEquals(Ocbm.PM_NONE, c.lastProjMode)

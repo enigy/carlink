@@ -520,6 +520,62 @@ class OcbmClientTest {
         assertTrue(failure(silent()).contains("FILE_OPEN: no answer"))
     }
 
+    /** Run a MGMT request on its own thread, as the session does (it blocks on the box's answer). */
+    private fun asking(ask: () -> Int?): () -> Int? {
+        var result: Int? = null
+        val t = thread { result = ask() }
+        return {
+            t.join(3000)
+            result
+        }
+    }
+
+    private fun mgmtAck(
+        verb: Byte,
+        status: Int,
+    ) = byteArrayOf(Ocbm.MGMT_ACK, verb, status.toByte())
+
+    @Test
+    fun `a late answer to a request that gave up is not the next request's answer`() {
+        // 9 Nov bench: a close and an open back to back. Both are MGMT_PAIR_WINDOW, and an ACK names only its verb.
+        val t = FakeTransport()
+        val c = newClient(t)
+        val close = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(0, 0), timeoutMs = 150) }
+        assertNotNull(t.awaitFrameOn(Ocbm.CH_MGMT))
+        assertNull("no answer in time", close())
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 0)) // the close's answer, late
+        val open = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(120, 0), timeoutMs = 2000) }
+        assertArrayEquals(byteArrayOf(Ocbm.MGMT_PAIR_WINDOW, 120, 0), t.awaitFrameOn(Ocbm.CH_MGMT))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 1))
+        assertEquals("its own answer, not the close's", 1, open())
+    }
+
+    @Test
+    fun `a reply for another verb is not taken as the answer`() {
+        val t = FakeTransport()
+        val c = newClient(t)
+        val open = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(120, 0), timeoutMs = 2000) }
+        assertNotNull(t.awaitFrameOn(Ocbm.CH_MGMT))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_SET_POLICY, 1))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 0))
+        assertEquals(0, open())
+    }
+
+    @Test
+    fun `requests go one at a time, each with its own answer`() {
+        val t = FakeTransport()
+        val c = newClient(t)
+        val first = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(0, 0), timeoutMs = 2000) }
+        assertArrayEquals(byteArrayOf(Ocbm.MGMT_PAIR_WINDOW, 0, 0), t.awaitFrameOn(Ocbm.CH_MGMT))
+        val second = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(120, 0), timeoutMs = 2000) }
+        assertNull("the second waits for the line", t.awaitFrameOn(Ocbm.CH_MGMT, ms = 200))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 0))
+        assertEquals(0, first())
+        assertArrayEquals(byteArrayOf(Ocbm.MGMT_PAIR_WINDOW, 120, 0), t.awaitFrameOn(Ocbm.CH_MGMT))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 1))
+        assertEquals(1, second())
+    }
+
     @Test
     fun `the stall snapshot names the frame the read thread is parked in`() {
         // Bench 2026-11-02: three link stalls, and nothing said which side stopped first.

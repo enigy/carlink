@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -157,6 +159,12 @@ class PhoneSetup(
         val restartDownMs: Long = 10_000,
         /** After a window opened in the quiet time, look again this much later, and open it once more if it closed. */
         val reopenCheckMs: Long = 4_000,
+        /**
+         * The most one window request may take, start to logged outcome: the restart wait, Bluetooth's start and each
+         * MGMT exchange are bounded on their own, and this bounds the lot (9 Nov bench: two opens btd applied never
+         * logged a status). One past it is "no answer".
+         */
+        val windowTimeoutMs: Long = 90_000,
     )
 
     private val phaseState = MutableStateFlow<PhoneSetupPhase>(PhoneSetupPhase.None)
@@ -217,6 +225,17 @@ class PhoneSetup(
         logInfo("[PAIRING] a phone connected: closing the window Carlink opened, status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
     }
 
+    /**
+     * The phone's session ended (PROJ_MODE to NONE, SEV_PHONE_ABSENT): no phone is connected now. Only [reset] and
+     * [onSubscribed] said so before, and on the 9 Nov bench, after the iPhone left and a Forget, Add phone took the
+     * phone as still connected: it skipped the restart wait, and gave up on Bluetooth after two tries ("btd isn't
+     * reachable") while btd restarted.
+     */
+    fun onPhoneLeft() {
+        val was = synchronized(lock) { connected.also { connected = false } }
+        if (was) logInfo("[PAIRING] the phone's session ended", tag = Logger.Tags.ADAPTR)
+    }
+
     /** The session ended: nothing is known about the next one. */
     fun reset() {
         synchronized(lock) {
@@ -262,8 +281,25 @@ class PhoneSetup(
      * all, while pairing from this screen, is "Try again". Returns the status.
      */
     suspend fun window(seconds: Int): Int? {
-        logWarn("[PAIRING] window ${if (seconds > 0) "open for ${seconds}s" else "close"} requested", tag = Logger.Tags.ADAPTR)
+        val asked = if (seconds > 0) "open for ${seconds}s" else "close"
+        logWarn("[PAIRING] window $asked requested", tag = Logger.Tags.ADAPTR)
         val gen = synchronized(lock) { ++windowGen }
+        val answer = withTimeoutOrNull(timing.windowTimeoutMs) { Answer(request(seconds, gen)) }
+        if (answer != null) return answer.status
+        logWarn("[PAIRING] window $asked: no outcome within ${timing.windowTimeoutMs} ms, given up", tag = Logger.Tags.ADAPTR)
+        if (seconds > 0) moveIfAsked(PhoneSetupPhase.NotPaired(nameNow(), NO_ANSWER, NO_ANSWER_BODY))
+        return null
+    }
+
+    /** [window]'s answer: its status, null for none (no answer, or overtaken). */
+    private class Answer(
+        val status: Int?,
+    )
+
+    private suspend fun request(
+        seconds: Int,
+        gen: Int,
+    ): Int? {
         val afterForget = seconds > 0 && forgetQuiet()
         if (afterForget) awaitRestart()
         if (synchronized(lock) { windowGen != gen }) {
@@ -272,13 +308,25 @@ class PhoneSetup(
             return null
         }
         val status = send(seconds)
-        if (afterForget && status == 0) scope.launch { reopenIfClosed(seconds, gen) }
+        if (afterForget && status == 0) scope.launch(Dispatchers.IO) { reopenIfClosed(seconds, gen) }
         return status
     }
 
+    /**
+     * One MGMT_PAIR_WINDOW, interruptible: the client bounds its own wait, and a [window] past its time limit stops it.
+     * A failure is logged and read as no answer.
+     */
+    private suspend fun ask(seconds: Int): Int? =
+        runInterruptible(Dispatchers.IO) {
+            runCatching { box.pairWindow(seconds) }
+                .onFailure { if (it is InterruptedException) throw it }
+                .onFailure { logWarn("[PAIRING] MGMT_PAIR_WINDOW failed: ${it.javaClass.simpleName} ${it.message}", tag = Logger.Tags.ADAPTR) }
+                .getOrNull()
+        }
+
     /** One MGMT_PAIR_WINDOW, retried while Bluetooth starts, with what its answer means for the screen. */
     private suspend fun send(seconds: Int): Int? {
-        var status = box.pairWindow(seconds)
+        var status = ask(seconds)
         logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
         if (seconds > 0 && status != null && status != 0) status = whileBluetoothStarts(seconds)
         when {
@@ -338,7 +386,7 @@ class PhoneSetup(
         delay(timing.reopenCheckMs)
         if (connected || box.windowOpen() != false || synchronized(lock) { windowGen != gen }) return
         logWarn("[PAIRING] the window opened after a Forget closed again (the box's wireless restart): opening it once more", tag = Logger.Tags.ADAPTR)
-        val status = box.pairWindow(seconds)
+        val status = ask(seconds)
         logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"} (reopened)", tag = Logger.Tags.ADAPTR)
         if (status == 0) {
             synchronized(lock) {
@@ -465,7 +513,7 @@ class PhoneSetup(
         var tries = 1
         do {
             delay(timing.btRetryMs)
-            status = box.pairWindow(seconds)
+            status = ask(seconds)
             tries++
         } while (refused(status) && box.now() < until && !connected)
         logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"} after $tries tries while Bluetooth started", tag = Logger.Tags.ADAPTR)

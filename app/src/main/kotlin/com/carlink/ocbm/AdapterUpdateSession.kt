@@ -137,7 +137,7 @@ interface UpdateHost {
 class AdapterUpdateSession(
     private val host: UpdateHost,
     private val packages: UpdateSupplier,
-    install: StateFlow<OneFileInstall?>,
+    private val install: StateFlow<OneFileInstall?>,
     private val scope: CoroutineScope,
     private val switches: Switches,
     private val timing: Timing = Timing(),
@@ -158,6 +158,10 @@ class AdapterUpdateSession(
         val deadlineMs: Long = 300_000,
         /** MGMT_UPDATE's answer: the adapter hashes the package (busybox sha256sum) first. */
         val startMs: Long = 30_000,
+        /** A final install read short of room at the session's start: between reads of its free flash ([recheckRoom]). */
+        val roomRecheckMs: Long = 20_000,
+        /** And for how long, from the session's start. */
+        val roomRecheckForMs: Long = 180_000,
     )
 
     /** What MGMT_INFO said of the adapter in use. */
@@ -191,6 +195,9 @@ class AdapterUpdateSession(
     private var job: Job? = null
     private var deadline: Job? = null
 
+    // The session start's re-reads of the free flash ([recheckRoom]).
+    @Volatile private var roomCheck: Job? = null
+
     /** A session is up (after CT_SUBSCRIBE): read the adapter, and the outcome of an update in flight. */
     fun onSubscribed() {
         if (!switches.enabled) return
@@ -198,18 +205,56 @@ class AdapterUpdateSession(
             val b = host.box() ?: return@launch
             val pkg = packages.known()
             val info = b.info()?.let(::parse)
-            adapter.value = Adapter(b.takesUpdates, info?.optInt("rootfs_free_kb", -1)?.takeIf { it >= 0 }, pkg)
+            adapter.value = Adapter(b.takesUpdates, freeKb(info), pkg)
             logInfo(
                 "[UPDATE] adapter takes updates=${b.takesUpdates}, ${adapter.value.freeKb ?: "?"} KB free; " +
                     "package ${pkg?.let { "${it.version} (from ${it.fromMin}, ~${it.needKb} KB)" } ?: "none"}",
                 tag = Logger.Tags.ADAPTR,
             )
             if (info != null) settle(info)
+            if (shortOfRoom()) recheckRoom(b)
         }
+    }
+
+    /** MGMT_INFO's `rootfs_free_kb`; null when it didn't say. */
+    private fun freeKb(info: JSONObject?): Int? = info?.optInt("rootfs_free_kb", -1)?.takeIf { it >= 0 }
+
+    /** Less flash free than the package needs, by the last read, on a final install (or one not read yet). */
+    private fun shortOfRoom(): Boolean {
+        val a = adapter.value
+        val need = a.pkg?.needKb ?: return false
+        val free = a.freeKb ?: return false
+        val mode = install.value?.mode
+        return free < need && (mode == null || mode == InstallMode.FINAL)
+    }
+
+    /**
+     * The first connect after a finish can read the free flash while the finish is still freeing it (9 Nov bench:
+     * 2728 KB, then 4128 KB two minutes later), and the update showed as not fitting until the next connect. So a final
+     * install short of room reads MGMT_INFO again every [Timing.roomRecheckMs], for [Timing.roomRecheckForMs] or until
+     * the package fits.
+     */
+    private fun recheckRoom(b: UpdateBox) {
+        roomCheck?.cancel()
+        roomCheck =
+            scope.launch(Dispatchers.IO) {
+                repeat((timing.roomRecheckForMs / timing.roomRecheckMs).toInt()) {
+                    delay(timing.roomRecheckMs)
+                    if (!shortOfRoom()) return@launch
+                    val free = freeKb(b.info()?.let(::parse)) ?: return@repeat
+                    adapter.value = adapter.value.copy(freeKb = free)
+                    if (!shortOfRoom()) {
+                        logInfo("[UPDATE] $free KB free on a second look: the package fits", tag = Logger.Tags.ADAPTR)
+                        return@launch
+                    }
+                }
+                logInfo("[UPDATE] still ${adapter.value.freeKb} KB free ${timing.roomRecheckForMs / MS_PER_S} s into the session", tag = Logger.Tags.ADAPTR)
+            }
     }
 
     /** The session ended: an adapter installing or checking the update is restarting; nothing is known of the next one yet. */
     fun reset() {
+        roomCheck?.cancel()
         adapter.value = Adapter()
         finishAskState.value = null
         synchronized(lock) {

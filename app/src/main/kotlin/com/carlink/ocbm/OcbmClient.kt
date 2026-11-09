@@ -7,6 +7,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.CRC32
 
 /**
@@ -35,9 +36,10 @@ class OcbmClient(
     private val ctrlQ = LinkedBlockingQueue<ByteArray>()
     private val mgmtQ = LinkedBlockingQueue<ByteArray>()
 
-    // One MGMT request at a time: each clears [mgmtQ] and waits for its own answer, so two at once (the
-    // session start's MGMT_INFO reads and SET_POLICY) could take or drop each other's.
-    private val mgmtLock = Any()
+    // One MGMT request at a time: each drains [mgmtQ] and waits for its own answer, so two at once (the
+    // session start's MGMT_INFO reads and SET_POLICY) could take or drop each other's. A lock with a bounded
+    // wait rather than a monitor, so a request behind a stuck one gives up and says so ([mgmtExchange]).
+    private val mgmtLock = ReentrantLock()
     private val fileQ = LinkedBlockingQueue<ByteArray>()
 
     // One CH_FILE transfer at a time: a pull and a push share [fileQ] and each takes the next FILE_ACK as its own.
@@ -142,14 +144,16 @@ class OcbmClient(
      * carries no JSON dependency by design; the session layer already parses META_JSON and owns the
      * decision about what an unexpected shape means.
      */
-    var onPhoneIdentity: ((String) -> Unit)? = null
+    var onPhoneIdentity: ((json: String, replay: Boolean) -> Unit)? = null
 
     /**
      * Which projection transport OWNS the box right now (CT_PROJ_MODE, one of `PM_*`). Mirrors the
      * box's single-owner arbitration flag; emitted on change and re-emitted to every fresh SUBSCRIBE,
-     * so nothing needs caching across a reconnect. Fires on the read thread — hand off.
+     * so nothing needs caching across a reconnect. `replay` is F_REPLAY: the box re-sent its state to this fresh
+     * SUBSCRIBE, which may still be the last host's session ([com.carlink.ocbm.HelloReplay]). Fires on the read
+     * thread — hand off.
      */
-    var onProjMode: ((Byte) -> Unit)? = null
+    var onProjMode: ((mode: Byte, replay: Boolean) -> Unit)? = null
 
     /**
      * The box's own subsystem liveness as a `BH_*` bitmask (CT_BOX_HEALTH). Same emit discipline as
@@ -274,6 +278,14 @@ class OcbmClient(
     /** Reset per generation, so a re-subscribe re-announces the keyed edge for the new session. */
     private val videoKeyedThisGeneration = AtomicBoolean(false)
 
+    /**
+     * Let the next video key raise [onSessionKeyed] again in this generation: the key that raised it belonged to the
+     * last host's session, which the box replayed at SUBSCRIBE and then ended ([com.carlink.ocbm.HelloReplay]).
+     */
+    fun reannounceKeyed() {
+        videoKeyedThisGeneration.set(false)
+    }
+
     private fun armLanes() {
         synchronized(lanesLock) {
             if (lanes != null) return
@@ -394,7 +406,7 @@ class OcbmClient(
      */
     private fun dispatch(f: OcbmFrame) {
         when (f.channel) {
-            Ocbm.CH_CTRL -> handleCtrl(f.payload)
+            Ocbm.CH_CTRL -> handleCtrl(f.payload, replay = f.flags.toInt() and Ocbm.F_REPLAY.toInt() != 0)
             Ocbm.CH_MGMT, Ocbm.CH_FILE -> replyQueue(f.channel).offer(f.payload)
             Ocbm.CH_VIDEO -> lanes?.feedVideo(f.payload) ?: dropAv(f)
             Ocbm.CH_MEDIA_AUDIO -> lanes?.feedMedia(f.payload) ?: dropAv(f)
@@ -464,7 +476,10 @@ class OcbmClient(
         )
     }
 
-    private fun handleCtrl(pl: ByteArray) {
+    private fun handleCtrl(
+        pl: ByteArray,
+        replay: Boolean = false,
+    ) {
         if (pl.isEmpty()) return
         when (pl[0]) {
             Ocbm.CT_HELLO_ACK -> {
@@ -529,8 +544,8 @@ class OcbmClient(
             Ocbm.CT_PHONE_IDENT -> {
                 val json = if (pl.size > 1) String(pl, 1, pl.size - 1, Charsets.UTF_8).trim() else ""
                 lastPhoneIdentity = json
-                log.i(if (json.isEmpty()) "<< PHONE_IDENT cleared" else "<< PHONE_IDENT $json")
-                onPhoneIdentity?.invoke(json)
+                log.i((if (json.isEmpty()) "<< PHONE_IDENT cleared" else "<< PHONE_IDENT $json") + if (replay) " (replay)" else "")
+                onPhoneIdentity?.invoke(json, replay)
             }
             Ocbm.CT_BT_PHASE -> {
                 if (pl.size >= 2) {
@@ -549,8 +564,8 @@ class OcbmClient(
                 if (pl.size >= 2) {
                     val m = pl[1]
                     lastProjMode = m
-                    log.i("<< PROJ_MODE ${Ocbm.pmName(m)}")
-                    onProjMode?.invoke(m)
+                    log.i("<< PROJ_MODE ${Ocbm.pmName(m)}" + if (replay) " (replay)" else "")
+                    onProjMode?.invoke(m, replay)
                 }
             }
             Ocbm.CT_BOX_HEALTH -> {
@@ -1043,41 +1058,70 @@ class OcbmClient(
     @Volatile var onInfo: ((json: String) -> Unit)? = null
 
     /** MGMT_GET_INFO → MGMT_INFO, whose payload is UTF-8 JSON running to the end of the frame; [onInfo] hears it too. */
-    fun mgmtGetInfo(timeoutMs: Long = 5000): String? =
-        synchronized(mgmtLock) {
-            mgmtQ.clear()
-            if (!send(Ocbm.CH_MGMT, byteArrayOf(Ocbm.MGMT_GET_INFO))) return null
-            val deadline = System.currentTimeMillis() + timeoutMs
-            while (System.currentTimeMillis() < deadline) {
-                val pl = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
-                if (pl.isNotEmpty() && pl[0] == Ocbm.MGMT_INFO) {
-                    val json = String(pl, 1, pl.size - 1, Charsets.UTF_8)
-                    onInfo?.invoke(json)
-                    return json
-                }
-            }
-            null
-        }
+    fun mgmtGetInfo(timeoutMs: Long = MGMT_ANSWER_MS): String? {
+        val pl = mgmtExchange(byteArrayOf(Ocbm.MGMT_GET_INFO), timeoutMs) { it.isNotEmpty() && it[0] == Ocbm.MGMT_INFO } ?: return null
+        val json = String(pl, 1, pl.size - 1, Charsets.UTF_8)
+        onInfo?.invoke(json)
+        return json
+    }
 
-    /** Any of the four action verbs; returns the status byte from MGMT_ACK (0 ok, 1 error). */
+    /** Any of the action verbs; returns the status byte from MGMT_ACK (0 ok, 1 error), null with no answer. */
     fun mgmtAction(
         verb: Byte,
         arg: ByteArray = ByteArray(0),
-        timeoutMs: Long = 5000,
-    ): Int? =
-        synchronized(mgmtLock) {
-            mgmtQ.clear()
-            val pl = ByteArray(1 + arg.size)
-            pl[0] = verb
-            System.arraycopy(arg, 0, pl, 1, arg.size)
-            if (!send(Ocbm.CH_MGMT, pl)) return null
-            val deadline = System.currentTimeMillis() + timeoutMs
-            while (System.currentTimeMillis() < deadline) {
-                val r = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
-                if (r.size >= 3 && r[0] == Ocbm.MGMT_ACK && r[1] == verb) return r[2].toInt()
-            }
-            null
+        timeoutMs: Long = MGMT_ANSWER_MS,
+    ): Int? {
+        val pl = ByteArray(1 + arg.size)
+        pl[0] = verb
+        System.arraycopy(arg, 0, pl, 1, arg.size)
+        val ack = mgmtExchange(pl, timeoutMs) { it.size >= MGMT_ACK_LEN && it[0] == Ocbm.MGMT_ACK && it[1] == verb } ?: return null
+        return ack[2].toInt()
+    }
+
+    /**
+     * One MGMT request and its answer (the first reply [isAnswer] takes), or null. Bounded throughout, on the monotonic
+     * clock: the line waits up to [MGMT_LINE_WAIT_MS] for an earlier request, and the answer [timeoutMs]. Each request
+     * logs what it sent and how it ended, and a reply that isn't its answer (a late one, to a request that gave up) is
+     * logged and dropped, not taken: on the 9 Nov bench two pairing-window opens that btd applied never logged a status.
+     */
+    private fun mgmtExchange(
+        request: ByteArray,
+        timeoutMs: Long,
+        isAnswer: (ByteArray) -> Boolean,
+    ): ByteArray? {
+        val what = mgmtRequestName(request)
+        if (!mgmtLock.tryLock(MGMT_LINE_WAIT_MS, TimeUnit.MILLISECONDS)) {
+            log.w("!! MGMT $what not sent: an earlier request has held the line for $MGMT_LINE_WAIT_MS ms")
+            return null
         }
+        try {
+            while (true) {
+                val stale = mgmtQ.poll() ?: break
+                log.w("<< MGMT ${mgmtReplyName(stale)} came after its request gave up: dropped")
+            }
+            if (!send(Ocbm.CH_MGMT, request)) {
+                log.w("!! MGMT $what: write failed")
+                return null
+            }
+            log.i(">> MGMT $what")
+            val start = System.nanoTime()
+            val deadline = start + timeoutMs * NANOS_PER_MS
+            var left = timeoutMs * NANOS_PER_MS
+            while (left > 0) {
+                val r = mgmtQ.poll(left, TimeUnit.NANOSECONDS)
+                if (r != null && isAnswer(r)) {
+                    log.i("<< MGMT ${mgmtReplyName(r)} for $what in ${(System.nanoTime() - start) / NANOS_PER_MS} ms")
+                    return r
+                }
+                if (r != null) log.w("<< MGMT ${mgmtReplyName(r)} while $what waited: not its answer, dropped")
+                left = deadline - System.nanoTime()
+            }
+            log.w("!! MGMT $what: no answer in $timeoutMs ms")
+            return null
+        } finally {
+            mgmtLock.unlock()
+        }
+    }
 
     // ---- CH_FILE --------------------------------------------------------------------------------
 
@@ -1299,6 +1343,51 @@ private const val FILE_CHUNK = 16 * 1024
 private const val FILE_MODE_READABLE = 0x1A4
 
 private const val NANOS_PER_MS = 1_000_000L
+
+/** How long a MGMT request waits for its answer, unless it says otherwise. */
+private const val MGMT_ANSWER_MS = 5_000L
+
+/** How long a MGMT request waits for the line while an earlier one holds it: two answers' worth. */
+private const val MGMT_LINE_WAIT_MS = 2 * MGMT_ANSWER_MS
+
+/** `[MGMT_ACK][verb][status]`. */
+private const val MGMT_ACK_LEN = 3
+
+private val MGMT_VERB_NAMES =
+    mapOf(
+        Ocbm.MGMT_GET_INFO to "GET_INFO",
+        Ocbm.MGMT_REBOOT to "REBOOT",
+        Ocbm.MGMT_FORGET_ALL to "FORGET_ALL",
+        Ocbm.MGMT_FORGET_DEVICE to "FORGET_DEVICE",
+        Ocbm.MGMT_RESTART_WIRELESS to "RESTART_WIRELESS",
+        Ocbm.MGMT_ENTER_NCM to "ENTER_NCM",
+        Ocbm.MGMT_SET_POLICY to "SET_POLICY",
+        Ocbm.MGMT_CONNECT_DEVICE to "CONNECT_DEVICE",
+        Ocbm.MGMT_PAIR_WINDOW to "PAIR_WINDOW",
+        Ocbm.MGMT_INSTALL_CONFIRM to "INSTALL_CONFIRM",
+        Ocbm.MGMT_GO_STOCK to "GO_STOCK",
+        Ocbm.MGMT_UPDATE to "UPDATE",
+        Ocbm.MGMT_SWITCH_DEVICE to "SWITCH_DEVICE",
+    )
+
+private fun mgmtVerbName(v: Byte): String = MGMT_VERB_NAMES[v] ?: "0x%02x".format(v.toInt() and 0xFF)
+
+/** A request for the log: its verb, and a pairing window's seconds (no MACs or other arguments). */
+private fun mgmtRequestName(request: ByteArray): String {
+    val verb = mgmtVerbName(request[0])
+    if (request[0] != Ocbm.MGMT_PAIR_WINDOW || request.size < MGMT_ACK_LEN) return verb
+    val seconds = (request[1].toInt() and 0xFF) or ((request[2].toInt() and 0xFF) shl Byte.SIZE_BITS)
+    return "$verb ${seconds}s"
+}
+
+/** A reply for the log: MGMT_ACK with its verb and status, MGMT_INFO with its size. */
+private fun mgmtReplyName(r: ByteArray): String =
+    when {
+        r.size >= MGMT_ACK_LEN && r[0] == Ocbm.MGMT_ACK -> "MGMT_ACK ${mgmtVerbName(r[1])} status=${r[2]}"
+        r.isNotEmpty() && r[0] == Ocbm.MGMT_INFO -> "MGMT_INFO (${r.size - 1} B)"
+        r.isEmpty() -> "an empty reply"
+        else -> "reply 0x%02x".format(r[0].toInt() and 0xFF)
+    }
 
 /** Enough of the read thread's stack to show what it is parked in, short enough for one log line. */
 private const val STALL_STACK_FRAMES = 8

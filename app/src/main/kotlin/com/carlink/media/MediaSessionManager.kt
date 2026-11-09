@@ -68,6 +68,9 @@ private val URI_GRANT_CONSUMERS =
         "com.android.car.media",
         "com.android.car.cluster",
         "com.android.car.cluster.home",
+        // The AAOS launcher's media card. On the 9 Nov bench it died 1-2 s after each iPhone session with artwork
+        // began: "Permission Denial: opening provider androidx.core.content.FileProvider ... not exported".
+        "com.android.car.carlauncher",
         "com.android.systemui",
         // The system uid (1000). Every drive log showed a reader at uid 1201000 (user 12, app id
         // 1000: a GM media component running as the system uid, new pid per track) refused with
@@ -75,6 +78,9 @@ private val URI_GRANT_CONSUMERS =
         // uid, so granting to the uid-1000 package covers whichever system-uid process reads it.
         "android",
     )
+
+/** The package Media3 names a platform controller whose own package it wasn't told: nothing to grant to. */
+private const val LEGACY_CONTROLLER = "android.media.session.MediaController"
 
 /** GM's media stack and AAOS's own, whose connections are logged to the drive log (Carlink2 [187]). */
 private fun isGmAaosObserver(packageName: String): Boolean =
@@ -673,6 +679,7 @@ class MediaSessionManager(
                 }
 
                 return if (isTrusted) {
+                    noteArtConsumer(packageName)
                     super.onConnect(session, controller)
                 } else {
                     Log.w(
@@ -1249,11 +1256,26 @@ class MediaSessionManager(
     // URI re-grants correctly.
     private val grantedArtUris = mutableSetOf<Uri>()
 
+    // Trusted controllers that connected (onConnect), by package. They may read the art URI themselves, and are
+    // granted it along with URI_GRANT_CONSUMERS, which can't name every launcher and widget a car build has.
+    private val controllerConsumers = java.util.concurrent.CopyOnWriteArraySet<String>()
+
+    private fun artConsumers(): Collection<String> = URI_GRANT_CONSUMERS + controllerConsumers
+
+    /** A trusted controller [pkg] connected: grant it the live art URI now, and each later one with the others. */
+    private fun noteArtConsumer(pkg: String) {
+        if (pkg == context.packageName || pkg == LEGACY_CONTROLLER || pkg in URI_GRANT_CONSUMERS) return
+        if (!controllerConsumers.add(pkg)) return
+        val uri = synchronized(sessionLock) { lastArtUri }
+        val granted = uri != null && runCatching { context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }.isSuccess
+        log("[MEDIA_SESSION] album art readable by controller $pkg${if (granted) " (the live art granted now)" else ""}")
+    }
+
     private fun grantUriToConsumers(uri: Uri) {
         if (uri in grantedArtUris) return // already granted this session
         var granted = 0
         var skipped = 0
-        for (pkg in URI_GRANT_CONSUMERS) {
+        for (pkg in artConsumers()) {
             try {
                 context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 granted++
@@ -1284,7 +1306,7 @@ class MediaSessionManager(
     private fun revokeUriFromConsumers(uri: Uri) {
         grantedArtUris.remove(uri)
         var revoked = 0
-        for (pkg in URI_GRANT_CONSUMERS) {
+        for (pkg in artConsumers()) {
             try {
                 context.revokeUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 revoked++

@@ -17,8 +17,10 @@ import com.carlink.audio.SilenceGuard
 import com.carlink.av.MediaAudioPlayer
 import com.carlink.av.SkipAftermath
 import com.carlink.av.TransientFocusPolicy
+import com.carlink.av.VideoCodec
 import com.carlink.av.VideoCodecs
 import com.carlink.av.VideoRenderer
+import com.carlink.av.VideoStallWatch
 import com.carlink.av.VoiceRouter
 import com.carlink.callui.CallNotificationHost
 import com.carlink.callui.CallRoster
@@ -71,6 +73,7 @@ import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.CarPlayDock
 import com.carlink.ocbm.CarPlaySessionRecord
 import com.carlink.ocbm.ConnectAttempt
+import com.carlink.ocbm.HelloReplay
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.InstallMode
 import com.carlink.ocbm.InstallSession
@@ -321,6 +324,12 @@ class CarlinkManager(
 
         /** After an overlay closes, how long to wait for frames before assuming a stuck decoder. */
         private const val OVERLAY_RECOVERY_WATCHDOG_MS = 750L
+
+        /**
+         * How long the box's state at the bring-up SUBSCRIBE is held ([HelloReplay]): the last host's replayed session
+         * ended about 1.5 s after it on the 9 Nov bench, so twice that.
+         */
+        private const val HELLO_REPLAY_HOLD_MS = 3_000L
     }
 
     /**
@@ -710,10 +719,22 @@ class CarlinkManager(
     private val videoEpochSeq =
         java.util.concurrent.atomic
             .AtomicInteger(0)
-    private var videoSurface: Surface? = null
+
+    @Volatile private var videoSurface: Surface? = null
 
     /** True when video start is deferred until a session exists and a valid Surface is present. */
     private var codecDeferred = true
+
+    /** Rebuilds a video epoch that takes access units and draws nothing (9 Nov bench). Main thread. */
+    private val videoStall = VideoStallWatch()
+
+    /**
+     * The box's state at the bring-up SUBSCRIBE (mode, phone, first video key), held until it proves to be this
+     * session's and not the last host's ([HelloReplay]); [helloReplayJob] ends the hold after [HELLO_REPLAY_HOLD_MS].
+     */
+    private val helloReplay = HelloReplay()
+
+    @Volatile private var helloReplayJob: Job? = null
 
     /** One-time [initialize] work (mic manager, MediaSession attach) has run. */
     private var initializedOnce = false
@@ -1601,6 +1622,7 @@ class CarlinkManager(
 
         // THE APP IS THE IGNITION: this is the presence latch that brings the box's radios up.
         setStatusText("Starting projection...")
+        holdHelloReplay()
         if (!c.subscribe(VehicleConfigYaml.renderBytes(vehicleConfigSpec()))) {
             handleError("usb — CT_SUBSCRIBE write failed")
             return
@@ -1712,6 +1734,8 @@ class CarlinkManager(
         stockRemoval.reset()
         adapterUpdate.reset()
         phoneSetup.reset()
+        helloReplayJob?.cancel()
+        helloReplay.reset()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
@@ -2266,6 +2290,59 @@ class CarlinkManager(
         }
     }
 
+    /**
+     * Just before the bring-up SUBSCRIBE: what the box replays to it may be the last host's session (9 Nov bench), so
+     * hold it ([HelloReplay]) until a live CT_PROJ_MODE says whose it is, or [HELLO_REPLAY_HOLD_MS] passes. Any thread.
+     */
+    private fun holdHelloReplay() {
+        helloReplayJob?.cancel()
+        helloReplay.start()
+        helloReplayJob =
+            scope.launch {
+                delay(HELLO_REPLAY_HOLD_MS)
+                helloReplay.onTimeout()?.let { onReplayDecided(it, "still up after $HELLO_REPLAY_HOLD_MS ms") }
+            }
+    }
+
+    /** Main thread. CT_PROJ_MODE, through the [helloReplay] hold. */
+    private fun onProjMode(
+        mode: Byte,
+        replay: Boolean,
+    ) {
+        when (val v = helloReplay.onProjMode(mode, replay)) {
+            HelloReplay.Verdict.Apply -> applyProjMode(mode)
+            HelloReplay.Verdict.Hold ->
+                logInfo("[SESSION] holding the box's replayed ${Ocbm.pmName(mode)}: it may be the last host's session", tag = Logger.Tags.ADAPTR)
+            is HelloReplay.Verdict.Decided -> onReplayDecided(v.release, "PROJ_MODE ${Ocbm.pmName(mode)}${if (replay) " (replay)" else ""}")
+        }
+    }
+
+    /** Main thread. A phone's session ending (a mode to NONE) is the phone leaving, for the pairing screen too. */
+    private fun applyProjMode(mode: Byte) {
+        val before = projectionMode
+        onBoxStatus(mode, boxHealth, boxHealthKnown)
+        if (mode == Ocbm.PM_NONE && before != Ocbm.PM_NONE) phoneSetup.onPhoneLeft()
+    }
+
+    /** Main thread. The hold is over: apply what was held when it is this session's, drop it when it was the last host's. */
+    private fun onReplayDecided(
+        r: HelloReplay.Release,
+        why: String,
+    ) {
+        helloReplayJob?.cancel()
+        if (!r.live) {
+            logInfo("[SESSION] the box's replayed session ended at once ($why): the last host's; its phone and video key dropped", tag = Logger.Tags.ADAPTR)
+            client?.reannounceKeyed()
+            r.mode?.let(::applyProjMode)
+            return
+        }
+        logInfo("[SESSION] the box's state at SUBSCRIBE is live ($why)", tag = Logger.Tags.ADAPTR)
+        r.mode?.let(::applyProjMode)
+        r.identity?.let(::onPhoneIdentity)
+        if (r.keyed) sessionKeyed()
+        startCodecIfDeferred()
+    }
+
     /** Main thread. */
     private fun onBoxStatus(
         mode: Byte,
@@ -2552,6 +2629,11 @@ class CarlinkManager(
     private fun openVideoEpoch(surface: Surface) {
         val lanes = client?.lanes ?: return
         if (videoEpoch != null) return
+        if (helloReplay.holding) {
+            // The box's replayed video may be the last host's session; it would latch that phone's codec (9 Nov bench).
+            logDebug("[LIFECYCLE] Video epoch held: the box's state at SUBSCRIBE isn't known to be live yet", tag = Logger.Tags.VIDEO)
+            return
+        }
         if (!surface.isValid) {
             logWarn("[LIFECYCLE] Video epoch skipped — surface invalid", tag = Logger.Tags.VIDEO)
             return
@@ -2583,6 +2665,48 @@ class CarlinkManager(
         client?.requestKeyframe()
 
         logInfo("[LIFECYCLE] Video epoch #$seq open at ${config.width}x${config.height}", tag = Logger.Tags.VIDEO)
+        watchVideoStall(seq)
+    }
+
+    /**
+     * Rebuild epoch [seq] if access units keep arriving and it draws nothing ([VideoStallWatch]): on the 9 Nov bench a
+     * decoder latched to the wrong codec froze the frame, with touch dead, until the overlay watchdog happened to run.
+     */
+    private fun watchVideoStall(seq: Int) {
+        scope.launch {
+            while (true) {
+                delay(videoStall.timing.sampleMs)
+                val e = videoEpoch ?: return@launch
+                if (e.seq != seq) return@launch
+                val r = e.renderer
+                if (!videoStall.sample(seq, SystemClock.elapsedRealtime(), r.bytesIn.get(), r.framesRendered.get())) continue
+                logWarn(
+                    "[LIFECYCLE] Video epoch #$seq: access units arriving and no frame drawn for ${videoStall.timing.stallMs} ms " +
+                        "(${r.videoCodec?.label ?: "no codec"}) — rebuilding the decoder",
+                    tag = Logger.Tags.VIDEO,
+                )
+                val surface = videoSurface ?: return@launch
+                retireVideoEpoch("stall watchdog")
+                openVideoEpoch(surface)
+                return@launch
+            }
+        }
+    }
+
+    /**
+     * The seam's codec config ([com.carlink.ocbm.seam.VideoSeam.onCodec]), on the read thread before it hands over the
+     * parameter sets. iOS picks the codec per session, so a new phone in this A/V generation (an iOS 15 iPhone's H.264,
+     * then an iOS 27 one's HEVC on the 9 Nov bench) must not reach a decoder that latched the other: a fresh epoch takes
+     * these parameter sets instead.
+     */
+    private fun onSeamCodec(codec: VideoCodec) {
+        val e = videoEpoch ?: return
+        val latched = e.renderer.videoCodec ?: return
+        if (latched == codec) return
+        logWarn("[LIFECYCLE] Video epoch #${e.seq} decodes ${latched.label}; the stream is now ${codec.label}: a fresh epoch", tag = Logger.Tags.VIDEO)
+        val surface = videoSurface
+        retireVideoEpoch("codec ${latched.label} -> ${codec.label}")
+        if (surface != null) openVideoEpoch(surface)
     }
 
     /**
@@ -2761,7 +2885,7 @@ class CarlinkManager(
 
     /** CT_PROJ_MODE / CT_BOX_HEALTH — both re-emitted by the box on every fresh SUBSCRIBE, so nothing caches across reconnects. */
     private fun wireBoxStatus(c: OcbmClient) {
-        c.onProjMode = { mode -> scope.launch { if (client === c) onBoxStatus(mode, boxHealth, boxHealthKnown) } }
+        c.onProjMode = { mode, replay -> scope.launch { if (client === c) onProjMode(mode, replay) } }
         c.onBoxHealth = { flags -> scope.launch { if (client === c) onBoxStatus(projectionMode, flags, true) } }
     }
 
@@ -2803,23 +2927,17 @@ class CarlinkManager(
         // signal — earlier than the first decoded frame, and unlike phone presence it proves the
         // crypto handshake completed.
         c.onSessionKeyed = {
-            hadPriorSession = true
             scope.launch {
                 // The key event and a link death can coincide (a connector jiggle at handshake).
                 // Without this the stale post lands DEVICE_CONNECTED after the error path already
                 // set DISCONNECTED, and both the reconnect backoff and the USB-attach intent are
                 // gated on DISCONNECTED — so the app wedges at "Phone connected" with no session.
                 if (client !== c) return@launch
-                setState(State.DEVICE_CONNECTED)
-                setStatusText("Phone connected")
-                phoneSetup.onPhoneConnected()
-                currentPhoneType = PhoneType.CARPLAY
-                callback?.onPhoneTypeChanged(PhoneType.CARPLAY)
-                startCodecIfDeferred()
-                scheduleDelayedKeyframe()
-                // Initial sync. A session that comes up while already in Drive gets no edge from
-                // the monitor, so push the current value once the box can actually receive it.
-                driveMonitor?.let { if (it.connected) setLimitedUI(it.driving) }
+                if (helloReplay.onKeyed()) {
+                    sessionKeyed()
+                } else {
+                    logInfo("[SESSION] first video key held: the box's state at SUBSCRIBE isn't known to be live yet", tag = Logger.Tags.ADAPTR)
+                }
             }
         }
 
@@ -2828,6 +2946,7 @@ class CarlinkManager(
                 if (!present) {
                     markPhoneLeft()
                     adapterPhone.absent()
+                    phoneSetup.onPhoneLeft()
                 }
                 _phoneNews.update { it + 1 }
                 if (present || state == State.DISCONNECTED) return@launch
@@ -2869,7 +2988,15 @@ class CarlinkManager(
             scope.launch { if (client === c) onMicGate(on, rate, ch, codec) }
         }
 
-        c.onPhoneIdentity = { json -> scope.launch { onPhoneIdentity(json) } }
+        c.onPhoneIdentity = { json, _ ->
+            scope.launch {
+                if (helloReplay.onIdentity(json)) {
+                    onPhoneIdentity(json)
+                } else {
+                    logInfo("[PHONE] identity held: the box's state at SUBSCRIBE isn't known to be live yet", tag = Logger.Tags.PHONE)
+                }
+            }
+        }
 
         wireBoxStatus(c)
 
@@ -2880,8 +3007,24 @@ class CarlinkManager(
         c.onLinkDead = { reason -> handleError("usb — link dead: $reason") }
     }
 
+    /** Main thread. The session's first video key, once [helloReplay] lets it through: a paired, keyed phone is here. */
+    private fun sessionKeyed() {
+        hadPriorSession = true
+        setState(State.DEVICE_CONNECTED)
+        setStatusText("Phone connected")
+        phoneSetup.onPhoneConnected()
+        currentPhoneType = PhoneType.CARPLAY
+        callback?.onPhoneTypeChanged(PhoneType.CARPLAY)
+        startCodecIfDeferred()
+        scheduleDelayedKeyframe()
+        // Initial sync. A session that comes up while already in Drive gets no edge from
+        // the monitor, so push the current value once the box can actually receive it.
+        driveMonitor?.let { if (it.connected) setLimitedUI(it.driving) }
+    }
+
     private fun onLanesArmed(lanes: OcbmAvLanes) {
         logInfo("[SESSION] A/V lanes armed", tag = Logger.Tags.ADAPTR)
+        lanes.videoSeam.onCodec = { hevc -> onSeamCodec(if (hevc) VideoCodec.HEVC else VideoCodec.H264) }
 
         // Where CarPlay draws. Logged only when the pane appears or goes: a resize is ~250 steps.
         lanes.videoSeam.onViewArea = { r ->

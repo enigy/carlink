@@ -271,6 +271,17 @@ class AdapterUpdateSessionTest {
         assertTrue(box!!.pushed.isEmpty())
     }
 
+    @Test
+    fun `a final install read short of room while its finish frees it is read again until the package fits`() {
+        // 9 Nov bench: 2728 KB free at the first connect after the finish, 4128 KB two minutes later.
+        install.value = OneFileInstall(InstallMode.FINAL, "1.0.0")
+        box!!.infoJson = info(freeKb = 300)
+        start(timing = AdapterUpdateSession.Timing(pollMs = 20, deadlineMs = 20_000, startMs = 100, roomRecheckMs = 50, roomRecheckForMs = 2_000))
+        waitUntil(2000) { session.offer.value is UpdateOffer.CannotTake }
+        box!!.infoJson = info(freeKb = 4128)
+        waitUntil(2000) { session.offer.value is UpdateOffer.InPlace }
+    }
+
     /** A trial adapter with [pkg] and too little room for it: the offer is to finish the install first. */
     private fun withoutRoom() {
         box!!.infoJson = info(freeKb = 300)
