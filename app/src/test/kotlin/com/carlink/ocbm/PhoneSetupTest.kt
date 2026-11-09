@@ -195,6 +195,7 @@ class PhoneSetupTest {
         setup.pair()
         Thread.sleep(150)
         assertTrue("not before the restart has begun", box.windows.isEmpty())
+        assertTrue("and the screen says what it waits for", setup.phase.value is PhoneSetupPhase.BluetoothStarting)
         box.wireless = false // btd down: the restart
         Thread.sleep(150)
         assertTrue("not while btd is down", box.windows.isEmpty())
@@ -219,6 +220,25 @@ class PhoneSetupTest {
         assertEquals(listOf(timing.windowSeconds, timing.windowSeconds), box.windows)
         Thread.sleep(timing.reopenCheckMs + 100)
         assertEquals("once, not on every look", 2, box.windows.size)
+    }
+
+    @Test
+    fun `a window the driver stopped right after a Forget is not opened again`() {
+        // Stop within the 4 s check: the box must not be left discoverable while the screen shows the prompt.
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        box.wireless = false
+        setup.onForgetSent()
+        setup.pair()
+        Thread.sleep(100)
+        box.wireless = true
+        await<PhoneSetupPhase.Pairing>()
+        setup.stop()
+        box.open = false
+        Thread.sleep(timing.reopenCheckMs + 200)
+        assertEquals(listOf(timing.windowSeconds, 0), box.windows)
+        assertTrue(setup.phase.value is PhoneSetupPhase.Prompt)
     }
 
     @Test

@@ -175,6 +175,10 @@ class PhoneSetup(
     // [Box.now] when this app last sent MGMT_FORGET_DEVICE ([onForgetSent]); the box restarts wireless as part of it.
     private var forgotAtMs: Long? = null
 
+    // Bumped by every window request ([window]: an open, Stop's close, Settings' close): a reopen is only for the window
+    // the driver last asked for ([reopenIfClosed]).
+    private var windowGen = 0
+
     /** The adapter is known to have no phone paired: nothing to page. */
     val noPhonePaired: Boolean get() = synchronized(lock) { phones?.none == true }
 
@@ -259,8 +263,21 @@ class PhoneSetup(
      */
     suspend fun window(seconds: Int): Int? {
         logWarn("[PAIRING] window ${if (seconds > 0) "open for ${seconds}s" else "close"} requested", tag = Logger.Tags.ADAPTR)
+        val gen = synchronized(lock) { ++windowGen }
         val afterForget = seconds > 0 && forgetQuiet()
         if (afterForget) awaitRestart()
+        if (synchronized(lock) { windowGen != gen }) {
+            // Stop (or another request) came while this one waited for the restart: it is no longer wanted.
+            logInfo("[PAIRING] a window request overtaken while it waited for the restart: not sent", tag = Logger.Tags.ADAPTR)
+            return null
+        }
+        val status = send(seconds)
+        if (afterForget && status == 0) scope.launch { reopenIfClosed(seconds, gen) }
+        return status
+    }
+
+    /** One MGMT_PAIR_WINDOW, retried while Bluetooth starts, with what its answer means for the screen. */
+    private suspend fun send(seconds: Int): Int? {
         var status = box.pairWindow(seconds)
         logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
         if (seconds > 0 && status != null && status != 0) status = whileBluetoothStarts(seconds)
@@ -268,7 +285,6 @@ class PhoneSetup(
             status == null && seconds > 0 -> moveIfAsked(PhoneSetupPhase.NotPaired(nameNow(), NO_ANSWER, NO_ANSWER_BODY))
             status != null && status != 0 -> bluetoothDown("MGMT_PAIR_WINDOW", status)
         }
-        if (afterForget && status == 0) scope.launch { reopenIfClosed(seconds) }
         return status
     }
 
@@ -279,6 +295,22 @@ class PhoneSetup(
      */
     private suspend fun awaitRestart() {
         val since = synchronized(lock) { forgotAtMs } ?: return
+        if (box.wirelessUp() == null) return
+        // Say what the wait is, as [whileBluetoothStarts] does; the screen otherwise sits unchanged for up to 10 s.
+        val before =
+            synchronized(lock) {
+                val now = phaseState.value
+                if (!connected) phaseState.value = PhoneSetupPhase.BluetoothStarting(nameNow())
+                now
+            }
+        try {
+            restartWait(since)
+        } finally {
+            synchronized(lock) { if (phaseState.value is PhoneSetupPhase.BluetoothStarting) phaseState.value = before }
+        }
+    }
+
+    private suspend fun restartWait(since: Long) {
         var sawDown = false
         while (box.now() - since < timing.forgetQuietMs && !connected) {
             when (box.wirelessUp()) {
@@ -295,10 +327,16 @@ class PhoneSetup(
         )
     }
 
-    /** A window opened in the quiet time that the box reports closed again soon after: open it once more. */
-    private suspend fun reopenIfClosed(seconds: Int) {
+    /**
+     * A window opened in the quiet time that the box reports closed again soon after: open it once more, unless the
+     * driver has asked for something since ([windowGen]): after Stop the box must not stay discoverable.
+     */
+    private suspend fun reopenIfClosed(
+        seconds: Int,
+        gen: Int,
+    ) {
         delay(timing.reopenCheckMs)
-        if (connected || box.windowOpen() != false) return
+        if (connected || box.windowOpen() != false || synchronized(lock) { windowGen != gen }) return
         logWarn("[PAIRING] the window opened after a Forget closed again (the box's wireless restart): opening it once more", tag = Logger.Tags.ADAPTR)
         val status = box.pairWindow(seconds)
         logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"} (reopened)", tag = Logger.Tags.ADAPTR)
