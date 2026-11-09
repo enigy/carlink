@@ -243,6 +243,10 @@ class CarlinkManager(
         /** How long a bridge permission prompt may stay unanswered before the start gives up. */
         private const val BRIDGE_PROMPT_WAIT_MS = 30_000L
 
+        /** After that, how long a still-unanswered prompt is watched for a late OK ([watchLateGrant]). */
+        private const val LATE_GRANT_WATCH_MS = 10 * 60_000L
+        private const val LATE_GRANT_POLL_MS = 1_000L
+
         /** Status while the system USB permission prompt is up (an action line on the connecting screen). */
         private const val ALLOW_USB_STATUS = "Allow USB access for the adapter when asked"
 
@@ -646,6 +650,10 @@ class CarlinkManager(
                         val arg = byteArrayOf((seconds and BYTE_MASK).toByte(), ((seconds shr Byte.SIZE_BITS) and BYTE_MASK).toByte())
                         return client?.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, arg)
                     }
+
+                    override fun wirelessUp(): Boolean? = if (boxHealthKnown) boxHealth and Ocbm.BH_CARPLAY_WIRELESS != 0 else null
+
+                    override fun windowOpen(): Boolean? = if (boxHealthKnown) boxHealth and Ocbm.BH_PAIR_WINDOW != 0 else null
                 },
             scope = scope,
         )
@@ -1404,8 +1412,13 @@ class CarlinkManager(
     private suspend fun openThroughBridge(name: String): RawBulkTransport? {
         val bridge = bindRawStreamBridge() ?: return null
         if (!awaitBridgePermission(bridge, name)) {
-            // The bridge asks once per attach and a denial sticks until the adapter re-enumerates.
-            handleFailedStart("USB permission denied — unplug and replug the adapter")
+            // Still unanswered, not denied: the driver may tap OK after the wait (8 Nov bench, and 2.20). Keep listening.
+            if (watchLateGrant(bridge, name)) {
+                handleFailedStart(ALLOW_USB_STATUS)
+            } else {
+                // The bridge asks once per attach and a denial sticks until the adapter re-enumerates.
+                handleFailedStart("USB permission denied — unplug and replug the adapter")
+            }
             return null
         }
         return openViaBridge(bridge, name)
@@ -1543,6 +1556,57 @@ class CarlinkManager(
             delay(BRIDGE_PERMISSION_POLL_MS)
         }
         return bridge.hasPermission(name)
+    }
+
+    @Volatile private var lateGrantJob: Job? = null
+
+    /**
+     * The prompt outlived [BRIDGE_PROMPT_WAIT_MS] still unanswered: keep checking, for [LATE_GRANT_WATCH_MS], and connect
+     * the moment the bridge holds the permission. Ends on a denial, on the adapter leaving, or once something else has
+     * started a session. The 8 Nov bench: an OK tapped after the 30 s wait was never picked up. [UsbPermissionPrompt]
+     * stays set while it watches, since the prompt is still on screen. Returns whether it is watching.
+     */
+    private fun watchLateGrant(
+        bridge: ICarlinkBridge,
+        name: String,
+    ): Boolean {
+        val pending = runCatching { bridge.requestPermission(name) }.getOrDefault(BridgeContract.PERMISSION_DENIED)
+        if (pending != BridgeContract.PERMISSION_PENDING) return false
+        lateGrantJob?.cancel()
+        UsbPermissionPrompt.set(true)
+        lateGrantJob =
+            scope.launch(Dispatchers.IO) {
+                logInfo("[BRIDGE] the USB prompt for $name is still unanswered: listening for a late OK", tag = Logger.Tags.USB)
+                var granted = false
+                try {
+                    val until = SystemClock.elapsedRealtime() + LATE_GRANT_WATCH_MS
+                    var answered = false
+                    while (!answered && lateGrantWaiting(until)) {
+                        delay(LATE_GRANT_POLL_MS)
+                        granted = runCatching { bridge.hasPermission(name) }.getOrDefault(false)
+                        answered = granted || promptClosed(bridge, name)
+                    }
+                } finally {
+                    UsbPermissionPrompt.set(false)
+                }
+                if (granted) {
+                    logInfo("[BRIDGE] USB permission for $name granted after the wait: connecting", tag = Logger.Tags.USB)
+                    startIfDisconnected("late USB permission grant")
+                }
+            }
+        return true
+    }
+
+    /** Until [until], unless released or something else has started a session. */
+    private fun lateGrantWaiting(until: Long): Boolean = SystemClock.elapsedRealtime() < until && !released && state == State.DISCONNECTED
+
+    /** The prompt for [name] was denied, or the adapter left. */
+    private fun promptClosed(
+        bridge: ICarlinkBridge,
+        name: String,
+    ): Boolean {
+        val now = runCatching { bridge.requestPermission(name) }.getOrDefault(BridgeContract.PERMISSION_DENIED)
+        return now == BridgeContract.PERMISSION_DENIED || now == BridgeContract.PERMISSION_NO_DEVICE
     }
 
     /** True as soon as the bridge holds permission for [name], checking up to [polls] times. */
@@ -2087,6 +2151,8 @@ class CarlinkManager(
         notifyDeviceListeners()
 
         if (!bonded) return
+        // The box restarts wireless for the forget: no BOND_LOST from it, and a window waits for it (8 Nov bench).
+        phoneSetup.onForgetSent()
         scope.launch(Dispatchers.IO) {
             val status = client?.mgmtAction(Ocbm.MGMT_FORGET_DEVICE, btMac.toByteArray(Charsets.US_ASCII))
             logInfo("[DEVICE_MGMT] FORGET_DEVICE($btMac) status=$status", tag = Logger.Tags.ADAPTR)

@@ -132,6 +132,12 @@ class PhoneSetup(
 
         /** A monotonic clock in ms, for the window's end. */
         fun now(): Long = SystemClock.elapsedRealtime()
+
+        /** Whether btd runs (CT_BOX_HEALTH BH_CARPLAY_WIRELESS); null before the box has said. */
+        fun wirelessUp(): Boolean? = null
+
+        /** Whether the box reports its pairing window open (BH_PAIR_WINDOW); null before the box has said. */
+        fun windowOpen(): Boolean? = null
     }
 
     data class Timing(
@@ -143,6 +149,14 @@ class PhoneSetup(
         val btStartMs: Long = 30_000,
         /** Between those tries, as SET_POLICY's after SUBSCRIBE. */
         val btRetryMs: Long = 2_000,
+        /** After this app's own MGMT_FORGET_DEVICE: no BOND_LOST is taken as news, and a window waits for the restart. */
+        val forgetQuietMs: Long = 30_000,
+        /** How often a window waiting for that restart looks at the box's health. */
+        val restartPollMs: Long = 500,
+        /** If the box never shows btd going down within this of the forget, the restart was missed: open anyway. */
+        val restartDownMs: Long = 10_000,
+        /** After a window opened in the quiet time, look again this much later, and open it once more if it closed. */
+        val reopenCheckMs: Long = 4_000,
     )
 
     private val phaseState = MutableStateFlow<PhoneSetupPhase>(PhoneSetupPhase.None)
@@ -157,6 +171,9 @@ class PhoneSetup(
     private var adapterName: String? = null
     private var connected = false
     private var timer: Job? = null
+
+    // [Box.now] when this app last sent MGMT_FORGET_DEVICE ([onForgetSent]); the box restarts wireless as part of it.
+    private var forgotAtMs: Long? = null
 
     /** The adapter is known to have no phone paired: nothing to page. */
     val noPhonePaired: Boolean get() = synchronized(lock) { phones?.none == true }
@@ -242,6 +259,8 @@ class PhoneSetup(
      */
     suspend fun window(seconds: Int): Int? {
         logWarn("[PAIRING] window ${if (seconds > 0) "open for ${seconds}s" else "close"} requested", tag = Logger.Tags.ADAPTR)
+        val afterForget = seconds > 0 && forgetQuiet()
+        if (afterForget) awaitRestart()
         var status = box.pairWindow(seconds)
         logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
         if (seconds > 0 && status != null && status != 0) status = whileBluetoothStarts(seconds)
@@ -249,7 +268,49 @@ class PhoneSetup(
             status == null && seconds > 0 -> moveIfAsked(PhoneSetupPhase.NotPaired(nameNow(), NO_ANSWER, NO_ANSWER_BODY))
             status != null && status != 0 -> bluetoothDown("MGMT_PAIR_WINDOW", status)
         }
+        if (afterForget && status == 0) scope.launch { reopenIfClosed(seconds) }
         return status
+    }
+
+    /**
+     * Hold a window asked for right after a forget until the box's wireless restart is over: btd seen down, then up
+     * again. A box that says nothing, or a restart the 2 s health ticks never caught going down within
+     * [Timing.restartDownMs] of the forget, opens at once (or then); the quiet time bounds the wait either way.
+     */
+    private suspend fun awaitRestart() {
+        val since = synchronized(lock) { forgotAtMs } ?: return
+        var sawDown = false
+        while (box.now() - since < timing.forgetQuietMs && !connected) {
+            when (box.wirelessUp()) {
+                null -> return
+                false -> sawDown = true
+                true -> if (sawDown || box.now() - since >= timing.restartDownMs) break
+            }
+            delay(timing.restartPollMs)
+        }
+        logInfo(
+            "[PAIRING] window after a Forget: ${if (sawDown) "the box's wireless restart is over" else "no restart seen"} " +
+                "${box.now() - since} ms after the forget; opening",
+            tag = Logger.Tags.ADAPTR,
+        )
+    }
+
+    /** A window opened in the quiet time that the box reports closed again soon after: open it once more. */
+    private suspend fun reopenIfClosed(seconds: Int) {
+        delay(timing.reopenCheckMs)
+        if (connected || box.windowOpen() != false) return
+        logWarn("[PAIRING] the window opened after a Forget closed again (the box's wireless restart): opening it once more", tag = Logger.Tags.ADAPTR)
+        val status = box.pairWindow(seconds)
+        logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"} (reopened)", tag = Logger.Tags.ADAPTR)
+        if (status == 0) {
+            synchronized(lock) {
+                val now = phaseState.value as? PhoneSetupPhase.Pairing ?: return
+                if (now.endsAtMs == null) return
+                phaseState.value = now.copy(endsAtMs = box.now() + seconds * MS_PER_SECOND)
+                timer?.cancel()
+                timer = scope.launch { windowRunsOut(seconds * MS_PER_SECOND) }
+            }
+        }
     }
 
     /** "Stop" while the window is open: close it and go back to the prompt. */
@@ -282,9 +343,26 @@ class PhoneSetup(
         }
     }
 
+    /**
+     * This app sent MGMT_FORGET_DEVICE. The box removes the bond and restarts wireless, and during that restart btd's
+     * AUTH_FAILED hook fires: on the 8 Nov bench BTP_BOND_LOST came 0.55 s after the forget, and the screen said the
+     * iPhone may no longer know the adapter, about a phone the driver had just removed. The restart also closes a window
+     * opened in it (opened 2.4 s after the forget, closed 0.7 s later). See [onBtPhase] and [window].
+     */
+    fun onForgetSent() {
+        synchronized(lock) { forgotAtMs = box.now() }
+    }
+
+    /** Within [Timing.forgetQuietMs] of this app's own forget. */
+    private fun forgetQuiet(): Boolean = synchronized(lock) { forgotAtMs }?.let { box.now() - it < timing.forgetQuietMs } == true
+
     /** CT_BT_PHASE while the window is open: the progress line. */
     fun onBtPhase(phase: Byte) {
         if (phase == Ocbm.BTP_BOND_LOST) {
+            if (forgetQuiet()) {
+                logInfo("[PAIRING] BT_PHASE BOND_LOST right after this app's Forget: the box's wireless restart, not news", tag = Logger.Tags.ADAPTR)
+                return
+            }
             phoneForgot()
             return
         }

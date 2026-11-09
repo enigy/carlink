@@ -21,7 +21,17 @@ import java.util.concurrent.atomic.AtomicInteger
 class PhoneSetupTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val box = FakeBox()
-    private val timing = PhoneSetup.Timing(waitMs = 300, windowSeconds = 1, btStartMs = 600, btRetryMs = 100)
+    private val timing =
+        PhoneSetup.Timing(
+            waitMs = 300,
+            windowSeconds = 1,
+            btStartMs = 600,
+            btRetryMs = 100,
+            forgetQuietMs = 1_500,
+            restartPollMs = 20,
+            restartDownMs = 600,
+            reopenCheckMs = 200,
+        )
     private val setup = PhoneSetup(box, scope, timing)
 
     @After
@@ -161,6 +171,69 @@ class PhoneSetupTest {
     }
 
     @Test
+    fun `BOND_LOST right after this app's own Forget is the box's restart, not news`() {
+        // 8 Nov bench: FORGET_DEVICE at 18:22:50.163, BTP_BOND_LOST 0.55 s later, and the screen asked for a re-pair.
+        box.devices = """["AA:BB:CC:DD:EE:FF"]"""
+        setup.onSubscribed()
+        waitUntil { box.reads.get() == 1 }
+        setup.onForgetSent()
+        setup.onBtPhase(Ocbm.BTP_BOND_LOST)
+        assertEquals(PhoneSetupPhase.None, setup.phase.value)
+        Thread.sleep(timing.forgetQuietMs + 100)
+        setup.onBtPhase(Ocbm.BTP_BOND_LOST)
+        assertEquals("after the quiet time it is news again", PhoneSetupPhase.PhoneForgot("CarLink-9C1A"), setup.phase.value)
+    }
+
+    @Test
+    fun `a window asked for right after a Forget waits for the wireless restart`() {
+        // 8 Nov bench: opened 2.4 s after the forget, closed 0.7 s later by the restart; the first tap did nothing.
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        box.wireless = true
+        setup.onForgetSent()
+        setup.pair()
+        Thread.sleep(150)
+        assertTrue("not before the restart has begun", box.windows.isEmpty())
+        box.wireless = false // btd down: the restart
+        Thread.sleep(150)
+        assertTrue("not while btd is down", box.windows.isEmpty())
+        box.wireless = true // and up again
+        await<PhoneSetupPhase.Pairing>()
+        assertEquals(listOf(timing.windowSeconds), box.windows)
+    }
+
+    @Test
+    fun `a window the restart closed again is opened once more`() {
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        box.wireless = false
+        setup.onForgetSent()
+        setup.pair()
+        Thread.sleep(100)
+        box.wireless = true
+        await<PhoneSetupPhase.Pairing>()
+        box.open = false // the box closed it
+        waitUntil { box.windows.size == 2 }
+        assertEquals(listOf(timing.windowSeconds, timing.windowSeconds), box.windows)
+        Thread.sleep(timing.reopenCheckMs + 100)
+        assertEquals("once, not on every look", 2, box.windows.size)
+    }
+
+    @Test
+    fun `no restart seen within the down time opens anyway`() {
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        box.wireless = true // the 2 s health ticks missed btd going down
+        setup.onForgetSent()
+        setup.pair()
+        await<PhoneSetupPhase.Pairing>(timeoutMs = 2_000)
+        assertEquals(listOf(timing.windowSeconds), box.windows)
+    }
+
+    @Test
     fun `phones paired but none comes - keep waiting, then offer to pair a new one`() {
         box.devices = """["AA:BB:CC:DD:EE:FF"]"""
         setup.onSubscribed()
@@ -283,5 +356,13 @@ class PhoneSetupTest {
         }
 
         override fun now(): Long = System.currentTimeMillis()
+
+        @Volatile var wireless: Boolean? = null
+
+        @Volatile var open: Boolean? = null
+
+        override fun wirelessUp(): Boolean? = wireless
+
+        override fun windowOpen(): Boolean? = open
     }
 }
