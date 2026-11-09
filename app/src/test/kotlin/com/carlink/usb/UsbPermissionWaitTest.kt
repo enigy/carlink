@@ -25,7 +25,15 @@ class UsbPermissionWaitTest {
     private val wait =
         UsbPermissionWait(
             scope,
-            UsbPermissionWait.Timing(gracePolls = 1, pollMs = 10, promptWaitMs = 100, watchMs = 2_000, watchPollMs = 20, now = System::currentTimeMillis),
+            UsbPermissionWait.Timing(
+                gracePolls = 1,
+                pollMs = 10,
+                promptWaitMs = 100,
+                watchMs = 100,
+                watchPollMs = 20,
+                slowPollMs = 50,
+                now = System::currentTimeMillis,
+            ),
         ) { flag += it }
 
     @After
@@ -80,6 +88,48 @@ class UsbPermissionWaitTest {
             assertEquals(listOf(true, true, false), flag.toList())
             Thread.sleep(100)
             assertEquals("once", 1, grants.get())
+        }
+
+    @Test
+    fun `the late OK's own start doesn't see its watch`() =
+        runBlocking {
+            // The Mac's probe: onGrant starts a session, whose openThroughBridge refused while watching was still true.
+            val port = Port()
+            val seen = CopyOnWriteArrayList<Boolean>()
+            assertEquals(UsbPermissionWait.Outcome.PENDING, wait.await(port, "dev"))
+            wait.watch(port, "dev", stillWanted = { true }) {
+                seen += wait.watching
+                seen += wait.watching("dev")
+            }
+            port.granted = true
+            waitUntil { seen.size == 2 }
+            assertEquals(listOf(false, false), seen.toList())
+        }
+
+    @Test
+    fun `a watch is for its own device only`() =
+        runBlocking {
+            val port = Port()
+            wait.watch(port, "dev-1", stillWanted = { true }) {}
+            assertTrue(wait.watching("dev-1"))
+            assertFalse("a replugged adapter's new name is not this watch's", wait.watching("dev-2"))
+            port.result = BridgeContract.PERMISSION_NO_DEVICE
+            waitUntil { !wait.watching }
+        }
+
+    @Test
+    fun `a prompt still up past the fast polling keeps its flag and still connects on the OK`() =
+        runBlocking {
+            // A dismissed prompt reports as a denial, so a pending one is still on screen: no time limit drops the flag.
+            val port = Port()
+            val grants = AtomicInteger()
+            wait.watch(port, "dev", stillWanted = { true }) { grants.incrementAndGet() }
+            Thread.sleep(400) // watchMs 100, then the slow polls
+            assertTrue(wait.watching)
+            assertEquals("never let go while the prompt is up", listOf(true), flag.toList())
+            port.granted = true
+            waitUntil { grants.get() == 1 }
+            assertEquals(false, flag.last())
         }
 
     @Test

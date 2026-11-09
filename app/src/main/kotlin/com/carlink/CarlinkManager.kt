@@ -1395,8 +1395,8 @@ class CarlinkManager(
     /** Bind the bridge, hold USB permission for [name] and open it; null (reported) on any failure. */
     private suspend fun openThroughBridge(name: String): RawBulkTransport? {
         val bridge = bindRawStreamBridge() ?: return null
-        if (usbPermission.watching) {
-            // The prompt is still open and watched; the watch connects on the OK. Asking again would race it.
+        if (usbPermission.watching(name)) {
+            // This adapter's prompt is still open and watched; the watch connects on the OK. Asking again would race it.
             logInfo("[BRIDGE] a start while the USB prompt for $name is watched: leaving it to the watch", tag = Logger.Tags.USB)
             handleFailedStart(ALLOW_USB_STATUS)
             return null

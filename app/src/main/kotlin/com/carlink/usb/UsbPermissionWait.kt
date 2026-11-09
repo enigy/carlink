@@ -17,7 +17,8 @@ import kotlinx.coroutines.launch
  *
  * [await] asks (once per attach; the bridge shows the one-tap prompt) and waits up to [Timing.promptWaitMs]. A prompt
  * still unanswered then is [Outcome.PENDING], and the flag STAYS SET: the caller hands it to [watch], which keeps it set
- * while it waits up to [Timing.watchMs] more and runs its `onGrant` on a late OK (8 Nov bench: an OK tapped after the
+ * until the prompt is answered (a dismissed prompt reports as a denial), the adapter leaves or the caller stops wanting
+ * it, and runs its `onGrant` on a late OK (8 Nov bench: an OK tapped after the
  * 30 s wait was never picked up), or [abandon]s it. Before this the flag went false between the two, and MainActivity
  * releases its held cluster steps on any false: CarAppActivity could launch over the open prompt, which leaves the
  * screen ignoring touches ([UsbPermissionPrompt]).
@@ -44,9 +45,13 @@ class UsbPermissionWait(
         val pollMs: Long = 250,
         /** How long a prompt may stay unanswered before [await] hands it over as [Outcome.PENDING]. */
         val promptWaitMs: Long = 30_000,
-        /** How long [watch] keeps waiting for a late answer. */
+        /**
+         * How long [watch] looks every [watchPollMs]; after that every [slowPollMs], for as long as the prompt is up: a
+         * still-pending prompt is still on screen, and the flag must stay with it.
+         */
         val watchMs: Long = 10 * 60_000L,
         val watchPollMs: Long = 1_000,
+        val slowPollMs: Long = 5_000,
         val now: () -> Long = { SystemClock.elapsedRealtime() },
     )
 
@@ -57,8 +62,14 @@ class UsbPermissionWait(
     private var watched: String? = null
     private var generation = 0
 
-    /** A late answer is being watched for. */
-    val watching: Boolean get() = synchronized(lock) { job?.isActive == true }
+    /**
+     * A late answer is being watched for, for any device. False from the moment the watch has its answer, before its
+     * `onGrant` runs: the start that `onGrant` makes must not see its own watch (8 Nov bench, the Mac's probe).
+     */
+    val watching: Boolean get() = synchronized(lock) { watched != null && job?.isActive == true }
+
+    /** [watching], for [name]: a replugged adapter comes back under a new device name, and is not this watch's. */
+    fun watching(name: String): Boolean = synchronized(lock) { watched == name && job?.isActive == true }
 
     /**
      * Wait for permission for [name]: [Outcome.GRANTED], [Outcome.CLOSED] (denied, or the adapter left) or
@@ -90,8 +101,9 @@ class UsbPermissionWait(
     }
 
     /**
-     * Keep waiting for [name]'s pending prompt, with the flag set, and run [onGrant] on a late OK. Ends on an answer,
-     * after [Timing.watchMs], or when [stillWanted] turns false. A watch for [name] already running is kept.
+     * Keep waiting for [name]'s pending prompt, with the flag set, and run [onGrant] on a late OK. Ends on an answer
+     * (OK, denial or dismissal, the adapter leaving) or when [stillWanted] turns false; no time limit, since a pending
+     * prompt is still on screen. A watch for [name] already running is kept.
      */
     fun watch(
         port: Port,
@@ -112,9 +124,9 @@ class UsbPermissionWait(
                 logInfo("[BRIDGE] the USB prompt for $name is still unanswered: listening for a late OK", tag = Logger.Tags.USB)
                 var outcome = Outcome.PENDING
                 try {
-                    val until = timing.now() + timing.watchMs
-                    while (outcome == Outcome.PENDING && timing.now() < until && stillWanted()) {
-                        delay(timing.watchPollMs)
+                    val fastUntil = timing.now() + timing.watchMs
+                    while (outcome == Outcome.PENDING && stillWanted()) {
+                        delay(if (timing.now() < fastUntil) timing.watchPollMs else timing.slowPollMs)
                         outcome = answer(port)
                     }
                 } finally {
@@ -126,7 +138,7 @@ class UsbPermissionWait(
                         onGrant()
                     }
                     Outcome.CLOSED -> logWarn("[BRIDGE] the USB prompt for $name was denied (or the adapter left)", tag = Logger.Tags.USB)
-                    Outcome.PENDING -> logWarn("[BRIDGE] no answer to the USB prompt for $name: stopped listening", tag = Logger.Tags.USB)
+                    Outcome.PENDING -> logInfo("[BRIDGE] stopped listening for the USB prompt for $name (Carlink released)", tag = Logger.Tags.USB)
                 }
             }
         synchronized(lock) { if (generation == gen) job = started }
