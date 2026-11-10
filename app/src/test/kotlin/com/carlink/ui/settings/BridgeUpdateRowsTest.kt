@@ -95,6 +95,7 @@ class BridgeUpdateRowsTest {
         compose.onNodeWithText(BridgeUpdateText.BLOCKED_ROW).assertExists()
         compose.onNodeWithText("How to update").performClick()
         compose.onNodeWithText("doesn't let the USB bridge install apps", substring = true).assertExists()
+        compose.onNodeWithText("adb install -r carlink_bridge-1.0.9.apk", substring = true).assertExists()
         compose.onNodeWithText(pin.sha256, substring = true).assertExists()
         compose.onNodeWithText("Open Files").performClick()
         assertEquals(1, filesOpened)

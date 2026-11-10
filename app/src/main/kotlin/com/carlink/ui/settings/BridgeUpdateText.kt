@@ -23,12 +23,16 @@ internal object BridgeUpdateText {
             driveSteps(pin) +
             "4. Come back to Carlink. From ${pin.versionName} on, the bridge updates itself from here."
 
-    /** The same steps where the head unit won't let the bridge install apps and has no page to allow it. */
+    /**
+     * The same steps where the head unit won't let the bridge install apps and has no page to allow it. Such a head unit
+     * may stub out Files' page too (the Mac's AAOS 13 emulator, 10 Nov), so adb is named as the way left.
+     */
     fun blockedManualText(pin: PinnedBridge): String =
         "This head unit doesn't let the USB bridge install apps, so bridge ${pin.versionName} goes on by hand, as it was installed. " +
             "While parked:\n" +
             driveSteps(pin) +
-            "4. Come back to Carlink."
+            "4. Come back to Carlink.\n" +
+            "If Files can't install apps on this head unit either, install the APK from a computer with adb install -r ${pin.fileName}."
 
     private fun driveSteps(pin: PinnedBridge): String =
         "1. Copy ${pin.fileName} from ${pin.releasePage} to a USB drive. Its SHA-256 is ${pin.sha256}.\n" +
