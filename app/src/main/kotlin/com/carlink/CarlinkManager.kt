@@ -61,7 +61,6 @@ import com.carlink.media.PlayStatus
 import com.carlink.media.TrackChangeHold
 import com.carlink.media.TrackWords
 import com.carlink.navigation.LaneActivity
-import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.OcbmNavigationFeed
 import com.carlink.navigation.compose.ComposedIconStore
 import com.carlink.ocbm.AdapterPhone
@@ -212,9 +211,8 @@ class CarlinkManager(
 
     init {
         live = this
-        // Carlink: cluster/HUD navigation (from Carlink2). Resolves the Templates Host icon
-        // authority the bridge hosts; the compose icon store renders maneuver bitmaps for it.
-        NavigationStateManager.initialize(context.applicationContext)
+        // Carlink: cluster/HUD navigation (from Carlink2): the compose icon store renders maneuver bitmaps
+        // for the Templates Host icon authority the bridge hosts.
         ComposedIconStore.setEnabled(true)
         // Bridge API 6: the app the adapter was handed to is done, or the owner took it back; connect as after a detach.
         BridgeAccessHub.onHandoverEnded = { if (live === this) scope.launch { startIfDisconnected("the adapter's handover ended") } }
