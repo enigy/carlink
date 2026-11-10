@@ -29,18 +29,34 @@ android {
     }
 
     buildTypes {
+        // No META-INF/version-control-info.textproto in either: AGP writes the checkout's git state into a
+        // non-debuggable build, so a clone (its commit) and a worktree (NO_VALID_GIT_FOUND) built different APKs
+        // (the Mac, 10 Nov). The app's debuggable debug build has none.
         debug {
             isDebuggable = false
+            vcsInfo {
+                include = false
+            }
         }
         release {
             signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
+            vcsInfo {
+                include = false
+            }
         }
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // No dependency-info block in the APK. AGP adds one to a non-debuggable build, encrypted afresh each time, so two
+    // clean builds of the probe never matched byte for byte (the Mac, 10 Nov). The app's debuggable debug build has none.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     // The car service's stubs, compile-time only (as :app).
