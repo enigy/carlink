@@ -10,7 +10,6 @@ import android.media.MediaRecorder
 import android.os.Process
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.carlink.telephony.MsbcUplinkEncoder
 import com.carlink.util.LogCallback
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -100,12 +99,9 @@ object MicFormats {
  * - USB thread reads from ring buffer (single reader)
  * - Start/stop/configure called from main thread
  *
- * UPLINK CODEC (2026-09): the box's `CT_UPLINK` gate carries a codec byte. `MicProfile.CODEC_PCM`
- * is the historical path — raw S16LE, one 20 ms chunk per tick via [readChunk]/[drainUplink].
- * `MicProfile.CODEC_MSBC` (HFP wideband) is different in kind: the box writes each `CH_MIC`
- * message to the SCO socket verbatim, so what goes up must be whole 60-byte eSCO packets, one per
- * message, at the codec's own 7.5 ms cadence. [drainUplink] does that cut; capture itself is
- * forced to 16 kHz mono because mSBC is defined there.
+ * UPLINK CODEC: the box's `CT_UPLINK` gate carries a codec byte, and the only one this app uplinks is
+ * `MicProfile.CODEC_PCM` — raw S16LE, one 20 ms chunk per tick via [readChunk]/[drainUplink]. A gate
+ * naming any other codec is refused (see [start]).
  */
 class MicrophoneCaptureManager(
     private val context: Context,
@@ -121,7 +117,7 @@ class MicrophoneCaptureManager(
     @Volatile private var preferredInput: AudioDeviceInfo? = null
 
     /**
-     * Sees every block of captured S16LE PCM as it goes out (before mSBC encoding), on the uplink
+     * Sees every block of captured S16LE PCM as it goes out, on the uplink
      * thread. The in-call echo monitor ([CallEchoMonitor]) listens here; must not block.
      */
     @Volatile var uplinkPcmTap: ((ByteArray, Int, Int) -> Unit)? = null
@@ -148,16 +144,6 @@ class MicrophoneCaptureManager(
 
     /** `MicProfile.CODEC_*` this session uplinks in. Read by the send thread, written under [lock]. */
     @Volatile private var uplinkCodec: Int = MicProfile.CODEC_PCM
-
-    /**
-     * Armed only for [MicProfile.CODEC_MSBC]. Owned by the send thread once published (the codec has
-     * a delay line); start()/stop() swap the reference under [lock], and [drainUplink] snapshots it
-     * so a restart mid-drain cannot hand one tick two different encoders.
-     */
-    @Volatile private var msbcEncoder: MsbcUplinkEncoder? = null
-
-    /** Send-thread scratch for the mSBC path: whole packets' worth of PCM per tick. */
-    private val msbcPcmBuffer = ByteArray(MicProfile.MSBC_PCM_BYTES_PER_PACKET * MicProfile.MSBC_MAX_PACKETS_PER_TICK)
 
     // @Volatile: written by capture thread, read by main thread in getStats()/stop().
     // Long requires volatile for JMM atomicity (JLS 17.7); Int for visibility.
@@ -197,11 +183,9 @@ class MicrophoneCaptureManager(
     fun start(decodeType: Int = 5): Boolean = start(decodeType, MicProfile.CODEC_PCM)
 
     /**
-     * Start capture for a `CT_UPLINK` gate that carries a codec byte (`MicProfile.CODEC_PCM` or
-     * `MicProfile.CODEC_MSBC`). For mSBC the capture format is 16 kHz mono whatever [decodeType]
-     * says, and [drainUplink] emits 60-byte eSCO packets instead of PCM. An unknown codec REFUSES
-     * to capture: uplinking PCM the far end will treat as a bitstream is noise with no local symptom,
-     * and a loud "no mic" is diagnosable where that is not.
+     * Start capture for a `CT_UPLINK` gate that carries a codec byte. Anything but
+     * `MicProfile.CODEC_PCM` REFUSES to capture: uplinking PCM the far end will treat as a bitstream
+     * is noise with no local symptom, and a loud "no mic" is diagnosable where that is not.
      */
     fun start(
         decodeType: Int,
@@ -222,7 +206,7 @@ class MicrophoneCaptureManager(
                 log("[MIC] ERROR: box asked for uplink codec $codec, which this app cannot encode — not capturing")
                 return false
             }
-            val format = captureFormat(decodeType, codec)
+            val format = MicFormats.fromDecodeType(decodeType)
             val record = openRecord(format) ?: return false
             audioRecord = record
             micBuffer =
@@ -233,9 +217,6 @@ class MicrophoneCaptureManager(
                 )
             currentFormat = format
             uplinkCodec = codec
-            // A fresh encoder per capture: the H2 sequence must restart at 0x08 for a new SCO
-            // channel, and a carried-over delay line would ring into its first 10 blocks.
-            msbcEncoder = if (codec == MicProfile.CODEC_MSBC) MsbcUplinkEncoder() else null
             // Size the send-path read buffer to THIS session's 20ms chunk. The fixed
             // 640B buffer meant an 8kHz call (320B chunks) hit the copyOf branch in
             // readChunk on EVERY 20ms tick — 50 allocations/sec for the whole call.
@@ -248,24 +229,9 @@ class MicrophoneCaptureManager(
             isRunning.set(true)
             captureThread = MicCaptureThread(format).also { it.start() }
 
-            val uplink = if (codec == MicProfile.CODEC_MSBC) "mSBC (60 B eSCO packets / 7.5 ms)" else "PCM S16LE (20 ms chunks)"
-            log("[MIC] Capture started: ${format.sampleRate}Hz ${format.channelCount}ch uplink=$uplink")
+            log("[MIC] Capture started: ${format.sampleRate}Hz ${format.channelCount}ch uplink=PCM S16LE (20 ms chunks)")
             return true
         }
-    }
-
-    /** The format to open capture at. mSBC is 16 kHz mono by definition; capture there whatever the gate's rate said. */
-    private fun captureFormat(
-        decodeType: Int,
-        codec: Int,
-    ): MicFormatConfig {
-        val format = MicFormats.fromDecodeType(decodeType)
-        val msbcMismatch =
-            codec == MicProfile.CODEC_MSBC &&
-                (format.sampleRate != MicProfile.MSBC_RATE || format.channelCount != MicProfile.MSBC_CHANNELS)
-        if (!msbcMismatch) return format
-        log("[MIC] uplink is mSBC but decodeType=$decodeType is ${format.sampleRate}Hz ${format.channelCount}ch — capturing at 16 kHz mono")
-        return MicFormats.SIRI_VOICE
     }
 
     /**
@@ -360,10 +326,7 @@ class MicrophoneCaptureManager(
 
             val durationMs = if (startTime > 0) System.currentTimeMillis() - startTime else 0
             currentFormat = null
-            val enc = msbcEncoder
-            msbcEncoder = null
             uplinkCodec = MicProfile.CODEC_PCM
-            if (enc != null) log("[MIC] mSBC uplink: ${enc.packetsOut} packets sent")
             log("[MIC] Capture stopped: duration=${durationMs}ms bytes=$totalBytesCapture overruns=$overrunCount")
         }
     }
@@ -396,60 +359,25 @@ class MicrophoneCaptureManager(
     }
 
     /**
-     * Pull everything the uplink can send this tick and hand each wire message to [send], in order.
-     * Returns the number of messages sent. Non-blocking; USB send thread only.
-     *
-     * - PCM: at most one chunk of up to [maxPcmBytes] (one 20 ms tick), raw S16LE — exactly what
-     *   [readChunk] returned before the codec existed.
-     * - mSBC: as many WHOLE 240-byte PCM frames as are buffered, capped by [maxPcmBytes], each
-     *   encoded to one 60-byte eSCO packet and sent as its OWN message. The remainder stays in the
-     *   ring buffer for the next tick; nothing is padded or dropped, so the 7.5 ms cadence rides on
-     *   the 20 ms timer without drift. Never concatenate packets — the box writes one `CH_MIC`
-     *   payload per SCO write.
-     *
-     * [maxPcmBytes] should come from `MicProfile.uplinkDrainBytes(rate, channels, codec)`.
+     * Pull at most one chunk of up to [maxPcmBytes] (one 20 ms tick) of raw S16LE and hand it to
+     * [send]. Returns the number of messages sent (0 or 1). Non-blocking; USB send thread only.
+     * [maxPcmBytes] should come from `MicProfile.chunkBytes(rate, channels)`.
      */
     fun drainUplink(
         maxPcmBytes: Int,
         send: (ByteArray) -> Unit,
     ): Int {
-        val enc = msbcEncoder
-        if (enc == null || uplinkCodec != MicProfile.CODEC_MSBC) {
-            val chunk = readChunk(maxBytes = maxPcmBytes)
-            if (chunk == null || chunk.isEmpty()) return 0
-            uplinkPcmTap?.invoke(chunk, 0, chunk.size)
-            send(chunk)
-            return 1
-        }
-        val buffer = micBuffer ?: return 0
-        val frame = MicProfile.MSBC_PCM_BYTES_PER_PACKET
-        val whole = minOf(buffer.availableForRead(), maxPcmBytes, msbcPcmBuffer.size) / frame * frame
-        // Single reader: `available` cannot shrink under us, so a short read here means the writer
-        // overran and discarded — the CAS in AudioRingBuffer.read already threw those bytes away.
-        val got = if (whole == 0) 0 else buffer.read(msbcPcmBuffer, 0, whole) / frame * frame
-        if (got > 0) uplinkPcmTap?.invoke(msbcPcmBuffer, 0, got)
-        var sent = 0
-        var off = 0
-        while (off < got) {
-            // A null return can only mean a wrong-sized frame, which `frame` rules out — drop rather
-            // than hand the box a malformed packet it would write to the SCO socket verbatim.
-            enc.packet(msbcPcmBuffer, off, frame)?.let {
-                send(it)
-                sent += 1
-            }
-            off += frame
-        }
-        return sent
+        val chunk = readChunk(maxBytes = maxPcmBytes)
+        if (chunk == null || chunk.isEmpty()) return 0
+        uplinkPcmTap?.invoke(chunk, 0, chunk.size)
+        send(chunk)
+        return 1
     }
 
     /** `MicProfile.CODEC_*` the current capture uplinks in, or -1 if not capturing. */
     fun currentCodec(): Int = if (currentFormat != null) uplinkCodec else -1
 
-    /**
-     * True when a running capture already matches a (re-)negotiated gate. A gate whose codec differs
-     * (CVSD -> mSBC mid-call keeps the rate at 16 kHz) needs a stop/start; comparing rate/channels
-     * alone would leave a PCM uplink running against a box now writing into a wideband SCO socket.
-     */
+    /** True when a running capture already matches a (re-)negotiated gate: same codec, rate and channels. */
     fun matchesFormat(
         rate: Int,
         channels: Int,
@@ -457,8 +385,7 @@ class MicrophoneCaptureManager(
     ): Boolean {
         val f = currentFormat ?: return false
         if (uplinkCodec != codec) return false
-        val (r, c) = MicProfile.captureFormatFor(rate, channels, codec)
-        return f.sampleRate == r && f.channelCount == c
+        return f.sampleRate == rate && f.channelCount == channels
     }
 
     /** Get current decode type (3, 5, 6, or 7), or -1 if not capturing. */
@@ -488,7 +415,6 @@ class MicrophoneCaptureManager(
                 "format" to (currentFormat?.let { "${it.sampleRate}Hz ${it.channelCount}ch" } ?: "none"),
                 "decodeType" to getCurrentDecodeType(),
                 "uplinkCodec" to currentCodec(),
-                "msbcPackets" to (msbcEncoder?.packetsOut ?: 0),
                 "durationSeconds" to durationMs / 1000.0,
                 "totalBytesCaptured" to totalBytesCapture,
                 "bufferLevelMs" to bufferLevelMs(),

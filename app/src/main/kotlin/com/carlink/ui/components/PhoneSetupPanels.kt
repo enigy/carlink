@@ -71,7 +71,7 @@ private fun setupPanel(
                 body =
                     "It keeps answering the adapter's call and turning it away. If it doesn't connect, on the iPhone open " +
                         "Settings > Bluetooth, tap the info button next to ${phase.name} and choose Forget This Device. Then tap " +
-                        "Pair iPhone here.",
+                        "Pair iPhone here. If the iPhone asks to use CarPlay after pairing, tap Use CarPlay.",
                 actions = listOf(pair, later),
             )
         is PhoneSetupPhase.BluetoothStarting ->

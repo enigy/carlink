@@ -1,5 +1,10 @@
 # CarlinkAndroid — the AAOS host app (OCBM)
 
+> **Carlink 2.22 / OCBM 1.0.5:** this is the port record from when the app lived in OCBM. Its Android Auto,
+> Bluetooth call audio (`SEAM_PKT_PLAIN`, mSBC), host MFi relay (`CH_MFI`) and app-driven SETUP (`CH_RTSP`,
+> `appDrivenSetup`) sections describe code that has since been removed from both; OCBM retired their
+> protocol numbers (`proto/ocbm-proto.lib.rs`).
+
 The head-unit counterpart to `host/MacHost/`: an Android app for a GM **gminfo3.7** unit (2024
 Silverado, Intel, AAOS 12L / API 32) that claims the CPC200-CCPA over **OCBM** and runs **full**
 wireless CarPlay — the adapter's own WiFi and Bluetooth, the adapter as the AirPlay endpoint, all

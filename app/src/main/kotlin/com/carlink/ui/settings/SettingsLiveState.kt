@@ -73,6 +73,9 @@ internal class SettingsLiveState(
     var pairWindowSupported by mutableStateOf(false)
     var pairWindowOpen by mutableStateOf(false)
 
+    /** The adapter holds no paired phone, so it stays pairable without a window ([CarlinkManager.noPhoneBonded]). */
+    var noPhoneBonded by mutableStateOf(false)
+
     /** Forget reaches the adapter: it is connected and its pairings are known ([CarlinkManager.canForget]). */
     var canForget by mutableStateOf(false)
 
@@ -120,6 +123,7 @@ internal fun rememberSettingsLiveState(
             live.switchSupported = carlinkManager.phoneSwitchSupported
             live.pairWindowSupported = carlinkManager.pairWindowSupported
             live.pairWindowOpen = carlinkManager.pairWindowOpen
+            live.noPhoneBonded = carlinkManager.noPhoneBonded
             live.canForget = carlinkManager.canForget
             live.driving = carlinkManager.isDriving
             val install = carlinkManager.oneFileInstall.install.value

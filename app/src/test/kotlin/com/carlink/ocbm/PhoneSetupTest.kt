@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,7 +22,18 @@ import java.util.concurrent.atomic.AtomicInteger
 class PhoneSetupTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val box = FakeBox()
-    private val timing = PhoneSetup.Timing(waitMs = 300, windowSeconds = 1, btStartMs = 600, btRetryMs = 100)
+    private val timing =
+        PhoneSetup.Timing(
+            waitMs = 300,
+            windowSeconds = 1,
+            btStartMs = 600,
+            btRetryMs = 100,
+            forgetQuietMs = 1_500,
+            restartPollMs = 20,
+            restartDownMs = 600,
+            reopenCheckMs = 200,
+            windowTimeoutMs = 3_000,
+        )
     private val setup = PhoneSetup(box, scope, timing)
 
     @After
@@ -161,6 +173,146 @@ class PhoneSetupTest {
     }
 
     @Test
+    fun `BOND_LOST right after this app's own Forget is the box's restart, not news`() {
+        // 8 Nov bench: FORGET_DEVICE at 18:22:50.163, BTP_BOND_LOST 0.55 s later, and the screen asked for a re-pair.
+        box.devices = """["AA:BB:CC:DD:EE:FF"]"""
+        setup.onSubscribed()
+        waitUntil { box.reads.get() == 1 }
+        setup.onForgetSent()
+        setup.onBtPhase(Ocbm.BTP_BOND_LOST)
+        assertEquals(PhoneSetupPhase.None, setup.phase.value)
+        Thread.sleep(timing.forgetQuietMs + 100)
+        setup.onBtPhase(Ocbm.BTP_BOND_LOST)
+        assertEquals("after the quiet time it is news again", PhoneSetupPhase.PhoneForgot("CarLink-9C1A"), setup.phase.value)
+    }
+
+    @Test
+    fun `a window asked for right after a Forget waits for the wireless restart`() {
+        // 8 Nov bench: opened 2.4 s after the forget, closed 0.7 s later by the restart; the first tap did nothing.
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        box.wireless = true
+        setup.onForgetSent()
+        setup.pair()
+        Thread.sleep(150)
+        assertTrue("not before the restart has begun", box.windows.isEmpty())
+        assertTrue("and the screen says what it waits for", setup.phase.value is PhoneSetupPhase.BluetoothStarting)
+        box.wireless = false // btd down: the restart
+        Thread.sleep(150)
+        assertTrue("not while btd is down", box.windows.isEmpty())
+        box.wireless = true // and up again
+        await<PhoneSetupPhase.Pairing>()
+        assertEquals(listOf(timing.windowSeconds), box.windows)
+    }
+
+    @Test
+    fun `a window the restart closed again is opened once more`() {
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        box.wireless = false
+        setup.onForgetSent()
+        setup.pair()
+        Thread.sleep(100)
+        box.wireless = true
+        await<PhoneSetupPhase.Pairing>()
+        box.open = false // the box closed it
+        waitUntil { box.windows.size == 2 }
+        assertEquals(listOf(timing.windowSeconds, timing.windowSeconds), box.windows)
+        Thread.sleep(timing.reopenCheckMs + 100)
+        assertEquals("once, not on every look", 2, box.windows.size)
+    }
+
+    @Test
+    fun `a window the driver stopped right after a Forget is not opened again`() {
+        // Stop within the 4 s check: the box must not be left discoverable while the screen shows the prompt.
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        box.wireless = false
+        setup.onForgetSent()
+        setup.pair()
+        Thread.sleep(100)
+        box.wireless = true
+        await<PhoneSetupPhase.Pairing>()
+        setup.stop()
+        box.open = false
+        Thread.sleep(timing.reopenCheckMs + 200)
+        assertEquals(listOf(timing.windowSeconds, 0), box.windows)
+        assertTrue(setup.phase.value is PhoneSetupPhase.Prompt)
+    }
+
+    @Test
+    fun `no restart seen within the down time opens anyway`() {
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        box.wireless = true // the 2 s health ticks missed btd going down
+        setup.onForgetSent()
+        setup.pair()
+        await<PhoneSetupPhase.Pairing>(timeoutMs = 2_000)
+        assertEquals(listOf(timing.windowSeconds), box.windows)
+    }
+
+    @Test
+    fun `after the phone has left, a window after a Forget waits for the restart and Bluetooth again`() {
+        // 9 Nov bench: the iPhone left, then Forget and Add phone. Still taken as connected, the window skipped the
+        // restart wait, got status 1 while btd restarted and gave up after two tries: "btd isn't reachable".
+        box.devices = """["AA:BB:CC:DD:EE:FF"]"""
+        setup.onSubscribed()
+        waitUntil { box.reads.get() == 1 }
+        setup.onPhoneConnected()
+        setup.onPhoneLeft()
+        box.wireless = true
+        setup.onForgetSent()
+        var status: Int? = -1
+        val asked = scope.launch { status = setup.window(timing.windowSeconds) }
+        Thread.sleep(150)
+        assertTrue("not before the restart has begun", box.windows.isEmpty())
+        box.wireless = false
+        Thread.sleep(100)
+        box.windowStatus = 1 // btd is still starting when the window goes out
+        box.wireless = true
+        waitUntil { box.windows.size >= 2 }
+        box.windowStatus = 0
+        waitUntil(2_000) { asked.isCompleted }
+        assertEquals("tried again until btd answered", 0, status)
+    }
+
+    @Test
+    fun `a second phone in the session clears pairing and stops the window's clock`() {
+        // 9 Nov bench (eb41fcab): Add phone, then another iPhone paired and connected, and two minutes on the window
+        // "ran out with no phone" over it: only the generation's first phone had raised onPhoneConnected.
+        box.devices = "[]"
+        setup.onSubscribed()
+        await<PhoneSetupPhase.Prompt>()
+        setup.onPhoneConnected() // the first phone
+        setup.onPhoneLeft()
+        setup.pair()
+        await<PhoneSetupPhase.Pairing>()
+        setup.onPhoneConnected() // the next phone, in the same session
+        assertEquals(PhoneSetupPhase.None, setup.phase.value)
+        Thread.sleep(timing.windowSeconds * 1_000L + 300)
+        assertEquals("the window's clock stopped", PhoneSetupPhase.None, setup.phase.value)
+    }
+
+    @Test
+    fun `a window request that never ends is given up as no answer`() {
+        // 9 Nov bench: two opens btd applied never logged a status. Every request now ends, and says how.
+        val quick = PhoneSetup(box, scope, timing.copy(windowTimeoutMs = 300))
+        box.devices = "[]"
+        quick.onSubscribed()
+        waitUntil(timeoutMs = 1_000) { quick.phase.value is PhoneSetupPhase.Prompt }
+        box.windowDelayMs = 10_000
+        val started = System.currentTimeMillis()
+        quick.pair()
+        waitUntil(timeoutMs = 2_000) { quick.phase.value is PhoneSetupPhase.NotPaired }
+        assertTrue("within its time limit", System.currentTimeMillis() - started < 1_500)
+        assertEquals(PhoneSetup.NO_ANSWER, (quick.phase.value as PhoneSetupPhase.NotPaired).title)
+    }
+
+    @Test
     fun `phones paired but none comes - keep waiting, then offer to pair a new one`() {
         box.devices = """["AA:BB:CC:DD:EE:FF"]"""
         setup.onSubscribed()
@@ -277,11 +429,22 @@ class PhoneSetupTest {
 
         override val gatesPairing: Boolean get() = gates
 
+        @Volatile var windowDelayMs = 0L
+
         override fun pairWindow(seconds: Int): Int? {
             windows += seconds
+            if (windowDelayMs > 0) Thread.sleep(windowDelayMs)
             return windowStatus
         }
 
         override fun now(): Long = System.currentTimeMillis()
+
+        @Volatile var wireless: Boolean? = null
+
+        @Volatile var open: Boolean? = null
+
+        override fun wirelessUp(): Boolean? = wireless
+
+        override fun windowOpen(): Boolean? = open
     }
 }

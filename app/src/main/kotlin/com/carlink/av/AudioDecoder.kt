@@ -14,7 +14,7 @@ import java.nio.ByteBuffer
  * `SeamCrypto.CODEC_*` value. This is the ONE place that byte is turned into a decoder:
  *
  *  - [SeamCrypto.CODEC_PCM]     → [PcmPassthrough]. Already S16LE (the seam byte-swapped the big-endian
- *                                 AirPlay downlink and decoded mSBC); written to the track as-is.
+ *                                 AirPlay downlink); written to the track as-is.
  *  - [SeamCrypto.CODEC_AAC_LC]  → [MediaCodecAacDecoder] with the LC AudioSpecificConfig. Wireless
  *                                 CarPlay media (type 102, 48 kHz stereo).
  *  - [SeamCrypto.CODEC_AAC_ELD] → [MediaCodecAacDecoder] with the ELD ASC. Wireless CarPlay voice
@@ -251,7 +251,6 @@ object AudioDecoders {
             SeamCrypto.CODEC_AAC_LC -> "AAC-LC"
             SeamCrypto.CODEC_AAC_ELD -> "AAC-ELD"
             SeamCrypto.CODEC_OPUS -> "OPUS"
-            SeamCrypto.CODEC_MSBC -> "mSBC"
             else -> "codec$c"
         }
 

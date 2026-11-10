@@ -77,22 +77,16 @@ internal object LoadingSteps {
 
     /**
      * The adapter has claimed a projection (CT_PROJ_MODE): WIRELESS_CP right after the phone hands
-     * off from Bluetooth to Wi-Fi, WIRED_CP when a phone is plugged in, and the Android Auto modes.
-     * That is when CarPlay (or Android Auto) is really starting, ahead of the session's first
+     * off from Bluetooth to Wi-Fi, WIRED_CP when a phone is plugged in. That is when CarPlay is
+     * really starting, ahead of the session's first
      * key ("Phone connected"), which the first video frame follows within half a second.
      */
     fun projectionStarting(mode: Byte): Boolean = mode != Ocbm.PM_NONE
 
-    /** The adapter's projection is Android Auto, so the last step says so. */
-    fun isAndroidAuto(mode: Byte): Boolean = mode == Ocbm.PM_WIRED_AA || mode == Ocbm.PM_WIRELESS_AA
-
-    fun label(
-        step: LoadingStep,
-        androidAuto: Boolean,
-    ): String =
+    fun label(step: LoadingStep): String =
         when (step) {
             LoadingStep.ADAPTER -> "Waking the adapter"
             LoadingStep.PHONE -> "Finding your phone"
-            LoadingStep.START -> if (androidAuto) "Starting Android Auto" else "Starting CarPlay"
+            LoadingStep.START -> "Starting CarPlay"
         }
 }

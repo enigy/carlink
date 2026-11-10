@@ -84,7 +84,6 @@ data class VehicleConfigSpec(
      * two must never disagree.
      */
     val touchScreenSupportsMultiTouch: Boolean = true,
-    val appDrivenSetup: Boolean = false,
     val metadataTier: String = "proven",
     /**
      * Box feature names (`iap2-core/src/features.rs`) dropped from [metadataTier]'s declaration.
@@ -403,7 +402,6 @@ object VehicleConfigYaml {
         line("  enablesLogTransfer: false")
         line("  enablesVehicleDataProtocol: false")
         line("  enablesDCX: false")
-        line("  appDrivenSetup: ${s.appDrivenSetup}")
     }
 
     /**

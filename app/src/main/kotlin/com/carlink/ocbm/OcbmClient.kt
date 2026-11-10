@@ -7,6 +7,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.CRC32
 
 /**
@@ -33,12 +34,12 @@ class OcbmClient(
     private val running = AtomicBoolean(false)
 
     private val ctrlQ = LinkedBlockingQueue<ByteArray>()
-    private val mfiQ = LinkedBlockingQueue<ByteArray>()
     private val mgmtQ = LinkedBlockingQueue<ByteArray>()
 
-    // One MGMT request at a time: each clears [mgmtQ] and waits for its own answer, so two at once (the
-    // session start's MGMT_INFO reads and SET_POLICY) could take or drop each other's.
-    private val mgmtLock = Any()
+    // One MGMT request at a time: each drains [mgmtQ] and waits for its own answer, so two at once (the
+    // session start's MGMT_INFO reads and SET_POLICY) could take or drop each other's. A lock with a bounded
+    // wait rather than a monitor, so a request behind a stuck one gives up and says so ([mgmtExchange]).
+    private val mgmtLock = ReentrantLock()
     private val fileQ = LinkedBlockingQueue<ByteArray>()
 
     // One CH_FILE transfer at a time: a pull and a push share [fileQ] and each takes the next FILE_ACK as its own.
@@ -64,8 +65,6 @@ class OcbmClient(
 
     @Volatile var bytesIn = 0L
         private set
-
-    val hasMfi: Boolean get() = (caps and Ocbm.CAP_MFI) != 0
 
     /** Receives the box's CH_LOG lines once [setBoxLogStream] armed them. Runs on the transport read thread. */
     @Volatile var onBoxLog: ((List<BoxLogEntry>) -> Unit)? = null
@@ -145,14 +144,16 @@ class OcbmClient(
      * carries no JSON dependency by design; the session layer already parses META_JSON and owns the
      * decision about what an unexpected shape means.
      */
-    var onPhoneIdentity: ((String) -> Unit)? = null
+    var onPhoneIdentity: ((json: String, replay: Boolean) -> Unit)? = null
 
     /**
      * Which projection transport OWNS the box right now (CT_PROJ_MODE, one of `PM_*`). Mirrors the
      * box's single-owner arbitration flag; emitted on change and re-emitted to every fresh SUBSCRIBE,
-     * so nothing needs caching across a reconnect. Fires on the read thread — hand off.
+     * so nothing needs caching across a reconnect. `replay` is F_REPLAY: the box re-sent its state to this fresh
+     * SUBSCRIBE, which may still be the last host's session ([com.carlink.ocbm.HelloReplay]). Fires on the read
+     * thread — hand off.
      */
-    var onProjMode: ((Byte) -> Unit)? = null
+    var onProjMode: ((mode: Byte, replay: Boolean) -> Unit)? = null
 
     /**
      * The box's own subsystem liveness as a `BH_*` bitmask (CT_BOX_HEALTH). Same emit discipline as
@@ -184,7 +185,7 @@ class OcbmClient(
     @Volatile var uplinkChannels = 0
         private set
 
-    /** Negotiated uplink codec (`MicProfile.CODEC_PCM` 0 / `CODEC_MSBC` 4); 0 while the gate is down or on a 7-byte gate. */
+    /** Negotiated uplink codec (`MicProfile.CODEC_PCM` 0, the only one an adapter sends); 0 while the gate is down or on a 7-byte gate. */
     @Volatile var uplinkCodec = 0
         private set
 
@@ -268,7 +269,7 @@ class OcbmClient(
      *
      * This is the earliest truthful "device connected" edge available — earlier than the first decoded
      * frame, and unlike a phone-presence event it proves the crypto handshake completed. Fires on the
-     * read thread, once per generation.
+     * read thread, once per generation, and once more after each [reannounceKeyed].
      */
     var onSessionKeyed: (() -> Unit)? = null
 
@@ -276,6 +277,15 @@ class OcbmClient(
 
     /** Reset per generation, so a re-subscribe re-announces the keyed edge for the new session. */
     private val videoKeyedThisGeneration = AtomicBoolean(false)
+
+    /**
+     * Let the next video key raise [onSessionKeyed] again in this generation: the session whose key raised it ended. That
+     * is the last host's session, replayed at SUBSCRIBE and then ended ([com.carlink.ocbm.HelloReplay]), or a phone's
+     * session within the generation, so the next phone's first key is its own "device connected" edge.
+     */
+    fun reannounceKeyed() {
+        videoKeyedThisGeneration.set(false)
+    }
 
     private fun armLanes() {
         synchronized(lanesLock) {
@@ -397,8 +407,8 @@ class OcbmClient(
      */
     private fun dispatch(f: OcbmFrame) {
         when (f.channel) {
-            Ocbm.CH_CTRL -> handleCtrl(f.payload)
-            Ocbm.CH_MFI, Ocbm.CH_MGMT, Ocbm.CH_FILE -> replyQueue(f.channel).offer(f.payload)
+            Ocbm.CH_CTRL -> handleCtrl(f.payload, replay = f.flags.toInt() and Ocbm.F_REPLAY.toInt() != 0)
+            Ocbm.CH_MGMT, Ocbm.CH_FILE -> replyQueue(f.channel).offer(f.payload)
             Ocbm.CH_VIDEO -> lanes?.feedVideo(f.payload) ?: dropAv(f)
             Ocbm.CH_MEDIA_AUDIO -> lanes?.feedMedia(f.payload) ?: dropAv(f)
             Ocbm.CH_ALT_AUDIO -> lanes?.feedVoice(f.payload) ?: dropAv(f)
@@ -447,7 +457,6 @@ class OcbmClient(
     /** The request/reply channels each park their replies on a queue the blocking caller polls. */
     private fun replyQueue(channel: Int): LinkedBlockingQueue<ByteArray> =
         when (channel) {
-            Ocbm.CH_MFI -> mfiQ
             Ocbm.CH_MGMT -> mgmtQ
             else -> fileQ
         }
@@ -468,7 +477,10 @@ class OcbmClient(
         )
     }
 
-    private fun handleCtrl(pl: ByteArray) {
+    private fun handleCtrl(
+        pl: ByteArray,
+        replay: Boolean = false,
+    ) {
         if (pl.isEmpty()) return
         when (pl[0]) {
             Ocbm.CT_HELLO_ACK -> {
@@ -519,7 +531,7 @@ class OcbmClient(
                         (pl[2].toInt() and 0xFF) or ((pl[3].toInt() and 0xFF) shl 8) or
                             ((pl[4].toInt() and 0xFF) shl 16) or ((pl[5].toInt() and 0xFF) shl 24)
                     val ch = pl[6].toInt() and 0xFF
-                    // Byte 7 (additive, lib.rs CT_UPLINK): the SCO codec — 0 PCM/CVSD, 4 mSBC. A 7-byte
+                    // Byte 7 (additive, lib.rs CT_UPLINK): the uplink codec — 0 PCM (4, mSBC, is retired). A 7-byte
                     // gate from an older box is PCM; OFF carries no format at all.
                     val codec = if (pl.size >= 8) pl[7].toInt() and 0xFF else 0
                     log.i("<< UPLINK ${if (on) "ON" else "OFF"} ${rate}Hz ${ch}ch codec=$codec (mic gate)")
@@ -533,8 +545,8 @@ class OcbmClient(
             Ocbm.CT_PHONE_IDENT -> {
                 val json = if (pl.size > 1) String(pl, 1, pl.size - 1, Charsets.UTF_8).trim() else ""
                 lastPhoneIdentity = json
-                log.i(if (json.isEmpty()) "<< PHONE_IDENT cleared" else "<< PHONE_IDENT $json")
-                onPhoneIdentity?.invoke(json)
+                log.i((if (json.isEmpty()) "<< PHONE_IDENT cleared" else "<< PHONE_IDENT $json") + if (replay) " (replay)" else "")
+                onPhoneIdentity?.invoke(json, replay)
             }
             Ocbm.CT_BT_PHASE -> {
                 if (pl.size >= 2) {
@@ -553,8 +565,8 @@ class OcbmClient(
                 if (pl.size >= 2) {
                     val m = pl[1]
                     lastProjMode = m
-                    log.i("<< PROJ_MODE ${Ocbm.pmName(m)}")
-                    onProjMode?.invoke(m)
+                    log.i("<< PROJ_MODE ${Ocbm.pmName(m)}" + if (replay) " (replay)" else "")
+                    onProjMode?.invoke(m, replay)
                 }
             }
             Ocbm.CT_BOX_HEALTH -> {
@@ -867,7 +879,6 @@ class OcbmClient(
                                 if (activeMode == Ocbm.MODE_CONSOLE) "CONSOLE" else "PROJECTION",
                             ),
                     )
-                    if (!hasMfi) log.w("!! CAP_MFI is NOT set — the box has no MFi chip access (/dev/i2c-1 failed)")
                     return true
                 }
             }
@@ -1042,108 +1053,76 @@ class OcbmClient(
         log.i(">> heartbeat started at ${Ocbm.HEARTBEAT_MS}ms (box watchdog is ${Ocbm.HEARTBEAT_GRACE_MS}ms)")
     }
 
-    // ---- CH_MFI relay ---------------------------------------------------------------------------
-
-    /**
-     * Serializes ALL CH_MFI traffic. The channel has TWO concurrent consumers — the native receiver
-     * core's MFi relay (on control-connection threads) and any probe/bring-up cert/sign — and the
-     * wire response carries no opcode echo or request id, so without a lock a certificate can be
-     * returned as the answer to a signature request (auth-setup then fails and the session drops).
-     */
-    private val mfiLock = Any()
-
-    private fun mfiRequest(
-        req: ByteArray,
-        timeoutMs: Long,
-        expectedOk: (ByteArray) -> Boolean,
-    ): Mfi.Response? {
-        synchronized(mfiLock) {
-            // Drain stale/late replies from a previous request UNDER the lock, so this request's poll
-            // cannot pick up an earlier answer that arrived after that caller's timeout.
-            while (mfiQ.poll() != null) { /* discard */ }
-            if (!send(Ocbm.CH_MFI, req)) return null
-            val deadline = System.currentTimeMillis() + timeoutMs
-            while (true) {
-                val remaining = deadline - System.currentTimeMillis()
-                if (remaining <= 0) return null
-                val pl = mfiQ.poll(remaining, TimeUnit.MILLISECONDS) ?: return null
-                val resp = Mfi.parse(pl, pl.size) ?: continue
-                // Weak length correlation until the protocol grows a request id: an OK reply whose
-                // payload length doesn't match this op is a stale/mismatched answer — keep waiting.
-                // Error statuses carry no payload and are accepted as-is (a misattributed transient
-                // FAILED just triggers the caller's retry, which is benign).
-                if (resp.ok && !expectedOk(resp.payload)) {
-                    log.w("!! CH_MFI stale/mismatched OK reply (${resp.payload.size}B) discarded")
-                    continue
-                }
-                return resp
-            }
-        }
-    }
-
-    /**
-     * Fetch the MFi certificate. Generous timeout: the box takes a bounded flock on
-     * /tmp/carplay_mfi.lock with a 10 s deadline, and MFi blocks its single-threaded dispatch.
-     */
-    fun mfiCertificate(timeoutMs: Long = 12_000): Mfi.Response? {
-        log.i(">> CH_MFI copy_certificate")
-        // A certificate is ~945 B; a 128-B OK reply is the signature answer to another request.
-        return mfiRequest(Mfi.certRequest(), timeoutMs) { it.size > Mfi.SIG_LEN }
-    }
-
-    /**
-     * Sign a 20-byte SHA-1 digest. The chip sequence alone runs up to ~2.1 s, and with lock
-     * contention the worst case approaches 12 s.
-     */
-    fun mfiSign(
-        digest: ByteArray,
-        timeoutMs: Long = 15_000,
-    ): Mfi.Response? {
-        log.i(">> CH_MFI create_signature (${digest.size}B digest)")
-        return mfiRequest(Mfi.signRequest(digest), timeoutMs) { it.size == Mfi.SIG_LEN }
-    }
-
     // ---- CH_MGMT --------------------------------------------------------------------------------
 
     /** Hears every MGMT_INFO, whoever asked for it, so the adapter's name follows its latest answer (31 Oct). */
     @Volatile var onInfo: ((json: String) -> Unit)? = null
 
     /** MGMT_GET_INFO → MGMT_INFO, whose payload is UTF-8 JSON running to the end of the frame; [onInfo] hears it too. */
-    fun mgmtGetInfo(timeoutMs: Long = 5000): String? =
-        synchronized(mgmtLock) {
-            mgmtQ.clear()
-            if (!send(Ocbm.CH_MGMT, byteArrayOf(Ocbm.MGMT_GET_INFO))) return null
-            val deadline = System.currentTimeMillis() + timeoutMs
-            while (System.currentTimeMillis() < deadline) {
-                val pl = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
-                if (pl.isNotEmpty() && pl[0] == Ocbm.MGMT_INFO) {
-                    val json = String(pl, 1, pl.size - 1, Charsets.UTF_8)
-                    onInfo?.invoke(json)
-                    return json
-                }
-            }
-            null
-        }
+    fun mgmtGetInfo(timeoutMs: Long = MGMT_ANSWER_MS): String? {
+        val pl = mgmtExchange(byteArrayOf(Ocbm.MGMT_GET_INFO), timeoutMs) { it.isNotEmpty() && it[0] == Ocbm.MGMT_INFO } ?: return null
+        val json = String(pl, 1, pl.size - 1, Charsets.UTF_8)
+        onInfo?.invoke(json)
+        return json
+    }
 
-    /** Any of the four action verbs; returns the status byte from MGMT_ACK (0 ok, 1 error). */
+    /** Any of the action verbs; returns the status byte from MGMT_ACK (0 ok, 1 error), null with no answer. */
     fun mgmtAction(
         verb: Byte,
         arg: ByteArray = ByteArray(0),
-        timeoutMs: Long = 5000,
-    ): Int? =
-        synchronized(mgmtLock) {
-            mgmtQ.clear()
-            val pl = ByteArray(1 + arg.size)
-            pl[0] = verb
-            System.arraycopy(arg, 0, pl, 1, arg.size)
-            if (!send(Ocbm.CH_MGMT, pl)) return null
-            val deadline = System.currentTimeMillis() + timeoutMs
-            while (System.currentTimeMillis() < deadline) {
-                val r = mgmtQ.poll(200, TimeUnit.MILLISECONDS) ?: continue
-                if (r.size >= 3 && r[0] == Ocbm.MGMT_ACK && r[1] == verb) return r[2].toInt()
-            }
-            null
+        timeoutMs: Long = MGMT_ANSWER_MS,
+    ): Int? {
+        val pl = ByteArray(1 + arg.size)
+        pl[0] = verb
+        System.arraycopy(arg, 0, pl, 1, arg.size)
+        val ack = mgmtExchange(pl, timeoutMs) { it.size >= MGMT_ACK_LEN && it[0] == Ocbm.MGMT_ACK && it[1] == verb } ?: return null
+        return ack[2].toInt()
+    }
+
+    /**
+     * One MGMT request and its answer (the first reply [isAnswer] takes), or null. Bounded throughout, on the monotonic
+     * clock: the line waits up to [MGMT_LINE_WAIT_MS] for an earlier request, and the answer [timeoutMs]. Each request
+     * logs what it sent and how it ended, and a reply that isn't its answer (a late one, to a request that gave up) is
+     * logged and dropped, not taken: on the 9 Nov bench two pairing-window opens that btd applied never logged a status.
+     */
+    private fun mgmtExchange(
+        request: ByteArray,
+        timeoutMs: Long,
+        isAnswer: (ByteArray) -> Boolean,
+    ): ByteArray? {
+        val what = mgmtRequestName(request)
+        if (!mgmtLock.tryLock(MGMT_LINE_WAIT_MS, TimeUnit.MILLISECONDS)) {
+            log.w("!! MGMT $what not sent: an earlier request has held the line for $MGMT_LINE_WAIT_MS ms")
+            return null
         }
+        try {
+            while (true) {
+                val stale = mgmtQ.poll() ?: break
+                log.w("<< MGMT ${mgmtReplyName(stale)} came after its request gave up: dropped")
+            }
+            if (!send(Ocbm.CH_MGMT, request)) {
+                log.w("!! MGMT $what: write failed")
+                return null
+            }
+            log.i(">> MGMT $what")
+            val start = System.nanoTime()
+            val deadline = start + timeoutMs * NANOS_PER_MS
+            var left = timeoutMs * NANOS_PER_MS
+            while (left > 0) {
+                val r = mgmtQ.poll(left, TimeUnit.NANOSECONDS)
+                if (r != null && isAnswer(r)) {
+                    log.i("<< MGMT ${mgmtReplyName(r)} for $what in ${(System.nanoTime() - start) / NANOS_PER_MS} ms")
+                    return r
+                }
+                if (r != null) log.w("<< MGMT ${mgmtReplyName(r)} while $what waited: not its answer, dropped")
+                left = deadline - System.nanoTime()
+            }
+            log.w("!! MGMT $what: no answer in $timeoutMs ms")
+            return null
+        } finally {
+            mgmtLock.unlock()
+        }
+    }
 
     // ---- CH_FILE --------------------------------------------------------------------------------
 
@@ -1365,6 +1344,51 @@ private const val FILE_CHUNK = 16 * 1024
 private const val FILE_MODE_READABLE = 0x1A4
 
 private const val NANOS_PER_MS = 1_000_000L
+
+/** How long a MGMT request waits for its answer, unless it says otherwise. */
+private const val MGMT_ANSWER_MS = 5_000L
+
+/** How long a MGMT request waits for the line while an earlier one holds it: two answers' worth. */
+private const val MGMT_LINE_WAIT_MS = 2 * MGMT_ANSWER_MS
+
+/** `[MGMT_ACK][verb][status]`. */
+private const val MGMT_ACK_LEN = 3
+
+private val MGMT_VERB_NAMES =
+    mapOf(
+        Ocbm.MGMT_GET_INFO to "GET_INFO",
+        Ocbm.MGMT_REBOOT to "REBOOT",
+        Ocbm.MGMT_FORGET_ALL to "FORGET_ALL",
+        Ocbm.MGMT_FORGET_DEVICE to "FORGET_DEVICE",
+        Ocbm.MGMT_RESTART_WIRELESS to "RESTART_WIRELESS",
+        Ocbm.MGMT_ENTER_NCM to "ENTER_NCM",
+        Ocbm.MGMT_SET_POLICY to "SET_POLICY",
+        Ocbm.MGMT_CONNECT_DEVICE to "CONNECT_DEVICE",
+        Ocbm.MGMT_PAIR_WINDOW to "PAIR_WINDOW",
+        Ocbm.MGMT_INSTALL_CONFIRM to "INSTALL_CONFIRM",
+        Ocbm.MGMT_GO_STOCK to "GO_STOCK",
+        Ocbm.MGMT_UPDATE to "UPDATE",
+        Ocbm.MGMT_SWITCH_DEVICE to "SWITCH_DEVICE",
+    )
+
+private fun mgmtVerbName(v: Byte): String = MGMT_VERB_NAMES[v] ?: "0x%02x".format(v.toInt() and 0xFF)
+
+/** A request for the log: its verb, and a pairing window's seconds (no MACs or other arguments). */
+private fun mgmtRequestName(request: ByteArray): String {
+    val verb = mgmtVerbName(request[0])
+    if (request[0] != Ocbm.MGMT_PAIR_WINDOW || request.size < MGMT_ACK_LEN) return verb
+    val seconds = (request[1].toInt() and 0xFF) or ((request[2].toInt() and 0xFF) shl Byte.SIZE_BITS)
+    return "$verb ${seconds}s"
+}
+
+/** A reply for the log: MGMT_ACK with its verb and status, MGMT_INFO with its size. */
+private fun mgmtReplyName(r: ByteArray): String =
+    when {
+        r.size >= MGMT_ACK_LEN && r[0] == Ocbm.MGMT_ACK -> "MGMT_ACK ${mgmtVerbName(r[1])} status=${r[2]}"
+        r.isNotEmpty() && r[0] == Ocbm.MGMT_INFO -> "MGMT_INFO (${r.size - 1} B)"
+        r.isEmpty() -> "an empty reply"
+        else -> "reply 0x%02x".format(r[0].toInt() and 0xFF)
+    }
 
 /** Enough of the read thread's stack to show what it is parked in, short enough for one log line. */
 private const val STALL_STACK_FRAMES = 8

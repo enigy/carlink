@@ -70,12 +70,6 @@ class LoadingStepsTest {
     }
 
     @Test
-    fun androidAutoModesNameAndroidAuto() {
-        assertTrue(LoadingSteps.isAndroidAuto(Ocbm.PM_WIRED_AA))
-        assertFalse(LoadingSteps.isAndroidAuto(Ocbm.PM_WIRELESS_CP))
-    }
-
-    @Test
     fun phonePhaseMessagesAreTheSecondStep() {
         listOf(
             "Waiting for phone...",
@@ -107,9 +101,8 @@ class LoadingStepsTest {
 
     @Test
     fun labelsAreCarlink2sThreeStepsWithTheProjectionNamed() {
-        assertEquals("Waking the adapter", LoadingSteps.label(LoadingStep.ADAPTER, androidAuto = false))
-        assertEquals("Finding your phone", LoadingSteps.label(LoadingStep.PHONE, androidAuto = false))
-        assertEquals("Starting CarPlay", LoadingSteps.label(LoadingStep.START, androidAuto = false))
-        assertEquals("Starting Android Auto", LoadingSteps.label(LoadingStep.START, androidAuto = true))
+        assertEquals("Waking the adapter", LoadingSteps.label(LoadingStep.ADAPTER))
+        assertEquals("Finding your phone", LoadingSteps.label(LoadingStep.PHONE))
+        assertEquals("Starting CarPlay", LoadingSteps.label(LoadingStep.START))
     }
 }

@@ -98,11 +98,12 @@ object Framing {
     }
 }
 
-/** One decoded frame handed up out of the [Reassembler]. No `flags`: the dispatcher routes on
- *  channel alone, and only F_BOTH is ever sent. */
+/** One decoded frame handed up out of the [Reassembler]. The dispatcher routes on [channel]; [flags] carries
+ *  F_REPLAY, which marks a state mirror the box re-sent to a fresh SUBSCRIBE rather than a change. */
 class OcbmFrame(
     val channel: Int,
     val payload: ByteArray,
+    val flags: Byte = 0,
 )
 
 /**
@@ -179,7 +180,7 @@ class Reassembler {
             val payload = buf.copyOfRange(start + Ocbm.HDR_LEN, start + total)
             start += total
             compact()
-            return OcbmFrame(h.channel, payload)
+            return OcbmFrame(h.channel, payload, h.flags)
         }
     }
 

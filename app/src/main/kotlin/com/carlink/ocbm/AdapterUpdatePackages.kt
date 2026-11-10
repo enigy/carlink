@@ -35,18 +35,18 @@ object AdapterUpdates {
      */
     val PINNED: PinnedPackage? =
         PinnedPackage(
-            tag = "v1.0.4",
-            url = "https://github.com/enigy/ocbm/releases/download/v1.0.4/ocbm-update-1.0.4.tgz",
-            sizeBytes = 348_273L,
-            sha256 = "59f26f474db4cb2c8a61585cb7b207aa7cfa07c243aa3e368369c7381ed527fe",
-            // "1.0.4 ocbm 317b3eb" from 1.0.1: btd (the Mac's build of 4a2586b), ocbm_boot.sh, ocbm_dispatch.sh, ocbm_restore.sh,
-            // ocbm_update.sh (Scott, 6 Nov).
+            tag = "v1.0.5",
+            url = "https://github.com/enigy/ocbm/releases/download/v1.0.5/ocbm-update-1.0.5.tgz",
+            sizeBytes = 1_882_796L,
+            sha256 = "02bb8bf1db9875a10422bd3016026f0f6d59277e47de9c1792088ed99b8e62ae",
+            // "1.0.5 ocbm dcb95cc" from 1.0.1: btd, carplayd, iap2d, iap_role_switch, ocbmd and 10 scripts, built from dcb95cc;
+            // retires /usr/sbin/aa-bridge. ROOM trial=no: a trial adapter finishes its install first (benched 9 Nov; Scott, 10 Nov).
             pkg =
                 UpdatePackage(
-                    version = "1.0.4",
+                    version = "1.0.5",
                     fromMin = "1.0.1",
-                    needKb = 857,
-                    notes = "Tells Carlink when your iPhone has forgotten the adapter, so it can ask you to pair again.",
+                    needKb = 2855,
+                    notes = "CarPlay only: Android Auto and the Bluetooth headset profiles leave the adapter; calls go through CarPlay.",
                 ),
         )
 

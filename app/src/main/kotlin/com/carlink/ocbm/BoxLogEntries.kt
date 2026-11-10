@@ -54,7 +54,6 @@ object BoxLogEntries {
             Ocbm.LOG_SRC_AIRPLAYD -> "airplayd"
             Ocbm.LOG_SRC_AIRPLAYD_WL -> "airplayd-wl"
             Ocbm.LOG_SRC_IAP2D -> "iap2d"
-            Ocbm.LOG_SRC_AA_BRIDGE -> "aa-bridge"
             Ocbm.LOG_SRC_RX_CONNECT -> "rx-connect"
             Ocbm.LOG_SRC_BT -> "bt"
             Ocbm.LOG_SRC_RADIO_AP_DHCP -> "radio_ap_dhcp"

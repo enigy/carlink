@@ -1,6 +1,7 @@
 package com.carlink.ocbm
 
 import com.carlink.logging.ProbeLog
+import com.carlink.ocbm.seam.SeamCrypto
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -46,7 +47,7 @@ class OcbmClientTest {
     ) = feed(Framing.frame(channel, Ocbm.F_BOTH, 0, payload))
 
     /** `[CT_HELLO_ACK][ver][caps u32 LE][mode]` — enough for handleCtrl to latch helloAcked. */
-    private fun helloAck(caps: Int = Ocbm.CAP_MFI): ByteArray =
+    private fun helloAck(caps: Int = Ocbm.CAP_CONSOLE): ByteArray =
         byteArrayOf(
             Ocbm.CT_HELLO_ACK,
             Ocbm.VERSION,
@@ -518,6 +519,87 @@ class OcbmClientTest {
         val c = newClient(t)
         val silent = pushing { c.pushFile("/tmp/x", ByteArray(10), timeoutMs = 200) }
         assertTrue(failure(silent()).contains("FILE_OPEN: no answer"))
+    }
+
+    /** Run a MGMT request on its own thread, as the session does (it blocks on the box's answer). */
+    private fun asking(ask: () -> Int?): () -> Int? {
+        var result: Int? = null
+        val t = thread { result = ask() }
+        return {
+            t.join(3000)
+            result
+        }
+    }
+
+    private fun mgmtAck(
+        verb: Byte,
+        status: Int,
+    ) = byteArrayOf(Ocbm.MGMT_ACK, verb, status.toByte())
+
+    /** A video seam key message, as the box sends one at each seam connect: `[u32 BE len][SEAV][0x00][key 32][scid 8]`. */
+    private fun videoKey(): ByteArray {
+        val body = byteArrayOf(SeamCrypto.MARK_KEY.toByte()) + ByteArray(32) { it.toByte() } + ByteArray(8)
+        val len = 4 + body.size
+        return byteArrayOf((len ushr 24).toByte(), (len ushr 16).toByte(), (len ushr 8).toByte(), len.toByte()) + SeamCrypto.SEAM_MAGIC + body
+    }
+
+    @Test
+    fun `the keyed edge comes once per generation, and once more after each reannounce`() {
+        // 9 Nov bench (eb41fcab): after a phone switch inside one generation nothing raised it, so the second phone
+        // never reached the pairing screen as connected. The manager re-arms it when a phone's session ends.
+        val t = FakeTransport()
+        val c = subscribedClient(t)
+        var keyed = 0
+        c.onSessionKeyed = { keyed++ }
+        t.deliver(Ocbm.CH_VIDEO, videoKey())
+        t.deliver(Ocbm.CH_VIDEO, videoKey())
+        assertEquals("a re-key in one phone's session is not a new phone", 1, keyed)
+        c.reannounceKeyed()
+        t.deliver(Ocbm.CH_VIDEO, videoKey())
+        assertEquals("the next phone's first key is its own edge", 2, keyed)
+        t.deliver(Ocbm.CH_VIDEO, videoKey())
+        assertEquals(2, keyed)
+    }
+
+    @Test
+    fun `a late answer to a request that gave up is not the next request's answer`() {
+        // 9 Nov bench: a close and an open back to back. Both are MGMT_PAIR_WINDOW, and an ACK names only its verb.
+        val t = FakeTransport()
+        val c = newClient(t)
+        val close = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(0, 0), timeoutMs = 150) }
+        assertNotNull(t.awaitFrameOn(Ocbm.CH_MGMT))
+        assertNull("no answer in time", close())
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 0)) // the close's answer, late
+        val open = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(120, 0), timeoutMs = 2000) }
+        assertArrayEquals(byteArrayOf(Ocbm.MGMT_PAIR_WINDOW, 120, 0), t.awaitFrameOn(Ocbm.CH_MGMT))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 1))
+        assertEquals("its own answer, not the close's", 1, open())
+    }
+
+    @Test
+    fun `a reply for another verb is not taken as the answer`() {
+        val t = FakeTransport()
+        val c = newClient(t)
+        val open = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(120, 0), timeoutMs = 2000) }
+        assertNotNull(t.awaitFrameOn(Ocbm.CH_MGMT))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_SET_POLICY, 1))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 0))
+        assertEquals(0, open())
+    }
+
+    @Test
+    fun `requests go one at a time, each with its own answer`() {
+        val t = FakeTransport()
+        val c = newClient(t)
+        val first = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(0, 0), timeoutMs = 2000) }
+        assertArrayEquals(byteArrayOf(Ocbm.MGMT_PAIR_WINDOW, 0, 0), t.awaitFrameOn(Ocbm.CH_MGMT))
+        val second = asking { c.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, byteArrayOf(120, 0), timeoutMs = 2000) }
+        assertNull("the second waits for the line", t.awaitFrameOn(Ocbm.CH_MGMT, ms = 200))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 0))
+        assertEquals(0, first())
+        assertArrayEquals(byteArrayOf(Ocbm.MGMT_PAIR_WINDOW, 120, 0), t.awaitFrameOn(Ocbm.CH_MGMT))
+        t.deliver(Ocbm.CH_MGMT, mgmtAck(Ocbm.MGMT_PAIR_WINDOW, 1))
+        assertEquals(1, second())
     }
 
     @Test
