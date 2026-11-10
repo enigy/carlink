@@ -46,7 +46,16 @@ object BridgePackage {
      * carlink_bridge APK committed as app/carlink_bridge.apk, its size and SHA-256 (as the README gives them), and its
      * link on that Carlink release, which attaches the same file because the bridge source is unchanged since.
      */
-    val PINNED: PinnedBridge? = null
+    val PINNED: PinnedBridge? =
+        PinnedBridge(
+            // Signed with the upload key by Release run 42874675260 (bridge-self-update 9769be5c, 10 Nov); v224 attaches
+            // this file, app/carlink_bridge.apk, as is.
+            versionName = "1.0.9",
+            versionCode = 10,
+            url = "https://github.com/enigy/carlink/releases/download/v224/carlink_bridge-1.0.9.apk",
+            sizeBytes = 2_356_746L,
+            sha256 = "3b9bbd18466da0d3b894a9914e55d7606b8fb7bf272f6680061b108122a4c6ee",
+        )
 
     /** A debug build's bench pin: `bridge-pin.json` in the app's external files folder (`adb push`), the same keys as [PinnedBridge.json]. */
     private const val BENCH_FILE = "bridge-pin.json"
