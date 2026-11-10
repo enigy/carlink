@@ -2,6 +2,7 @@ package com.enigy.carlink2.bridge;
 
 import android.os.ParcelFileDescriptor;
 import com.enigy.carlink2.bridge.IBridgeAccessListener;
+import com.enigy.carlink2.bridge.IBridgeUpdateListener;
 import com.enigy.carlink2.bridge.IUsbBridgeSession;
 
 /**
@@ -20,7 +21,8 @@ import com.enigy.carlink2.bridge.IUsbBridgeSession;
  * Methods other than getApiVersion() throw SecurityException for callers that are not the
  * display app, and so do a session handle's. From API 6 the owner may let apps it approves use
  * openSession(), getStatus(), hasPermission() and requestPermission() while Carlink hands the
- * adapter over (BridgeContract.ACCESS_API_VERSION); the access calls stay the display app's alone. Add new methods at the END only — transaction
+ * adapter over (BridgeContract.ACCESS_API_VERSION); the access calls stay the display app's alone, and so do API 7's
+ * update calls (BridgeContract.UPDATE_API_VERSION). Add new methods at the END only — transaction
  * codes follow declaration order, and the two apps are updated independently.
  */
 interface ICarlinkBridge {
@@ -139,4 +141,16 @@ interface ICarlinkBridge {
 
     /** API 6. Tell listener of every change to getAccess(); null forgets every listener. Dead ones are dropped. */
     void setAccessListener(IBridgeAccessListener listener);
+
+    /**
+     * API 7. Download, check and install the bridge's own update, which the display app pins. json is
+     * {"version","versionCode","url","size","sha256"}; url must be a GitHub release download of enigy/carlink
+     * (BridgeContract.UPDATE_URL_PREFIX). Returns at once: listener hears each step and the outcome, and a call while
+     * one runs gets onResult(false, BridgeContract.UPDATE_BUSY). The bridge checks the size, the SHA-256, the package
+     * name and a version code above its own before it installs.
+     */
+    void installUpdate(String json, IBridgeUpdateListener listener);
+
+    /** API 7. Whether the owner lets the bridge install apps (PackageManager.canRequestPackageInstalls()). */
+    boolean canInstallPackages();
 }

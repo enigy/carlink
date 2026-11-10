@@ -69,6 +69,11 @@
          authority it hosts (NavigationStateManager.initialize). -->
     <queries>
         <package android:name="android.car.usb.handler" />
+        <!-- Bridge 1.0.9's update: the head unit's "install unknown apps" page for the bridge (BridgeUpdateHub). -->
+        <intent>
+            <action android:name="android.settings.MANAGE_UNKNOWN_APP_SOURCES" />
+            <data android:scheme="package" />
+        </intent>
         <provider android:authorities="com.google.android.apps.automotive.templates.host.ClusterIconContentProvider" />
         <!-- The built-in Files app, opened from the bridge setup panel to install the bridge from a
              USB drive (util/FilesLauncher, Carlink2 [210]). -->

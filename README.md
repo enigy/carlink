@@ -194,7 +194,7 @@ The adapter runs lvalen91's OCBM userspace, installed and recovered per his docu
 | Module | Role |
 | --- | --- |
 | `:app` | Display app (`com.enigy.carlink3`). Decodes HEVC CarPlay over OCBM, renders, handles touch/audio/mic, drives the AAOS media card and the cluster/HUD turn-by-turn via the Templates Host. Play-shippable. |
-| `:bridge` | Sideloaded USB bridge, package `android.car.usb.handler`. Holds the adapter's USB permission silently on every attach, relays the raw OCBM bulk stream to the app over a socket, and hosts the cluster icon `ContentProvider`. |
+| `:bridge` | Sideloaded USB bridge, package `android.car.usb.handler`. Holds the adapter's USB permission silently on every attach, relays the raw OCBM bulk stream to the app over a socket, and hosts the cluster icon `ContentProvider`. From 1.0.9 it updates itself when you tap Update in Settings › Adapter and about, parked: the one thing it reaches the internet for is fetching the bridge APK Carlink pins from Carlink's GitHub release, which it checks against the pinned size and SHA-256 before installing. Carlink itself never downloads or installs an APK. |
 | `:bridge-api` | AIDL contract between the two. |
 
 Removed from OCBM: `:projection` (Raspberry Pi target), `:car-system-stubs` (system APIs a third-party app cannot hold) and `:usbhandler` (OCBM's untested proof of the permission grant, superseded by `:bridge`).

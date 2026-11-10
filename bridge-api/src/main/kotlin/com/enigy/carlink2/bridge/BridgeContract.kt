@@ -18,7 +18,7 @@ package com.enigy.carlink2.bridge
  */
 object BridgeContract {
     /** Bump when ICarlinkBridge gains methods or changes semantics; the display app checks [MIN_API_VERSION]. */
-    const val API_VERSION = 6
+    const val API_VERSION = 7
 
     /**
      * Carlink3: from this API the bridge relays the adapter's bulk stream RAW — chunks as read from
@@ -55,6 +55,38 @@ object BridgeContract {
      * only ([ADAPTER_IDS]). The access calls (getAccess … setAccessListener) are Carlink's alone.
      */
     const val ACCESS_API_VERSION = 6
+
+    /**
+     * From this API (bridge 1.0.9) the bridge updates itself when Carlink asks (ICarlinkBridge.installUpdate, the owner's
+     * tap in Settings, parked): it downloads the APK Carlink pins from [UPDATE_URL_PREFIX], checks its size, SHA-256,
+     * package name and version code, and installs it with PackageInstaller. Carlink never touches the APK. The update
+     * calls are Carlink's alone.
+     */
+    const val UPDATE_API_VERSION = 7
+
+    /** Where an update may come from: a GitHub release download of enigy/carlink. */
+    const val UPDATE_URL_PREFIX = "https://github.com/enigy/carlink/releases/download/"
+
+    /**
+     * The hosts GitHub redirects a release download to: release-assets.githubusercontent.com since 2025, and
+     * objects.githubusercontent.com before. An update follows a redirect only to one of these, over HTTPS.
+     */
+    val UPDATE_REDIRECT_HOSTS: Set<String> = setOf("release-assets.githubusercontent.com", "objects.githubusercontent.com")
+
+    // installUpdate's request, a JSON object: the version Carlink pins.
+    const val UPDATE_VERSION = "version"
+    const val UPDATE_VERSION_CODE = "versionCode"
+    const val UPDATE_URL = "url"
+    const val UPDATE_SIZE = "size"
+    const val UPDATE_SHA256 = "sha256"
+
+    // IBridgeUpdateListener.onState steps.
+    const val UPDATE_DOWNLOADING = "downloading"
+    const val UPDATE_CHECKING = "checking"
+    const val UPDATE_INSTALLING = "installing"
+
+    /** IBridgeUpdateListener.onResult's message for a call while another update runs. */
+    const val UPDATE_BUSY = "busy"
 
     /** USB vendor:product ids of the devices an approved app may open: Carlinkit adapters. */
     val ADAPTER_IDS: Set<Pair<Int, Int>> = setOf(0x1314 to 0x2d00, 0x1314 to 0x1520, 0x1314 to 0x1521)
