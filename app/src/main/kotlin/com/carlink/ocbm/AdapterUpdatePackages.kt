@@ -35,18 +35,18 @@ object AdapterUpdates {
      */
     val PINNED: PinnedPackage? =
         PinnedPackage(
-            tag = "v1.0.5",
-            url = "https://github.com/enigy/ocbm/releases/download/v1.0.5/ocbm-update-1.0.5.tgz",
-            sizeBytes = 1_882_796L,
-            sha256 = "02bb8bf1db9875a10422bd3016026f0f6d59277e47de9c1792088ed99b8e62ae",
-            // "1.0.5 ocbm dcb95cc" from 1.0.1: btd, carplayd, iap2d, iap_role_switch, ocbmd and 10 scripts, built from dcb95cc;
-            // retires /usr/sbin/aa-bridge. ROOM trial=no: a trial adapter finishes its install first (benched 9 Nov; Scott, 10 Nov).
+            tag = "v1.0.6",
+            url = "https://github.com/enigy/ocbm/releases/download/v1.0.6/ocbm-update-1.0.6.tgz",
+            sizeBytes = 1_886_127L,
+            sha256 = "fc91fd7f9e7023c1ebffcb913e428257a5bed2789435b64daa7c4864f66d8cbd",
+            // "1.0.6 ocbm f2bf538" from 1.0.1: btd, carplayd, iap2d, iap_role_switch, ocbmd and 10 scripts, built from f2bf538.
+            // ROOM trial=no: a trial adapter finishes its install first (published 10 Nov; the code benched 10 Nov on b84a58b).
             pkg =
                 UpdatePackage(
-                    version = "1.0.5",
+                    version = "1.0.6",
                     fromMin = "1.0.1",
-                    needKb = 2855,
-                    notes = "CarPlay only: Android Auto and the Bluetooth headset profiles leave the adapter; calls go through CarPlay.",
+                    needKb = 2861,
+                    notes = "Video and the phone come back when the link returns within seconds, as after the USB bridge updates itself.",
                 ),
         )
 
