@@ -34,6 +34,7 @@ class BridgeUpdateTest {
     private val abandoned = mutableListOf<Int>()
     private var archive: UpdateParts.Archive? = UpdateParts.Archive(context.packageName, NEW_CODE)
     private var allowed = true
+    private var nextSession = SESSION
     private val defaultParts = BridgeUpdates.parts
 
     private val parts =
@@ -44,9 +45,14 @@ class BridgeUpdateTest {
             },
             installer =
                 object : UpdateParts.Installer {
-                    override fun install(file: File): Int {
+                    override fun install(
+                        file: File,
+                        onSession: (Int) -> Unit,
+                    ): Int {
+                        val id = nextSession++
+                        onSession(id)
                         installs += file.readBytes()
-                        return SESSION
+                        return id
                     }
 
                     override fun abandon(sessionId: Int) {
@@ -161,10 +167,16 @@ class BridgeUpdateTest {
         assertNull("the first carries on", first.result)
 
         updater.onStatus(status(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, Intent("confirm")))
-        clock += BridgeUpdater.CONFIRM_WAIT_MS
+        clock += BridgeContract.UPDATE_CONFIRM_WAIT_MS
+        // The system aborts the dropped session, and that can land while the new update downloads: not the new one's.
+        responses[ASSET_URL] = {
+            updater.onStatus(status(PackageInstaller.STATUS_FAILURE_ABORTED, session = SESSION))
+            UpdateParts.Response(200, null, ByteArrayInputStream(apk))
+        }
         val third = Heard()
         updater.start(request(), third)
         assertFalse(first.result!!.first)
+        assertNull("the dropped session's abort didn't end the new update", third.result)
         assertEquals("the unanswered session is abandoned", listOf(SESSION), abandoned)
         assertEquals(BridgeContract.UPDATE_INSTALLING, third.states.last())
     }
@@ -183,13 +195,35 @@ class BridgeUpdateTest {
 
         val failed = Heard()
         updater.start(request(), failed)
-        updater.onStatus(status(PackageInstaller.STATUS_FAILURE_CONFLICT).putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, "INSTALL_FAILED_UPDATE_INCOMPATIBLE"))
+        updater.onStatus(status(PackageInstaller.STATUS_FAILURE_CONFLICT, session = SESSION + 1).putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, "INSTALL_FAILED_UPDATE_INCOMPATIBLE"))
         assertEquals(false to "The install failed: INSTALL_FAILED_UPDATE_INCOMPATIBLE", failed.result)
 
         val other = Heard()
         updater.start(request(), other)
         updater.onStatus(status(PackageInstaller.STATUS_SUCCESS, session = SESSION + 1))
         assertNull("another session's status is not this update's", other.result)
+    }
+
+    @Test
+    fun `no status counts before the update's own session exists`() {
+        responses[PINNED_URL] = { UpdateParts.Response(302, ASSET_URL, null) }
+        responses[ASSET_URL] = {
+            updater.onStatus(status(PackageInstaller.STATUS_SUCCESS, session = 7))
+            UpdateParts.Response(200, null, ByteArrayInputStream(apk))
+        }
+        val heard = Heard()
+        updater.start(request(), heard)
+        assertNull("a status that came while downloading isn't this update's", heard.result)
+        updater.onStatus(status(PackageInstaller.STATUS_SUCCESS))
+        assertEquals(true to "Bridge 1.0.10 installed", heard.result)
+    }
+
+    @Test
+    fun `a bench bridge can force the confirm, which Android 12 and later may otherwise skip`() {
+        assertNull("before Android 12 the system always asks", UpdateParts.userAction(30, benchRequire = true))
+        assertEquals(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED, UpdateParts.userAction(31, benchRequire = false))
+        assertEquals(PackageInstaller.SessionParams.USER_ACTION_REQUIRED, UpdateParts.userAction(33, benchRequire = true))
+        assertFalse("a build forces it only when asked to", BuildConfig.BENCH_REQUIRE_USER_ACTION)
     }
 
     @Test

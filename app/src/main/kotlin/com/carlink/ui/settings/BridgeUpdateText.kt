@@ -38,7 +38,7 @@ internal object BridgeUpdateText {
             BridgeUpdateStep.Downloading -> "Downloading…"
             BridgeUpdateStep.Checking -> "Checking the download…"
             BridgeUpdateStep.Installing -> "Installing…"
-            BridgeUpdateStep.Confirming -> "Confirm the update on the screen the head unit shows."
+            BridgeUpdateStep.Confirming -> "Confirm the update on the screen the head unit shows. If it's gone, Update comes back after 10 minutes."
             BridgeUpdateStep.Restarting -> "The bridge is restarting…"
             is BridgeUpdateStep.Updated -> "Updated to bridge ${step.version}."
             is BridgeUpdateStep.Failed -> "The update didn't happen: ${step.message}"

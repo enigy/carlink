@@ -74,7 +74,10 @@ class BridgeUpdateRowsTest {
         show(BridgeUpdateOffer.SelfUpdate(pin), step = BridgeUpdateStep.Failed("The download from github.com failed"))
         compose.onNodeWithText("The update didn't happen: The download from github.com failed").assertExists()
         assertEquals("Downloading…", BridgeUpdateText.stepLine(BridgeUpdateStep.Downloading))
-        assertEquals("Confirm the update on the screen the head unit shows.", BridgeUpdateText.stepLine(BridgeUpdateStep.Confirming))
+        assertEquals(
+            "Confirm the update on the screen the head unit shows. If it's gone, Update comes back after 10 minutes.",
+            BridgeUpdateText.stepLine(BridgeUpdateStep.Confirming),
+        )
         assertEquals("Updated to bridge 1.0.9.", BridgeUpdateText.stepLine(BridgeUpdateStep.Updated("1.0.9")))
         assertNull(BridgeUpdateText.stepLine(BridgeUpdateStep.Idle))
     }

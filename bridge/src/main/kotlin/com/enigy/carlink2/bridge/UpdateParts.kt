@@ -51,9 +51,15 @@ internal class UpdateParts(
 
     /** Installs a checked APK as an update of this package; the session's status comes to [BridgeUpdater.onStatus]. */
     interface Installer {
-        /** The session's id, once the APK is written and the session committed. */
+        /**
+         * The session's id, once the APK is written and the session committed. [onSession] hears the id first, before
+         * the commit, so a status that comes at once already has its update to go to.
+         */
         @Throws(IOException::class)
-        fun install(file: File): Int
+        fun install(
+            file: File,
+            onSession: (Int) -> Unit,
+        ): Int
 
         fun abandon(sessionId: Int)
     }
@@ -74,7 +80,7 @@ internal class UpdateParts(
             val executor = Executors.newSingleThreadExecutor { Thread(it, "bridge-update").apply { isDaemon = true } }
             return UpdateParts(
                 net = ::httpsGet,
-                installer = SessionInstaller(context),
+                installer = SessionInstaller(context, BuildConfig.BENCH_REQUIRE_USER_ACTION),
                 archive = { file -> pm.getPackageArchiveInfo(file.path, 0)?.let { Archive(it.packageName, it.longVersionCode) } },
                 installedVersionCode = { pm.getPackageInfo(context.packageName, 0).longVersionCode },
                 canInstall = { pm.canRequestPackageInstalls() },
@@ -83,6 +89,22 @@ internal class UpdateParts(
                 now = System::currentTimeMillis,
             )
         }
+
+        /**
+         * The session's user-action setting on [sdk]: none before Android 12, where the system always asks; required
+         * when a debug bridge is built to force the confirm (-Pcarlink3.benchRequireUserAction=true), so the bench can
+         * test Carlink starting it; otherwise not required, and the system decides.
+         */
+        @SuppressLint("InlinedApi")
+        fun userAction(
+            sdk: Int,
+            benchRequire: Boolean,
+        ): Int? =
+            when {
+                sdk < Build.VERSION_CODES.S -> null
+                benchRequire -> PackageInstaller.SessionParams.USER_ACTION_REQUIRED
+                else -> PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED
+            }
 
         /** HTTPS only (a plain http URL is refused before this), no redirects followed, no cookies, a generic agent. */
         private fun httpsGet(url: URL): Response {
@@ -100,24 +122,30 @@ internal class UpdateParts(
 
 /**
  * The installer: a PackageInstaller session for this package, asking for no user action on API 31 and later (the
- * system decides; the bridge still handles a prompt), committed with a PendingIntent to [UpdateStatusReceiver].
+ * system decides; the bridge still handles a prompt) unless [requireUserAction], committed with a PendingIntent to
+ * [UpdateStatusReceiver].
  */
 private class SessionInstaller(
     private val context: Context,
+    private val requireUserAction: Boolean,
 ) : UpdateParts.Installer {
     private val installer get() = context.packageManager.packageInstaller
 
-    override fun install(file: File): Int {
+    override fun install(
+        file: File,
+        onSession: (Int) -> Unit,
+    ): Int {
         val params =
             PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
                 setAppPackageName(context.packageName)
                 setSize(file.length())
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                    UpdateParts.userAction(Build.VERSION.SDK_INT, requireUserAction)?.let(::setRequireUserAction)
                 }
             }
         val id = installer.createSession(params)
         try {
+            onSession(id)
             installer.openSession(id).use { session ->
                 session.openWrite("bridge.apk", 0, file.length()).use { out ->
                     file.inputStream().use { it.copyTo(out) }

@@ -15,7 +15,7 @@ import java.io.IOException
  * PackageInstaller as an update of itself. Android also refuses an update not signed with the installed bridge's key.
  *
  * One update at a time: another call gets [BridgeContract.UPDATE_BUSY], unless the running one has waited longer than
- * [CONFIRM_WAIT_MS] for the owner's confirm, which is then dropped. The file goes when the update ends, either way, and
+ * [BridgeContract.UPDATE_CONFIRM_WAIT_MS] for the owner's confirm, which is then dropped. The file goes when the update ends, either way, and
  * once the install session has its own copy. A success may never be told: the install ends this process, and Carlink
  * sees the binder die and checks the installed version.
  */
@@ -23,7 +23,7 @@ internal class BridgeUpdater(
     private val context: Context,
     private val parts: UpdateParts,
 ) {
-    /** One update: who to tell, what it installs, and its session once committed. */
+    /** One update: who to tell, what it installs, and its session once created. */
     private class Run(
         val listener: IBridgeUpdateListener,
     ) {
@@ -68,7 +68,7 @@ internal class BridgeUpdater(
         val (run, dropped) =
             synchronized(lock) {
                 val running = current
-                val unanswered = running?.waitingSince?.let { now - it >= CONFIRM_WAIT_MS } == true
+                val unanswered = running?.waitingSince?.let { now - it >= BridgeContract.UPDATE_CONFIRM_WAIT_MS } == true
                 if (running == null || unanswered) Run(listener).also { current = it } to running else null to null
             }
         if (dropped != null) {
@@ -114,14 +114,13 @@ internal class BridgeUpdater(
         tell(run.listener) { it.onState(BridgeContract.UPDATE_INSTALLING, "bridge ${request.version}") }
         val id =
             try {
-                parts.installer.install(file)
+                parts.installer.install(file) { run.sessionId = it }
             } catch (e: IOException) {
                 return finish(run, false, "The install couldn't start: ${e.message ?: e.javaClass.simpleName}")
             } finally {
                 // The session holds its own copy once written.
                 file.delete()
             }
-        run.sessionId = id
         updateLog("install session $id committed")
     }
 
@@ -129,7 +128,8 @@ internal class BridgeUpdater(
     fun onStatus(status: Intent) {
         val run = synchronized(lock) { current }
         val id = status.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
-        if (run == null || (run.sessionId != null && run.sessionId != id)) {
+        // Strict: before its session exists the run takes no status, so an abandoned session's abort can't end a new run.
+        if (run == null || run.sessionId != id) {
             updateLog("a status for session $id, which isn't the running update's")
             return
         }
@@ -192,9 +192,6 @@ internal class BridgeUpdater(
     companion object {
         private const val TAG = "Carlink2Bridge"
         private const val FILE_NAME = "bridge-update.apk"
-
-        /** A confirm unanswered this long no longer blocks a new update. */
-        const val CONFIRM_WAIT_MS = 10 * 60_000L
 
         /** The service's updater, for [UpdateStatusReceiver]; the latest one created. */
         @Volatile var active: BridgeUpdater? = null

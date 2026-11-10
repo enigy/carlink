@@ -30,6 +30,10 @@ val callerCerts = (findProperty("carlink3.callerCerts") as String?).orEmpty().tr
 // (-Pcarlink3.benchUpdatePrefix=https://...). Empty by default; a release bridge takes only enigy/carlink's GitHub releases.
 val benchUpdatePrefix = (findProperty("carlink3.benchUpdatePrefix") as String?).orEmpty().trim()
 
+// DEBUG bridges only: force the system's confirm on its own update (-Pcarlink3.benchRequireUserAction=true), so a bench
+// tests Carlink starting the confirm screen; Android 12 and later otherwise let a self-update skip it.
+val benchRequireUserAction = (findProperty("carlink3.benchRequireUserAction") as String?)?.trim() == "true"
+
 android {
     namespace = "com.enigy.carlink2.bridge"
     compileSdk = 36
@@ -44,6 +48,7 @@ android {
 
         buildConfigField("String", "CALLER_CERTS", "\"$callerCerts\"")
         buildConfigField("String", "BENCH_UPDATE_PREFIX", "\"\"")
+        buildConfigField("boolean", "BENCH_REQUIRE_USER_ACTION", "false")
     }
 
     signingConfigs {
@@ -70,6 +75,7 @@ android {
             // Debug bridges also accept debug builds of Carlink3 (see debugCallerCert).
             buildConfigField("String", "CALLER_CERTS", "\"$callerCerts,$debugCallerCert\"")
             buildConfigField("String", "BENCH_UPDATE_PREFIX", "\"$benchUpdatePrefix\"")
+            buildConfigField("boolean", "BENCH_REQUIRE_USER_ACTION", "$benchRequireUserAction")
         }
         release {
             signingConfig = signingConfigs.getByName("release")

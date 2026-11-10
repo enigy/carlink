@@ -1,8 +1,11 @@
 package com.carlink.usb
 
 import android.content.Intent
+import com.enigy.carlink2.bridge.BridgeContract
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * One bridge update, after the owner confirmed it in Settings, parked: ask the bridge ([Port.bridge]), check it may
@@ -11,7 +14,9 @@ import kotlinx.coroutines.delay
  *
  * The install replaces the bridge and ends its process, so its success may never be told: the bridge's binder dies,
  * and the run binds again and checks the installed version against the pin ([afterRestart]). A bridge that died some
- * other way comes back on its old version, and the run says so. Each step goes to [publish]; [run] returns the last.
+ * other way comes back on its old version, and the run says so. A confirm screen left unanswered (the owner went
+ * elsewhere, or a drive covered it) ends the run after [Timing.confirmWaitMs], so Update can be tapped again. Each step
+ * goes to [publish]; [run] returns the last.
  */
 internal class BridgeUpdateRun(
     private val port: Port,
@@ -67,6 +72,11 @@ internal class BridgeUpdateRun(
         val pollMs: Long = 1_000,
         /** Once the bridge answers on its old version, how long the run still waits for the new one. */
         val oldVersionGraceMs: Long = 5_000,
+        /**
+         * How long the system's confirm may go unanswered before the run ends: a little over the bridge's own wait
+         * ([BridgeContract.UPDATE_CONFIRM_WAIT_MS]), so the bridge has dropped the waiting update by the next tap.
+         */
+        val confirmWaitMs: Long = BridgeContract.UPDATE_CONFIRM_WAIT_MS + 5_000,
     )
 
     /** How the bridge's part ended: an outcome it told, or its process died. */
@@ -77,6 +87,9 @@ internal class BridgeUpdateRun(
         ) : End
 
         data object Died : End
+
+        /** The confirm screen went unanswered for [Timing.confirmWaitMs]. */
+        data object Unanswered : End
     }
 
     suspend fun run(): BridgeUpdateStep {
@@ -84,11 +97,24 @@ internal class BridgeUpdateRun(
         val bridge = port.bridge() ?: return done(BridgeUpdateStep.Failed("The USB bridge isn't responding"))
         refusal(bridge)?.let { return done(it) }
         val end = CompletableDeferred<End>()
+        val confirming = CompletableDeferred<Unit>()
         port.log("asking bridge to update to ${pin.versionName} (${pin.versionCode}) from ${pin.url}")
-        val started = bridge.onDeath { end.complete(End.Died) } && runCatching { bridge.installUpdate(pin.json(), events(end)) }.isSuccess
+        val started = bridge.onDeath { end.complete(End.Died) } && runCatching { bridge.installUpdate(pin.json(), events(end, confirming)) }.isSuccess
         if (!started) return done(BridgeUpdateStep.Failed("The USB bridge didn't take the update"))
-        return when (val ended = end.await()) {
+        val ended =
+            coroutineScope {
+                // Counted from the confirm screen, not the tap: downloading and checking take as long as they take.
+                val unanswered =
+                    launch {
+                        confirming.await()
+                        delay(timing.confirmWaitMs)
+                        end.complete(End.Unanswered)
+                    }
+                end.await().also { unanswered.cancel() }
+            }
+        return when (ended) {
             End.Died -> afterRestart()
+            End.Unanswered -> done(BridgeUpdateStep.Failed(UNANSWERED))
             is End.Told -> if (ended.ok) afterRestart() else done(BridgeUpdateStep.Failed(ended.message))
         }
     }
@@ -101,7 +127,10 @@ internal class BridgeUpdateRun(
             null -> BridgeUpdateStep.Failed("The USB bridge didn't answer")
         }
 
-    private fun events(end: CompletableDeferred<End>): Events =
+    private fun events(
+        end: CompletableDeferred<End>,
+        confirming: CompletableDeferred<Unit>,
+    ): Events =
         object : Events {
             override fun onState(
                 state: String,
@@ -114,7 +143,11 @@ internal class BridgeUpdateRun(
             override fun onUserAction(confirm: Intent) {
                 publish(BridgeUpdateStep.Confirming)
                 port.log("the system asks the owner to confirm: starting its screen")
-                if (!port.startConfirm(confirm)) end.complete(End.Told(false, "Carlink couldn't open the head unit's confirm screen"))
+                if (port.startConfirm(confirm)) {
+                    confirming.complete(Unit)
+                } else {
+                    end.complete(End.Told(false, "Carlink couldn't open the head unit's confirm screen"))
+                }
             }
 
             override fun onResult(
@@ -147,5 +180,9 @@ internal class BridgeUpdateRun(
         port.log("ended: $step")
         publish(step)
         return step
+    }
+
+    private companion object {
+        const val UNANSWERED = "The head unit's confirm screen went unanswered. Tap Update to try again."
     }
 }

@@ -2,6 +2,8 @@ package com.carlink.usb
 
 import android.content.Intent
 import com.enigy.carlink2.bridge.BridgeContract
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -98,6 +100,30 @@ class BridgeUpdateRunTest {
     }
 
     @Test
+    fun `a confirm left unanswered ends the run after the wait, so Update comes back`() {
+        bridge.script = { events -> events.onUserAction(Intent("android.content.pm.action.CONFIRM_INSTALL")) }
+        val end = runBlocking { BridgeUpdateRun(port, pin, { steps += it }, timing.copy(confirmWaitMs = 30)).run() }
+        assertTrue(end.toString(), end is BridgeUpdateStep.Failed && end.message.contains("went unanswered"))
+        assertEquals(listOf(BridgeUpdateStep.Asking, BridgeUpdateStep.Confirming, end), steps)
+        assertFalse("Update can be tapped again", end.running)
+    }
+
+    @Test
+    fun `the wait starts at the confirm screen, not at the tap`() {
+        bridge.script = { events -> events.onState(BridgeContract.UPDATE_DOWNLOADING, pin.url) }
+        val run = BridgeUpdateRun(port, pin, { steps += it }, timing.copy(confirmWaitMs = 1))
+        val end =
+            runBlocking {
+                val going = async { run.run() }
+                delay(50)
+                assertFalse("no confirm yet, so no wait ran out", going.isCompleted)
+                bridge.events?.onResult(false, "The download failed")
+                going.await()
+            }
+        assertEquals(BridgeUpdateStep.Failed("The download failed"), end)
+    }
+
+    @Test
     fun `no bridge, no update`() {
         port.answers = false
         assertEquals(BridgeUpdateStep.Failed("The USB bridge isn't responding"), run())
@@ -107,6 +133,7 @@ class BridgeUpdateRunTest {
         var mayInstall = true
         val asked = mutableListOf<String>()
         var script: (BridgeUpdateRun.Events) -> Unit = {}
+        var events: BridgeUpdateRun.Events? = null
         private var death: (() -> Unit)? = null
 
         override fun canInstallPackages(): Boolean = mayInstall
@@ -116,6 +143,7 @@ class BridgeUpdateRunTest {
             events: BridgeUpdateRun.Events,
         ) {
             asked += json
+            this.events = events
             script(events)
         }
 

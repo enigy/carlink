@@ -88,6 +88,12 @@ object BridgeContract {
     /** IBridgeUpdateListener.onResult's message for a call while another update runs. */
     const val UPDATE_BUSY = "busy"
 
+    /**
+     * How long the system's confirm screen may go unanswered (the owner left it, or a drive covered it). After it the
+     * bridge lets a new update replace the waiting one, and Carlink ends its run, so Update can be tapped again.
+     */
+    const val UPDATE_CONFIRM_WAIT_MS = 10 * 60_000L
+
     /** USB vendor:product ids of the devices an approved app may open: Carlinkit adapters. */
     val ADAPTER_IDS: Set<Pair<Int, Int>> = setOf(0x1314 to 0x2d00, 0x1314 to 0x1520, 0x1314 to 0x1521)
 
