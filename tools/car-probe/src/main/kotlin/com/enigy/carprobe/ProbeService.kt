@@ -28,6 +28,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.SystemClock
 
 /**
  * Logs through a drive what can only be seen moving: vehicle property changes (item 3), the car's GPS fixes, satellites
@@ -49,9 +50,18 @@ class ProbeService : Service() {
     private var bestAccuracy = Float.MAX_VALUE
     private var lastFix: Location? = null
     private val nmeaCounts = HashMap<String, Int>()
-    private val nmeaSamples = HashMap<String, MutableList<String>>()
+    // Each sample with its receive times beside the HAL's own timestamp: against an RMC's UTC they tell a fast
+    // clock from late fixes (the 10 Nov drive read every fix ~4.5 s old by the wall clock).
+    private val nmeaSamples = HashMap<String, MutableList<Map<String, Any>>>()
     private var lastVolumes: Map<String, String> = emptyMap()
     private var satellites = ""
+
+    // The 10 Nov drive's satellite line never changed: count the callbacks, to tell a quiet HAL from a stuck one.
+    private var gnssCallbacks = 0
+
+    // This minute's fix ages by the monotonic clock (no wall clock in it), GPS fixes only.
+    private var monoAgeMin = Long.MAX_VALUE
+    private var monoAgeMax = Long.MIN_VALUE
 
     private val propCallback =
         object : CarPropertyManager.CarPropertyEventCallback {
@@ -71,6 +81,11 @@ class ProbeService : Service() {
                 fixes++
                 if (location.hasAccuracy()) bestAccuracy = minOf(bestAccuracy, location.accuracy)
                 lastFix = location
+                if (location.provider == LocationManager.GPS_PROVIDER) {
+                    val age = monoAgeMs(location)
+                    monoAgeMin = minOf(monoAgeMin, age)
+                    monoAgeMax = maxOf(monoAgeMax, age)
+                }
                 // The first ten fixes in full, then the minute summary.
                 if (fixes <= FULL_FIXES) logFix("fix", location)
             }
@@ -90,6 +105,7 @@ class ProbeService : Service() {
     private val gnssCallback =
         object : GnssStatus.Callback() {
             override fun onSatelliteStatusChanged(status: GnssStatus) {
+                gnssCallbacks++
                 var used = 0
                 var cn0 = 0f
                 val constellations = HashMap<Int, Int>()
@@ -104,11 +120,13 @@ class ProbeService : Service() {
         }
 
     private val nmeaListener =
-        OnNmeaMessageListener { message, _ ->
+        OnNmeaMessageListener { message, timestamp ->
             val type = message.substringBefore(',').trim()
             nmeaCounts.merge(type, 1, Int::plus)
             val samples = nmeaSamples.getOrPut(type) { ArrayList() }
-            if (samples.size < NMEA_SAMPLES) samples += message.trim()
+            if (samples.size < NMEA_SAMPLES) {
+                samples += mapOf("s" to message.trim(), "rxWallMs" to System.currentTimeMillis(), "rxMonoMs" to SystemClock.elapsedRealtime(), "halTsMs" to timestamp)
+            }
         }
 
     private val uxListener =
@@ -256,6 +274,7 @@ class ProbeService : Service() {
             "bearing" to (if (f.hasBearing()) f.bearing else null),
             "altitudeM" to (if (f.hasAltitude()) f.altitude else null),
             "ageMs" to (System.currentTimeMillis() - f.time),
+            "monoAgeMs" to monoAgeMs(f),
         )
     }
 
@@ -279,6 +298,9 @@ class ProbeService : Service() {
             "fixes" to fixes,
             "bestAccuracyM" to (if (bestAccuracy == Float.MAX_VALUE) null else bestAccuracy),
             "lastFixAgeMs" to lastFix?.let { System.currentTimeMillis() - it.time },
+            "lastFixMonoAgeMs" to lastFix?.let { monoAgeMs(it) },
+            "gpsMonoAgeMs" to (if (monoAgeMin == Long.MAX_VALUE) null else listOf(monoAgeMin, monoAgeMax)),
+            "gnssStatusCallbacks" to gnssCallbacks,
             "lastSpeedMps" to lastFix?.takeIf { it.hasSpeed() }?.speed,
             "satellites" to satellites,
             "nmea" to nmeaCounts.toMap(),
@@ -291,7 +313,13 @@ class ProbeService : Service() {
         nmeaCounts.clear()
         fixes = 0
         bestAccuracy = Float.MAX_VALUE
+        monoAgeMin = Long.MAX_VALUE
+        monoAgeMax = Long.MIN_VALUE
+        gnssCallbacks = 0
     }
+
+    /** How old [f] is by the monotonic clock, which no wall-clock setting moves. */
+    private fun monoAgeMs(f: Location): Long = (SystemClock.elapsedRealtimeNanos() - f.elapsedRealtimeNanos) / 1_000_000
 
     override fun onDestroy() {
         handler.post {
