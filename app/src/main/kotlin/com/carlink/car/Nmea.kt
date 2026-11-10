@@ -108,6 +108,32 @@ object Nmea {
 
     fun checksum(body: String): String = String.format(Locale.US, "%02X", body.fold(0) { acc, c -> acc xor c.code } and 0xFF)
 
+    /**
+     * The longest sentence the adapter takes, `$` to the checksum (OCBM `location::MAX_SENTENCE`). NMEA-0183 stops at
+     * 80, but the truck's own `$PASCD` runs to 93 with its six speed samples (10 Nov).
+     */
+    const val MAX_SENTENCE = 255
+
+    /**
+     * The name of a sentence the head unit's GNSS wrote, or null unless it is one the adapter would take: printable
+     * ASCII, `$`, a five-letter name, a comma, a checksum that holds, at most [MAX_SENTENCE]. As OCBM's
+     * `location::sentence_name`, so nothing is sent that the box would only drop. A trailing CR LF is allowed.
+     */
+    fun nameOf(sentence: String): String? {
+        val s = sentence.trimEnd('\r', '\n')
+        if (s.length > MAX_SENTENCE || !s.startsWith('$') || s.any { it.code !in PRINTABLE }) return null
+        val star = s.lastIndexOf('*')
+        if (star < 0 || s.length - star != CHECKSUM_FIELD) return null
+        val body = s.substring(1, star)
+        if (!s.substring(star + 1).equals(checksum(body), ignoreCase = true)) return null
+        val name = body.substringBefore(',')
+        return name.takeIf { it.length == NAME_LENGTH && body.length > NAME_LENGTH }
+    }
+
+    private val PRINTABLE = 0x20..0x7e
+    private const val CHECKSUM_FIELD = 3 // "*" and two hex digits
+    private const val NAME_LENGTH = 5
+
     /** `hhmmss.ss`, UTC. */
     private fun time(utcMs: Long): String {
         val t = Instant.ofEpochMilli(utcMs).atOffset(ZoneOffset.UTC)

@@ -1,6 +1,7 @@
 package com.carlink.car
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Locale
@@ -64,16 +65,33 @@ class NmeaTest {
     }
 
     @Test
-    fun `only the sentences asked for, in Apple's order, each short enough for the box`() {
+    fun `only the sentences asked for, in Apple's order, each inside NMEA's own limit`() {
         assertEquals(listOf(Nmea.gga(fix), Nmea.rmc(fix)), Nmea.sentences(fix, listOf("GPRMC", "GPGSV", "GPGGA")))
         assertEquals(listOf(Nmea.rmc(fix)), Nmea.sentences(fix, setOf("GPRMC")))
         assertEquals(emptyList<String>(), Nmea.sentences(fix, setOf("PASCD")))
         val longest = fix.copy(latitude = -89.9999, longitude = -179.9999, satellites = 99, accuracyM = 999f, mslAltitudeM = -9999.9, speedMps = 999f)
-        for (s in Nmea.sentences(longest, Nmea.BUILT)) assertTrue("${s.length}: $s", s.length <= BOX_MAX_SENTENCE)
+        for (s in Nmea.sentences(longest, Nmea.BUILT)) assertTrue("${s.length}: $s", s.length <= NMEA_MAX_SENTENCE)
+    }
+
+    @Test
+    fun `the head unit's own sentences are named when the box would take them`() {
+        // The truck's, from the 10 Nov probe drive: its PASCD runs past NMEA's 80 with six speed samples.
+        val pascd = "\$PASCD,68536.594,C,D,0,6,0.10,7.839,0.20,7.956,0.30,8.034,0.40,8.129,0.50,8.294,0.60,8.381*47"
+        assertEquals(93, pascd.length)
+        assertEquals("PASCD", Nmea.nameOf(pascd))
+        // A made-up RMC in the head unit's form: six-decimal minutes, four-decimal speed and course, CR LF.
+        assertEquals("GPRMC", Nmea.nameOf("\$GPRMC,000000.00,A,3400.000000,S,15112.558000,W,0.0000,0.0000,010170,,,A*5F\r\n"))
+        assertEquals("GPGGA", Nmea.nameOf(Nmea.gga(fix)))
+        assertNull("a checksum that doesn't hold", Nmea.nameOf(pascd.replace("*47", "*48")))
+        assertNull("no \$", Nmea.nameOf(pascd.removePrefix("\$")))
+        assertNull("one checksum digit", Nmea.nameOf(pascd.dropLast(1)))
+        assertNull("longer than the box takes", Nmea.nameOf(Nmea.sentence("PASCD," + "0.10,7.839,".repeat(30))))
+        assertNull("not printable", Nmea.nameOf(Nmea.sentence("PASCD,\u0001")))
+        assertNull("a four-letter name", Nmea.nameOf(Nmea.sentence("PASC,1")))
     }
 
     private companion object {
-        /** ocbm iap2-core `location::MAX_SENTENCE`: longer is dropped as malformed. */
-        const val BOX_MAX_SENTENCE = 80
+        /** NMEA-0183's own limit. What Carlink builds stays inside it; the box takes up to [Nmea.MAX_SENTENCE]. */
+        const val NMEA_MAX_SENTENCE = 80
     }
 }

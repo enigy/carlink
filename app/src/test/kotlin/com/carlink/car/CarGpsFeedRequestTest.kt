@@ -16,6 +16,20 @@ class CarGpsFeedRequestTest {
     }
 
     @Test
+    fun `Carlink builds only what the head unit hasn't sent lately, and never PASCD`() {
+        val wanted = listOf("GPGGA", "GPRMC", "PASCD")
+        assertEquals("the emulator writes none", listOf("GPGGA", "GPRMC"), CarGpsFeed.toBuild(wanted, emptyMap(), 10_000L))
+        val heard = mapOf("GPGGA" to 9_000L, "PASCD" to 9_500L)
+        assertEquals("the head unit's own GGA stands", listOf("GPRMC"), CarGpsFeed.toBuild(wanted, heard, 10_000L))
+        assertEquals(
+            "until it stops coming",
+            listOf("GPGGA", "GPRMC"),
+            CarGpsFeed.toBuild(wanted, heard, 9_000L + CarGpsFeed.NATIVE_FRESH_MS + 1),
+        )
+        assertEquals(emptyList<String>(), CarGpsFeed.toBuild(listOf("PASCD"), emptyMap(), 0L))
+    }
+
+    @Test
     fun `a stop is a stop, and anything else isn't a request`() {
         assertEquals(CarGpsFeed.Request(false, emptyList(), emptyMap()), CarGpsFeed.Request.of(JSONObject("""{"kind":"location","state":"stop"}""")))
         assertNull(CarGpsFeed.Request.of(JSONObject("""{"kind":"location","state":"pause"}""")))
