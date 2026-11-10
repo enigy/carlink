@@ -25,6 +25,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
@@ -115,6 +116,9 @@ class MainActivity : ComponentActivity() {
     // Nullable to prevent UninitializedPropertyAccessException if Activity
     // is destroyed before initialization completes (e.g., low memory kill)
     private var carlinkManager: CarlinkManager? = null
+
+    /** Holds [carlinkManager] through a rebuild for a configuration change, so the session goes on ([SessionKeeper]). */
+    private val keeper: SessionKeeper by viewModels()
 
     private val displayPower =
         DisplayPowerWatcher(this, onOff = { carlinkManager?.onDisplayOff(it) }, onOn = { carlinkManager?.onDisplayOn(it) })
@@ -290,8 +294,11 @@ class MainActivity : ComponentActivity() {
         displayModeStore = DisplayModeStore(this)
         displayMode = displayModeStore.get()
         layoutStore = LayoutStore.get(this)
-        appliedDisplayMode = displayMode
+        // A rebuild for a configuration change keeps the session ([SessionKeeper]) and the mode its manager was
+        // built with; a mode chosen meanwhile still waits for that session's end.
+        appliedDisplayMode = keeper.manager?.let { keeper.displayMode } ?: displayMode
         applyDisplayMode()
+        adoptKeptSession()
 
         // Defer CarlinkManager creation to the next main-looper tick so the decorView is
         // attached before DisplayProfile.detect() reads insets; before attachment
@@ -305,7 +312,8 @@ class MainActivity : ComponentActivity() {
         // the loading overlay and swaps in as soon as the manager is ready.
         window.decorView.post {
             if (!isDestroyed && !isFinishing) {
-                initializeCarlinkManager()
+                // A kept session is checked against the new window rather than rebuilt.
+                if (carlinkManager == null) initializeCarlinkManager() else rebuildIfContentAreaMoved()
             }
         }
 
@@ -446,11 +454,10 @@ class MainActivity : ComponentActivity() {
         unregisterUsbDetachReceiver()
         displayPower.unregister()
 
-        // Release the CarlinkManager (it detaches its transport callback from the
-        // MediaSession but does NOT release it — see CarlinkManager.release KDoc).
-        // The MediaSession itself is owned by CarlinkMediaBrowserService; it releases
-        // on its own onDestroy. Just drop the local reference here.
-        carlinkManager?.release()
+        // A rebuild for a configuration change keeps the session for the new activity ([SessionKeeper]); any other
+        // end releases the CarlinkManager (it detaches its transport callback from the MediaSession but does NOT
+        // release it — see CarlinkManager.release KDoc; the MediaSession is CarlinkMediaBrowserService's).
+        keepOrReleaseSession()
         mediaSessionManager = null
         // VehicleData touches android.car, which only a head unit has.
         if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) VehicleData.stop()
@@ -534,11 +541,52 @@ class MainActivity : ComponentActivity() {
         // Adapter audio mode (hardcoded false) — acquire the app-scope MediaSession singleton.
         applyAudioTransferModeToMediaSession(false)
 
-        carlinkManager =
-            CarlinkManager(this, config, mediaSessionManager, profile, appliedDisplayMode).also {
+        // On the application context: the manager can outlive this activity ([SessionKeeper]), so nothing it binds
+        // or registers (the car service, the call notification's receiver) may hang on the activity.
+        val manager =
+            CarlinkManager(applicationContext, config, mediaSessionManager, profile, appliedDisplayMode).also {
                 it.addBoxStatusListener(displayModeApplier)
             }
-        carlinkManagerState.value = carlinkManager
+        carlinkManager = manager
+        keeper.manager = manager
+        keeper.profile = profile
+        keeper.layout = appliedLayout
+        keeper.displayMode = appliedDisplayMode
+        carlinkManagerState.value = manager
+    }
+
+    /**
+     * After a rebuild for a configuration change: log what changed ([ConfigChanges]), and take over the session the
+     * outgoing activity kept ([SessionKeeper]) instead of building a new one, which would end it. The content area
+     * is checked against the new window once it is attached ([rebuildIfContentAreaMoved]).
+     */
+    private fun adoptKeptSession() {
+        keeper.lastConfig?.let { before ->
+            keeper.lastConfig = null
+            val declared = runCatching { packageManager.getActivityInfo(componentName, 0).configChanges }.getOrDefault(0)
+            val what = ConfigChanges.describe(before.diff(resources.configuration), declared)
+            logInfo("[REBUILD] Android rebuilt this activity: $what", tag = "MAIN")
+        }
+        val kept = keeper.manager ?: return
+        carlinkManager = kept
+        activeProfile = keeper.profile
+        appliedLayout = keeper.layout ?: layoutStore.current
+        kept.addBoxStatusListener(displayModeApplier)
+        carlinkManagerState.value = kept
+        logInfo("[REBUILD] the session goes on in the new activity (${Ocbm.pmName(kept.projectionMode)})", tag = "MAIN")
+    }
+
+    /** [onDestroy]'s half of [SessionKeeper]: keep the session through a configuration-change rebuild, else release it. */
+    private fun keepOrReleaseSession() {
+        if (!isChangingConfigurations) {
+            // Unless ComponentActivity's ON_DESTROY has already cleared the keeper (SessionKeeper.onCleared).
+            keeper.release()
+            return
+        }
+        keeper.lastConfig = Configuration(resources.configuration)
+        val m = carlinkManager ?: return
+        m.removeBoxStatusListener(displayModeApplier)
+        logInfo("[REBUILD] keeping the session (${Ocbm.pmName(m.projectionMode)}) for the new activity", tag = "MAIN")
     }
 
     /**
@@ -552,6 +600,14 @@ class MainActivity : ComponentActivity() {
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        rebuildIfContentAreaMoved()
+    }
+
+    /**
+     * Rebuild the session when the content area no longer matches the one the box was pushed: after a declared
+     * configuration change ([onConfigurationChanged]), or in the new activity after a rebuild kept the session.
+     */
+    private fun rebuildIfContentAreaMoved() {
         val before = activeProfile ?: return
         if (carlinkManager == null || pendingReinitRunnable != null) return
         val now = DisplayProfile.detect(this, appliedDisplayMode.visibleBarTypes)
@@ -739,6 +795,7 @@ class MainActivity : ComponentActivity() {
         if (oldManager != null) {
             // Clear Compose reference FIRST — stops surface callbacks into the old manager.
             carlinkManagerState.value = null
+            if (keeper.manager === oldManager) keeper.manager = null
             oldManager.release()
             carlinkManager = null
             logInfo("[REINIT] Old CarlinkManager released", tag = "MAIN")
