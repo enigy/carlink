@@ -362,6 +362,13 @@ object Ocbm {
     /** `[INPUT_TELEPHONY][buttonIndex u8]` -> uid-5 telephony HID (report then release). lib.rs:200 */
     const val INPUT_TELEPHONY: Byte = 0x08
 
+    /**
+     * `[INPUT_LOCATION][one NMEA sentence, ASCII, no CR LF]` -> the head unit's GPS for the phone (LIVI research
+     * item 4, a debug build's bench only). The box forwards it as iAP2 LocationInformation when the phone asked for
+     * that sentence type, and drops it otherwise. lib.rs:420
+     */
+    const val INPUT_LOCATION: Byte = 0x09
+
     // Touch phases — lib.rs:295-297. NOTE these differ from the legacy riddleBox MultiTouchAction
     // values (UP=0/DOWN=1/MOVE=2); the two enumerations collide numerically but mean different things.
     const val TOUCH_DOWN: Byte = 0x00

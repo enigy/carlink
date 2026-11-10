@@ -42,6 +42,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import com.carlink.car.CarGpsFeed
 import com.carlink.car.VehicleData
 import com.carlink.cluster.ClusterBindingState
 import com.carlink.cluster.ClusterNavigation
@@ -204,6 +205,16 @@ class MainActivity : ComponentActivity() {
         ) { isGranted ->
             logInfo("Vehicle speed permission ${if (isGranted) "granted" else "denied"}", tag = "MAIN")
             VehicleData.start(applicationContext)
+            requestBenchLocationPermission()
+        }
+
+    // A debug build's bench GPS for the phone ([CarGpsFeed], LIVI item 4): asked last, and only when the bench file sets
+    // `location`. A release build declares no location permission, so it never asks.
+    private val locationPermissionLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions(),
+        ) { granted ->
+            logInfo("Bench location permission: $granted", tag = "MAIN")
         }
 
     /**
@@ -813,14 +824,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** The bench GPS permission ([locationPermissionLauncher]), when a debug build's bench file wants it and it isn't granted. */
+    private fun requestBenchLocationPermission() {
+        if (!CarGpsFeed.benchWanted(this) || CarGpsFeed.permitted(this)) return
+        logInfo("Requesting the bench location permission", tag = "MAIN")
+        locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+    }
+
     /**
      * [VehicleData]'s one runtime permission, then the readings either way: the outside temperature
      * needs no prompt. Off automotive there is no car to ask.
      */
     private fun requestSpeedPermission() {
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) return
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
+            requestBenchLocationPermission()
+            return
+        }
         if (ContextCompat.checkSelfPermission(this, VehicleData.SPEED_PERMISSION) == PackageManager.PERMISSION_GRANTED) {
             VehicleData.start(applicationContext)
+            requestBenchLocationPermission()
         } else {
             logInfo("Requesting vehicle speed permission", tag = "MAIN")
             speedPermissionLauncher.launch(VehicleData.SPEED_PERMISSION)

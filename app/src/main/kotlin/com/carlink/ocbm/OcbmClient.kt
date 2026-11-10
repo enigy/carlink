@@ -763,6 +763,9 @@ class OcbmClient(
      */
     fun sendTelephony(index: Byte): Boolean = enqueue(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_TELEPHONY, index), "telephony $index")
 
+    /** One NMEA sentence of the head unit's GPS (`INPUT_LOCATION`, [com.carlink.car.CarGpsFeed]). Non-blocking, any thread. */
+    fun sendLocation(sentence: String): Boolean = enqueue(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_LOCATION) + sentence.toByteArray(Charsets.US_ASCII), "location")
+
     private val lastKeyframeReqNs =
         java.util.concurrent.atomic
             .AtomicLong(0)

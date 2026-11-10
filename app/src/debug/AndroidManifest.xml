@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds only (LIVI research item 4, 10 Nov): the head unit's GPS for the phone, a bench experiment
+  (com.carlink.car.CarGpsFeed). A release build declares no location permission, so it can neither ask for nor
+  read the GPS. Merged over src/main/AndroidManifest.xml.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+</manifest>

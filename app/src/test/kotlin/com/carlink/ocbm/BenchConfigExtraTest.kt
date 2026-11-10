@@ -24,6 +24,13 @@ class BenchConfigExtraTest {
     }
 
     @Test
+    fun `location lists the sentences Carlink builds, comma-separated on its one line`() {
+        val (kept, dropped) = BenchConfigExtra.lines("location: GPGGA,GPRMC\nlocation: [GPGGA, GPRMC]\n")
+        assertEquals(listOf("location: GPGGA,GPRMC"), kept)
+        assertEquals(listOf("location: [GPGGA, GPRMC]"), dropped)
+    }
+
+    @Test
     fun `a value that isn't a short plain token is dropped`() {
         assertEquals(emptyList<String>(), BenchConfigExtra.lines("source_version: \"9.1\" extra\ndisplay_panels: [true]\n").first)
     }

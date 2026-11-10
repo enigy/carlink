@@ -26,6 +26,7 @@ import com.carlink.callui.CallNotificationHost
 import com.carlink.callui.CallRoster
 import com.carlink.callui.CallState
 import com.carlink.car.AppFocusClaimer
+import com.carlink.car.CarGpsFeed
 import com.carlink.car.DriveStateMonitor
 import com.carlink.car.DrivingState
 import com.carlink.cluster.ClusterNavigation
@@ -739,6 +740,12 @@ class CarlinkManager(
 
     /** When this phone's session reaches STREAMING: its media once keyed, or its key when its media came first. */
     private val streamingStamp = StreamingStamp()
+
+    /**
+     * The head unit's GPS for the phone, started and stopped by the box's `{"kind":"location"}` records (LIVI item 4, a
+     * debug build's bench only: no release build pushes `location:`, so the box never sends one). Made by the first record.
+     */
+    @Volatile private var carGps: CarGpsFeed? = null
 
     /** One-time [initialize] work (mic manager, MediaSession attach) has run. */
     private var initializedOnce = false
@@ -1749,6 +1756,7 @@ class CarlinkManager(
         helloReplayJob?.cancel()
         helloReplay.reset()
         streamingStamp.reset()
+        carGps?.stop("Carlink stopped")
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
@@ -2351,6 +2359,7 @@ class CarlinkManager(
      */
     private fun phoneSessionEnded() {
         phoneSetup.onPhoneLeft()
+        carGps?.stop("the phone's session ended")
         clearCachedMediaMetadata()
         client?.reannounceKeyed()
         streamingStamp.reset()
@@ -3857,6 +3866,20 @@ class CarlinkManager(
         }
     }
 
+    /** One META_JSON record, by its `kind`. On the OCBM read thread: hands off to the main thread. */
+    private fun onMetadataJson(obj: JSONObject) {
+        when (obj.optString("kind")) {
+            "nowPlaying" -> scope.launch { processNowPlaying(obj) }
+            "callState" -> CallState.fromJson(obj)?.let { cs -> scope.launch { onCallState(cs) } }
+            // 0 = no route. Claiming NAVIGATION app focus is the 3P way to tell AAOS the
+            // phone is now the navigator; a native maps app mid-route is told it lost it.
+            // Carlink: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
+            "routeGuidance", "maneuver", "laneGuidance" -> onNavigationJson(obj)
+            "location" -> scope.launch { (carGps ?: CarGpsFeed(context) { s -> client?.sendLocation(s) ?: false }.also { carGps = it }).onRecord(obj) }
+            else -> Unit
+        }
+    }
+
     private fun onMetadata(
         marker: Int,
         payload: ByteArray,
@@ -3864,15 +3887,7 @@ class CarlinkManager(
         when (marker) {
             Ocbm.META_JSON -> {
                 val obj = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull() ?: return
-                when (obj.optString("kind")) {
-                    "nowPlaying" -> scope.launch { processNowPlaying(obj) }
-                    "callState" -> CallState.fromJson(obj)?.let { cs -> scope.launch { onCallState(cs) } }
-                    // 0 = no route. Claiming NAVIGATION app focus is the 3P way to tell AAOS the
-                    // phone is now the navigator; a native maps app mid-route is told it lost it.
-                    // Carlink: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
-                    "routeGuidance", "maneuver", "laneGuidance" -> onNavigationJson(obj)
-                    else -> Unit
-                }
+                onMetadataJson(obj)
             }
             Ocbm.META_ARTWORK -> {
                 if (payload.size < 2) return

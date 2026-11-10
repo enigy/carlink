@@ -1,7 +1,7 @@
 # OCBM protocol table — reference copy
 
 `ocbm-proto.lib.rs` is a byte-identical copy of `crates/ocbm-proto/src/lib.rs` from
-enigy/ocbm at commit `dcb95cc` (branch `cleanup-carplay-only`, 2026-11-09: OCBM 1.0.5, CarPlay-only; the retired numbers are a comment table in it). It is **not compiled** here; it is the
+enigy/ocbm at commit `5ffd015` (branch `livi-research`, 2026-11-10: OCBM main `3cf6934` plus `INPUT_LOCATION` 0x09 for the car GPS experiment; the retired numbers are a comment table in it). It is **not compiled** here; it is the
 canonical constant table that `tools/proto_check.py` compares the Kotlin client
 (`app/src/main/kotlin/com/carlink/ocbm/OcbmProto.kt`) against. OCBM's own checker only looks at
 clients inside its repo, so a separate repo needs its own copy of both.
