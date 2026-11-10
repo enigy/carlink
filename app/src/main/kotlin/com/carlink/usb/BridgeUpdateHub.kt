@@ -61,11 +61,13 @@ object BridgeUpdateHub {
         }
     }
 
-    /** The head unit's "install unknown apps" page for the bridge, or null where there is none. */
-    fun allowInstallsIntent(context: Context): Intent? =
-        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${BridgeContract.BRIDGE_PACKAGE}"))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            .takeIf { it.resolveActivity(context.packageManager) != null }
+    /** The head unit's "install unknown apps" page for the bridge, or null where there is none ([InstallAppsPage]). */
+    fun allowInstallsIntent(context: Context): Intent? {
+        val intent =
+            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${BridgeContract.BRIDGE_PACKAGE}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return intent.takeIf { InstallAppsPage.isReal(it.resolveActivity(context.packageManager)?.packageName) }
+    }
 
     /** Open [allowInstallsIntent]; false when it couldn't be opened. */
     fun openAllowInstalls(context: Context): Boolean {
@@ -143,4 +145,16 @@ object BridgeUpdateHub {
                 false
             }
     }
+}
+
+/** Who answers the bridge's "install unknown apps" page, and whether that can really let it install apps. */
+internal object InstallAppsPage {
+    /**
+     * Android Automotive's placeholder for settings a car doesn't offer: it answers with "not supported on this device".
+     * Stock AAOS 13 sends the page here (the Mac's emulator, 10 Nov), so an Allow that opened it would be a dead end.
+     */
+    const val AAOS_STUBS = "com.android.car.frameworkpackagestubs"
+
+    /** Something answers, and it isn't the placeholder. */
+    fun isReal(packageName: String?): Boolean = packageName != null && packageName != AAOS_STUBS
 }

@@ -37,11 +37,12 @@ class BridgeUpdateRowsTest {
         offer: BridgeUpdateOffer,
         step: BridgeUpdateStep = BridgeUpdateStep.Idle,
         driving: Boolean = false,
+        onAllowInstalls: (() -> Unit)? = null,
     ) {
         compose.setContent {
             MaterialTheme {
                 Column {
-                    BridgeUpdateRows(offer, step, driving, onUpdate = { updates += it }, onAllowInstalls = null, onOpenFiles = {
+                    BridgeUpdateRows(offer, step, driving, onUpdate = { updates += it }, onAllowInstalls = onAllowInstalls, onOpenFiles = {
                         filesOpened++
                         true
                     })
@@ -86,6 +87,27 @@ class BridgeUpdateRowsTest {
     fun `a bridge not allowed to install apps says where to allow it`() {
         show(BridgeUpdateOffer.SelfUpdate(pin), step = BridgeUpdateStep.NotAllowed)
         compose.onNodeWithText(BridgeUpdateText.NOT_ALLOWED_NO_PAGE).assertExists()
+    }
+
+    @Test
+    fun `with no page to allow it, the manual route is offered, worded for a head unit that won't allow it`() {
+        show(BridgeUpdateOffer.SelfUpdate(pin), step = BridgeUpdateStep.NotAllowed)
+        compose.onNodeWithText(BridgeUpdateText.BLOCKED_ROW).assertExists()
+        compose.onNodeWithText("How to update").performClick()
+        compose.onNodeWithText("doesn't let the USB bridge install apps", substring = true).assertExists()
+        compose.onNodeWithText(pin.sha256, substring = true).assertExists()
+        compose.onNodeWithText("Open Files").performClick()
+        assertEquals(1, filesOpened)
+    }
+
+    @Test
+    fun `with a page to allow it, Allow is offered and the manual route isn't`() {
+        var allowed = 0
+        show(BridgeUpdateOffer.SelfUpdate(pin), step = BridgeUpdateStep.NotAllowed, onAllowInstalls = { allowed++ })
+        compose.onNodeWithText(BridgeUpdateText.NOT_ALLOWED).assertExists()
+        compose.onNodeWithText("Allow").performClick()
+        assertEquals(1, allowed)
+        compose.onNodeWithText(BridgeUpdateText.BLOCKED_ROW).assertDoesNotExist()
     }
 
     @Test

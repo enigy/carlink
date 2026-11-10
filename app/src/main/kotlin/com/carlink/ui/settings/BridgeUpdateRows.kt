@@ -22,7 +22,8 @@ import com.carlink.usb.PinnedBridge
 /**
  * Adapter and about › USB bridge, below the installed version: the bridge this Carlink pins when it is newer. For a
  * bridge of API 7 or later, Update (parked only) behind a confirm, then each step and the outcome in the row; for an
- * older one, the manual route. Nothing at all when the bridge is current.
+ * older one, or where the head unit won't let the bridge install apps, the manual route. Nothing at all when the bridge
+ * is current.
  */
 @Suppress("LongParameterList") // what Settings shows, and the three things the owner can do from it
 @Composable
@@ -37,8 +38,15 @@ internal fun BridgeUpdateRows(
 ) {
     when (offer) {
         BridgeUpdateOffer.None -> StepLine(step)
-        is BridgeUpdateOffer.SelfUpdate -> SelfUpdateRows(offer.pin, step, driving, onUpdate, onAllowInstalls)
-        is BridgeUpdateOffer.Manual -> ManualRows(offer.pin, driving, onOpenFiles)
+        is BridgeUpdateOffer.SelfUpdate -> {
+            SelfUpdateRows(offer.pin, step, driving, onUpdate, onAllowInstalls)
+            // Not allowed, and no page to allow it from: the manual route is the way left.
+            if (step == BridgeUpdateStep.NotAllowed && onAllowInstalls == null) HowToUpdate(offer.pin, driving, onOpenFiles, blocked = true)
+        }
+        is BridgeUpdateOffer.Manual -> {
+            GroupDivider()
+            HowToUpdate(offer.pin, driving, onOpenFiles, blocked = false)
+        }
     }
 }
 
@@ -79,23 +87,28 @@ private fun SelfUpdateRows(
     }
 }
 
+/** The manual route: for a bridge too old to update itself, or on a head unit that won't let it ([blocked]). */
 @Composable
-private fun ManualRows(
+private fun HowToUpdate(
     pin: PinnedBridge,
     driving: Boolean,
     onOpenFiles: () -> Boolean,
+    blocked: Boolean,
 ) {
     var show by remember { mutableStateOf(false) }
     var filesFailed by remember { mutableStateOf(false) }
-    GroupDivider()
-    SettingRow(title = BridgeUpdateText.available(pin), icon = Icons.Default.SystemUpdate) {
-        RowAction("How to update", onClick = { show = true })
+    if (blocked) {
+        SettingRow(title = BridgeUpdateText.BLOCKED_ROW) { RowAction("How to update", onClick = { show = true }) }
+    } else {
+        SettingRow(title = BridgeUpdateText.available(pin), icon = Icons.Default.SystemUpdate) {
+            RowAction("How to update", onClick = { show = true })
+        }
     }
     if (filesFailed) Line("This head unit's Files app couldn't be opened. Install the bridge with adb instead.", error = true)
     if (show) {
         CarlinkDialog(
             title = BridgeUpdateText.MANUAL_TITLE,
-            text = BridgeUpdateText.manualText(pin),
+            text = if (blocked) BridgeUpdateText.blockedManualText(pin) else BridgeUpdateText.manualText(pin),
             confirmLabel = "Open Files",
             icon = Icons.Default.SystemUpdate,
             // Files isn't distraction-optimized: GM covers it while driving.

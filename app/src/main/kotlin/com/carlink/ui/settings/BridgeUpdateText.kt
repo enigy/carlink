@@ -20,15 +20,30 @@ internal object BridgeUpdateText {
     /** The setup panel's USB drive and Files steps, worded for an update: a bridge before 1.0.9 can't update itself. */
     fun manualText(pin: PinnedBridge): String =
         "This bridge can't update itself yet, so bridge ${pin.versionName} goes on once by hand, as it was installed. While parked:\n" +
-            "1. Copy ${pin.fileName} from ${pin.releasePage} to a USB drive. Its SHA-256 is ${pin.sha256}.\n" +
-            "2. Plug the drive into a free USB port.\n" +
-            "3. Tap Open Files, open the drive, and tap the APK. If asked, allow Files to install apps, then choose Update.\n" +
+            driveSteps(pin) +
             "4. Come back to Carlink. From ${pin.versionName} on, the bridge updates itself from here."
 
+    /** The same steps where the head unit won't let the bridge install apps and has no page to allow it. */
+    fun blockedManualText(pin: PinnedBridge): String =
+        "This head unit doesn't let the USB bridge install apps, so bridge ${pin.versionName} goes on by hand, as it was installed. " +
+            "While parked:\n" +
+            driveSteps(pin) +
+            "4. Come back to Carlink."
+
+    private fun driveSteps(pin: PinnedBridge): String =
+        "1. Copy ${pin.fileName} from ${pin.releasePage} to a USB drive. Its SHA-256 is ${pin.sha256}.\n" +
+            "2. Plug the drive into a free USB port.\n" +
+            "3. Tap Open Files, open the drive, and tap the APK. If asked, allow Files to install apps, then choose Update.\n"
+
     const val NOT_ALLOWED = "The head unit doesn't let Carlink USB Bridge install apps yet. Allow it, then tap Update again."
+
+    /** No page to allow it from: none answers, or only Android Automotive's "not supported" placeholder. */
     const val NOT_ALLOWED_NO_PAGE =
-        "The head unit doesn't let Carlink USB Bridge install apps yet. Allow it in the head unit's " +
-            "Settings › Apps › Carlink USB Bridge › Install unknown apps, then tap Update again."
+        "The head unit doesn't let Carlink USB Bridge install apps, and Carlink can't open a page to allow it. If the head " +
+            "unit's Settings › Apps › Carlink USB Bridge has Install unknown apps, allow it there and tap Update again. If not, " +
+            "update the bridge by hand."
+
+    const val BLOCKED_ROW = "Update the bridge by hand"
 
     /** The row's line for [step]; null when there is nothing to say. */
     fun stepLine(step: BridgeUpdateStep): String? =
