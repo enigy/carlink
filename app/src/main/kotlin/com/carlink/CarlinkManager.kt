@@ -17,8 +17,10 @@ import com.carlink.audio.SilenceGuard
 import com.carlink.av.MediaAudioPlayer
 import com.carlink.av.SkipAftermath
 import com.carlink.av.TransientFocusPolicy
+import com.carlink.av.VideoCodec
 import com.carlink.av.VideoCodecs
 import com.carlink.av.VideoRenderer
+import com.carlink.av.VideoStallWatch
 import com.carlink.av.VoiceRouter
 import com.carlink.callui.CallNotificationHost
 import com.carlink.callui.CallRoster
@@ -71,6 +73,7 @@ import com.carlink.ocbm.BridgeBulkTransport
 import com.carlink.ocbm.CarPlayDock
 import com.carlink.ocbm.CarPlaySessionRecord
 import com.carlink.ocbm.ConnectAttempt
+import com.carlink.ocbm.HelloReplay
 import com.carlink.ocbm.HostInstanceNonce
 import com.carlink.ocbm.InstallMode
 import com.carlink.ocbm.InstallSession
@@ -113,6 +116,7 @@ import com.carlink.usb.BridgeAccessHub
 import com.carlink.usb.BridgeAccessText
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
+import com.carlink.usb.UsbPermissionWait
 import com.carlink.util.DisplayProfile
 import com.carlink.util.LogCallback
 import com.carlink.util.PanelGeometry
@@ -240,21 +244,8 @@ class CarlinkManager(
         private const val STOCK_ADAPTER_STATUS = "Adapter runs Carlinkit firmware — Carlink needs an OCBM adapter"
         private const val STICK_IN_ADAPTER_STATUS = "A USB stick in the adapter? Take it out"
 
-        /** How long a bridge permission prompt may stay unanswered before the start gives up. */
-        private const val BRIDGE_PROMPT_WAIT_MS = 30_000L
-
         /** Status while the system USB permission prompt is up (an action line on the connecting screen). */
         private const val ALLOW_USB_STATUS = "Allow USB access for the adapter when asked"
-
-        private const val BRIDGE_PERMISSION_POLL_MS = 250L
-
-        /**
-         * Polls (× [BRIDGE_PERMISSION_POLL_MS] = 2 s) for the platform's own grant before prompting. The
-         * fixed USB handler path broadcasts USB_DEVICE_ATTACHED and only THEN grants the bridge, so a
-         * start the broadcast triggered can arrive a moment early; prompting then would show a needless
-         * dialog for a permission that is milliseconds away (Carlink2 kept the same grace, [204]).
-         */
-        private const val BRIDGE_GRANT_GRACE_POLLS = 8
 
         /** After Reboot adapter, search for it if no attach broadcast has arrived by then. */
         private const val REBOOT_FALLBACK_MS = 15_000L
@@ -333,6 +324,12 @@ class CarlinkManager(
 
         /** After an overlay closes, how long to wait for frames before assuming a stuck decoder. */
         private const val OVERLAY_RECOVERY_WATCHDOG_MS = 750L
+
+        /**
+         * How long the box's state at the bring-up SUBSCRIBE is held ([HelloReplay]): the last host's replayed session
+         * ended about 1.5 s after it on the 9 Nov bench, so twice that.
+         */
+        private const val HELLO_REPLAY_HOLD_MS = 3_000L
     }
 
     /**
@@ -515,8 +512,8 @@ class CarlinkManager(
     val phoneOnWifi: Int?
         get() =
             when (projectionMode) {
-                Ocbm.PM_WIRELESS_CP, Ocbm.PM_WIRELESS_AA -> 1
-                Ocbm.PM_WIRED_CP, Ocbm.PM_WIRED_AA -> 0
+                Ocbm.PM_WIRELESS_CP -> 1
+                Ocbm.PM_WIRED_CP -> 0
                 else -> currentWifi
             }
 
@@ -646,6 +643,10 @@ class CarlinkManager(
                         val arg = byteArrayOf((seconds and BYTE_MASK).toByte(), ((seconds shr Byte.SIZE_BITS) and BYTE_MASK).toByte())
                         return client?.mgmtAction(Ocbm.MGMT_PAIR_WINDOW, arg)
                     }
+
+                    override fun wirelessUp(): Boolean? = if (boxHealthKnown) boxHealth and Ocbm.BH_CARPLAY_WIRELESS != 0 else null
+
+                    override fun windowOpen(): Boolean? = if (boxHealthKnown) boxHealth and Ocbm.BH_PAIR_WINDOW != 0 else null
                 },
             scope = scope,
         )
@@ -718,10 +719,25 @@ class CarlinkManager(
     private val videoEpochSeq =
         java.util.concurrent.atomic
             .AtomicInteger(0)
-    private var videoSurface: Surface? = null
+
+    @Volatile private var videoSurface: Surface? = null
 
     /** True when video start is deferred until a session exists and a valid Surface is present. */
     private var codecDeferred = true
+
+    /** Rebuilds a video epoch that takes access units and draws nothing (9 Nov bench). Main thread. */
+    private val videoStall = VideoStallWatch()
+
+    /**
+     * The box's state at the bring-up SUBSCRIBE (mode, phone, first video key), held until it proves to be this
+     * session's and not the last host's ([HelloReplay]); [helloReplayJob] ends the hold after [HELLO_REPLAY_HOLD_MS].
+     */
+    private val helloReplay = HelloReplay()
+
+    @Volatile private var helloReplayJob: Job? = null
+
+    /** When this phone's session reaches STREAMING: its media once keyed, or its key when its media came first. */
+    private val streamingStamp = StreamingStamp()
 
     /** One-time [initialize] work (mic manager, MediaSession attach) has run. */
     private var initializedOnce = false
@@ -985,6 +1001,13 @@ class CarlinkManager(
      * phone looked unpaired and Forget only dropped Carlink's history, leaving the adapter's pairing (bench, 5 Nov).
      */
     val canForget: Boolean get() = client != null && bondsRead
+
+    /**
+     * This session's MGMT_INFO says the adapter holds no paired phone. btd keeps such an adapter pairable with no window
+     * (`pairing_allowed = window || bonds == 0`), so BH_PAIR_WINDOW stays set and Settings shows pairing open with no
+     * countdown (9 Nov bench: it counted down to 0:00 and stayed there).
+     */
+    val noPhoneBonded: Boolean get() = client != null && bondsRead && bondedMacs.isEmpty()
 
     /** The adapter's list of paired wireless devices. */
     val pairedDevices: List<DeviceInfo> get() = _pairedDevices
@@ -1403,12 +1426,29 @@ class CarlinkManager(
     /** Bind the bridge, hold USB permission for [name] and open it; null (reported) on any failure. */
     private suspend fun openThroughBridge(name: String): RawBulkTransport? {
         val bridge = bindRawStreamBridge() ?: return null
-        if (!awaitBridgePermission(bridge, name)) {
-            // The bridge asks once per attach and a denial sticks until the adapter re-enumerates.
-            handleFailedStart("USB permission denied — unplug and replug the adapter")
+        if (usbPermission.watching(name)) {
+            // This adapter's prompt is still open and watched; the watch connects on the OK. Asking again would race it.
+            logInfo("[BRIDGE] a start while the USB prompt for $name is watched: leaving it to the watch", tag = Logger.Tags.USB)
+            handleFailedStart(ALLOW_USB_STATUS)
             return null
         }
-        return openViaBridge(bridge, name)
+        val port = permissionPort(bridge, name)
+        when (usbPermission.await(port, name) { setStatusText(ALLOW_USB_STATUS) }) {
+            UsbPermissionWait.Outcome.GRANTED -> return openViaBridge(bridge, name)
+            UsbPermissionWait.Outcome.CLOSED -> {
+                logError("[BRIDGE] no USB permission for $name — ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
+                // The bridge asks once per attach and a denial sticks until the adapter re-enumerates.
+                handleFailedStart("USB permission denied — unplug and replug the adapter")
+            }
+            UsbPermissionWait.Outcome.PENDING -> {
+                // Still unanswered, not denied: the driver may tap OK after the wait (8 Nov bench, and 2.20). The watch
+                // keeps the prompt flag and connects on the OK, so no reconnect runs beside it.
+                cancelReconnect()
+                usbPermission.watch(port, name, stillWanted = { !released }) { startIfDisconnected("late USB permission grant") }
+                handleFailedStart(ALLOW_USB_STATUS)
+            }
+        }
+        return null
     }
 
     /**
@@ -1465,7 +1505,7 @@ class CarlinkManager(
             stockConversion.stickOpened(null, bridgeTooOld = true)
             return
         }
-        val t = bridge?.takeIf { awaitBridgePermission(it, name) }?.let { BridgeStickTransport.open(it, name, trace = BuildConfig.DEBUG) }
+        val t = bridge?.takeIf { stickPermitted(it, name) }?.let { BridgeStickTransport.open(it, name, trace = BuildConfig.DEBUG) }
         if (t == null) {
             val why = bridge?.let { b -> runCatching { b.status }.getOrNull() } ?: "no bridge"
             logWarn("[CONVERT] the stick $name didn't open — $why", tag = Logger.Tags.USB)
@@ -1474,6 +1514,17 @@ class CarlinkManager(
         }
         stockConversion.stickOpened(t)
     }
+
+    /** USB permission for the conversion's stick; a prompt still unanswered after the wait is given up on. */
+    private suspend fun stickPermitted(
+        bridge: ICarlinkBridge,
+        name: String,
+    ): Boolean =
+        when (usbPermission.await(permissionPort(bridge, name), name) { setStatusText(ALLOW_USB_STATUS) }) {
+            UsbPermissionWait.Outcome.GRANTED -> true
+            UsbPermissionWait.Outcome.CLOSED -> false
+            UsbPermissionWait.Outcome.PENDING -> false.also { usbPermission.abandon() }
+        }
 
     /** Bind the bridge and require the raw-stream API; reports the failure and returns null otherwise. */
     private suspend fun bindRawStreamBridge(): ICarlinkBridge? {
@@ -1495,68 +1546,21 @@ class CarlinkManager(
         return bridge
     }
 
-    /**
-     * True once the bridge holds USB permission for [name]; asks once (one-tap prompt) and waits for
-     * the answer.
-     *
-     * While the prompt may be on screen, [UsbPermissionPrompt] is set so MainActivity keeps its
-     * cluster activity off it, and the status asks the driver to allow it. The wait follows the
-     * prompt itself ([awaitPromptAnswer]) rather than a fixed 10 s: a prompt still open when the
-     * old timer ran out was abandoned while on screen, and the cluster launch it had been holding
-     * then covered it.
-     */
-    private suspend fun awaitBridgePermission(
+    /** The bridge, for [name], as [UsbPermissionWait] asks it. */
+    private fun permissionPort(
         bridge: ICarlinkBridge,
         name: String,
-    ): Boolean {
-        if (awaitGrant(bridge, name, BRIDGE_GRANT_GRACE_POLLS)) return true
-        val prompt = runCatching { bridge.requestPermission(name) }.getOrDefault(BridgeContract.PERMISSION_DENIED)
-        logInfo("[BRIDGE] no USB permission for $name — prompt result $prompt; waiting for an answer", tag = Logger.Tags.USB)
-        UsbPermissionPrompt.set(true)
-        setStatusText(ALLOW_USB_STATUS)
-        val granted =
-            try {
-                awaitPromptAnswer(bridge, name)
-            } finally {
-                UsbPermissionPrompt.set(false)
-            }
-        if (!granted) {
-            logError("[BRIDGE] still no USB permission for $name — ${runCatching { bridge.status }.getOrNull()}", tag = Logger.Tags.USB)
-        }
-        return granted
+    ) = object : UsbPermissionWait.Port {
+        override fun hasPermission(): Boolean = bridge.hasPermission(name)
+
+        override fun requestPermission(): Int = bridge.requestPermission(name)
     }
 
     /**
-     * Wait while the bridge's prompt is unanswered: until the bridge holds permission, the prompt
-     * was denied (or the adapter left), or [BRIDGE_PROMPT_WAIT_MS] passes. After the first call,
-     * `requestPermission` only reports the state for that device instance (PENDING until answered),
-     * so polling it shows nothing new to the driver.
+     * The USB permission prompt, from the first ask until it is answered or the watch for a late OK ends; the one owner
+     * of [UsbPermissionPrompt], so MainActivity keeps its cluster activity off the prompt the whole time.
      */
-    private suspend fun awaitPromptAnswer(
-        bridge: ICarlinkBridge,
-        name: String,
-    ): Boolean {
-        val deadline = android.os.SystemClock.elapsedRealtime() + BRIDGE_PROMPT_WAIT_MS
-        while (android.os.SystemClock.elapsedRealtime() < deadline && !bridge.hasPermission(name)) {
-            val state = runCatching { bridge.requestPermission(name) }.getOrDefault(BridgeContract.PERMISSION_DENIED)
-            if (state == BridgeContract.PERMISSION_DENIED || state == BridgeContract.PERMISSION_NO_DEVICE) break
-            delay(BRIDGE_PERMISSION_POLL_MS)
-        }
-        return bridge.hasPermission(name)
-    }
-
-    /** True as soon as the bridge holds permission for [name], checking up to [polls] times. */
-    private suspend fun awaitGrant(
-        bridge: ICarlinkBridge,
-        name: String,
-        polls: Int,
-    ): Boolean {
-        repeat(polls) {
-            if (bridge.hasPermission(name)) return true
-            delay(BRIDGE_PERMISSION_POLL_MS)
-        }
-        return bridge.hasPermission(name)
-    }
+    private val usbPermission = UsbPermissionWait(scope)
 
     /** Open [name] through the bridge and wrap the returned socket; null (reported) on failure or if released meanwhile. */
     private fun openViaBridge(
@@ -1628,6 +1632,7 @@ class CarlinkManager(
 
         // THE APP IS THE IGNITION: this is the presence latch that brings the box's radios up.
         setStatusText("Starting projection...")
+        holdHelloReplay()
         if (!c.subscribe(VehicleConfigYaml.renderBytes(vehicleConfigSpec()))) {
             handleError("usb — CT_SUBSCRIBE write failed")
             return
@@ -1739,6 +1744,9 @@ class CarlinkManager(
         stockRemoval.reset()
         adapterUpdate.reset()
         phoneSetup.reset()
+        helloReplayJob?.cancel()
+        helloReplay.reset()
+        streamingStamp.reset()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
@@ -2087,6 +2095,8 @@ class CarlinkManager(
         notifyDeviceListeners()
 
         if (!bonded) return
+        // The box restarts wireless for the forget: no BOND_LOST from it, and a window waits for it (8 Nov bench).
+        phoneSetup.onForgetSent()
         scope.launch(Dispatchers.IO) {
             val status = client?.mgmtAction(Ocbm.MGMT_FORGET_DEVICE, btMac.toByteArray(Charsets.US_ASCII))
             logInfo("[DEVICE_MGMT] FORGET_DEVICE($btMac) status=$status", tag = Logger.Tags.ADAPTR)
@@ -2289,6 +2299,79 @@ class CarlinkManager(
             }
             onBoxStatus(Ocbm.PM_NONE, 0, false)
         }
+    }
+
+    /**
+     * Just before the bring-up SUBSCRIBE: what the box replays to it may be the last host's session (9 Nov bench), so
+     * hold it ([HelloReplay]) until a live CT_PROJ_MODE says whose it is, or [HELLO_REPLAY_HOLD_MS] passes. Any thread.
+     */
+    private fun holdHelloReplay() {
+        helloReplayJob?.cancel()
+        streamingStamp.reset()
+        helloReplay.start()
+        helloReplayJob =
+            scope.launch {
+                delay(HELLO_REPLAY_HOLD_MS)
+                helloReplay.onTimeout()?.let { onReplayDecided(it, "still up after $HELLO_REPLAY_HOLD_MS ms") }
+            }
+    }
+
+    /** Main thread. CT_PROJ_MODE, through the [helloReplay] hold. */
+    private fun onProjMode(
+        mode: Byte,
+        replay: Boolean,
+    ) {
+        when (val v = helloReplay.onProjMode(mode, replay)) {
+            HelloReplay.Verdict.Apply -> applyProjMode(mode)
+            HelloReplay.Verdict.Hold ->
+                logInfo("[SESSION] holding the box's replayed ${Ocbm.pmName(mode)}: it may be the last host's session", tag = Logger.Tags.ADAPTR)
+            is HelloReplay.Verdict.Decided -> onReplayDecided(v.release, "PROJ_MODE ${Ocbm.pmName(mode)}${if (replay) " (replay)" else ""}")
+        }
+    }
+
+    /** Main thread. A phone's session ending (a mode to NONE) is the phone leaving ([phoneSessionEnded]). */
+    private fun applyProjMode(mode: Byte) {
+        val before = projectionMode
+        onBoxStatus(mode, boxHealth, boxHealthKnown)
+        if (mode == Ocbm.PM_NONE && before != Ocbm.PM_NONE) phoneSessionEnded()
+    }
+
+    /**
+     * Main thread. The phone's session ended inside this Carlink session (PROJ_MODE to NONE, SEV_PHONE_ABSENT): no phone
+     * is connected for the pairing screen, and the next phone starts from no track. On the 9 Nov bench a phone that
+     * played nothing showed the last phone's track, app and art: its first, empty frame was merged with the cache, which
+     * only a stop, an adapter reboot or an error cleared.
+     *
+     * The keyed edge is re-armed too, so the next phone's first video key runs [sessionKeyed] as the first phone's did.
+     * The client raises it once per A/V generation, and after a switch nothing told the pairing screen a phone was
+     * connected: an Add phone window opened before the switch ran out over the connected phone and said "No iPhone
+     * paired" (9 Nov bench, eb41fcab).
+     */
+    private fun phoneSessionEnded() {
+        phoneSetup.onPhoneLeft()
+        clearCachedMediaMetadata()
+        client?.reannounceKeyed()
+        streamingStamp.reset()
+    }
+
+    /** Main thread. The hold is over: apply what was held when it is this session's, drop it when it was the last host's. */
+    private fun onReplayDecided(
+        r: HelloReplay.Release,
+        why: String,
+    ) {
+        helloReplayJob?.cancel()
+        if (!r.live) {
+            logInfo("[SESSION] the box's replayed session ended at once ($why): the last host's; its phone and video key dropped", tag = Logger.Tags.ADAPTR)
+            client?.reannounceKeyed()
+            streamingStamp.reset()
+            r.mode?.let(::applyProjMode)
+            return
+        }
+        logInfo("[SESSION] the box's state at SUBSCRIBE is live ($why)", tag = Logger.Tags.ADAPTR)
+        r.mode?.let(::applyProjMode)
+        r.identity?.let(::onPhoneIdentity)
+        if (r.keyed) sessionKeyed()
+        startCodecIfDeferred()
     }
 
     /** Main thread. */
@@ -2577,6 +2660,11 @@ class CarlinkManager(
     private fun openVideoEpoch(surface: Surface) {
         val lanes = client?.lanes ?: return
         if (videoEpoch != null) return
+        if (helloReplay.holding) {
+            // The box's replayed video may be the last host's session; it would latch that phone's codec (9 Nov bench).
+            logDebug("[LIFECYCLE] Video epoch held: the box's state at SUBSCRIBE isn't known to be live yet", tag = Logger.Tags.VIDEO)
+            return
+        }
         if (!surface.isValid) {
             logWarn("[LIFECYCLE] Video epoch skipped — surface invalid", tag = Logger.Tags.VIDEO)
             return
@@ -2608,6 +2696,48 @@ class CarlinkManager(
         client?.requestKeyframe()
 
         logInfo("[LIFECYCLE] Video epoch #$seq open at ${config.width}x${config.height}", tag = Logger.Tags.VIDEO)
+        watchVideoStall(seq)
+    }
+
+    /**
+     * Rebuild epoch [seq] if access units keep arriving and it draws nothing ([VideoStallWatch]): on the 9 Nov bench a
+     * decoder latched to the wrong codec froze the frame, with touch dead, until the overlay watchdog happened to run.
+     */
+    private fun watchVideoStall(seq: Int) {
+        scope.launch {
+            while (true) {
+                delay(videoStall.timing.sampleMs)
+                val e = videoEpoch ?: return@launch
+                if (e.seq != seq) return@launch
+                val r = e.renderer
+                if (!videoStall.sample(seq, SystemClock.elapsedRealtime(), r.bytesIn.get(), r.framesRendered.get())) continue
+                logWarn(
+                    "[LIFECYCLE] Video epoch #$seq: access units arriving and no frame drawn for ${videoStall.timing.stallMs} ms " +
+                        "(${r.videoCodec?.label ?: "no codec"}) — rebuilding the decoder",
+                    tag = Logger.Tags.VIDEO,
+                )
+                val surface = videoSurface ?: return@launch
+                retireVideoEpoch("stall watchdog")
+                openVideoEpoch(surface)
+                return@launch
+            }
+        }
+    }
+
+    /**
+     * The seam's codec config ([com.carlink.ocbm.seam.VideoSeam.onCodec]), on the read thread before it hands over the
+     * parameter sets. iOS picks the codec per session, so a new phone in this A/V generation (an iOS 15 iPhone's H.264,
+     * then an iOS 27 one's HEVC on the 9 Nov bench) must not reach a decoder that latched the other: a fresh epoch takes
+     * these parameter sets instead.
+     */
+    private fun onSeamCodec(codec: VideoCodec) {
+        val e = videoEpoch ?: return
+        val latched = e.renderer.videoCodec ?: return
+        if (latched == codec) return
+        logWarn("[LIFECYCLE] Video epoch #${e.seq} decodes ${latched.label}; the stream is now ${codec.label}: a fresh epoch", tag = Logger.Tags.VIDEO)
+        val surface = videoSurface
+        retireVideoEpoch("codec ${latched.label} -> ${codec.label}")
+        if (surface != null) openVideoEpoch(surface)
     }
 
     /**
@@ -2786,7 +2916,7 @@ class CarlinkManager(
 
     /** CT_PROJ_MODE / CT_BOX_HEALTH — both re-emitted by the box on every fresh SUBSCRIBE, so nothing caches across reconnects. */
     private fun wireBoxStatus(c: OcbmClient) {
-        c.onProjMode = { mode -> scope.launch { if (client === c) onBoxStatus(mode, boxHealth, boxHealthKnown) } }
+        c.onProjMode = { mode, replay -> scope.launch { if (client === c) onProjMode(mode, replay) } }
         c.onBoxHealth = { flags -> scope.launch { if (client === c) onBoxStatus(projectionMode, flags, true) } }
     }
 
@@ -2828,23 +2958,17 @@ class CarlinkManager(
         // signal — earlier than the first decoded frame, and unlike phone presence it proves the
         // crypto handshake completed.
         c.onSessionKeyed = {
-            hadPriorSession = true
             scope.launch {
                 // The key event and a link death can coincide (a connector jiggle at handshake).
                 // Without this the stale post lands DEVICE_CONNECTED after the error path already
                 // set DISCONNECTED, and both the reconnect backoff and the USB-attach intent are
                 // gated on DISCONNECTED — so the app wedges at "Phone connected" with no session.
                 if (client !== c) return@launch
-                setState(State.DEVICE_CONNECTED)
-                setStatusText("Phone connected")
-                phoneSetup.onPhoneConnected()
-                currentPhoneType = PhoneType.CARPLAY
-                callback?.onPhoneTypeChanged(PhoneType.CARPLAY)
-                startCodecIfDeferred()
-                scheduleDelayedKeyframe()
-                // Initial sync. A session that comes up while already in Drive gets no edge from
-                // the monitor, so push the current value once the box can actually receive it.
-                driveMonitor?.let { if (it.connected) setLimitedUI(it.driving) }
+                if (helloReplay.onKeyed()) {
+                    sessionKeyed()
+                } else {
+                    logInfo("[SESSION] first video key held: the box's state at SUBSCRIBE isn't known to be live yet", tag = Logger.Tags.ADAPTR)
+                }
             }
         }
 
@@ -2853,6 +2977,7 @@ class CarlinkManager(
                 if (!present) {
                     markPhoneLeft()
                     adapterPhone.absent()
+                    phoneSessionEnded()
                 }
                 _phoneNews.update { it + 1 }
                 if (present || state == State.DISCONNECTED) return@launch
@@ -2894,7 +3019,15 @@ class CarlinkManager(
             scope.launch { if (client === c) onMicGate(on, rate, ch, codec) }
         }
 
-        c.onPhoneIdentity = { json -> scope.launch { onPhoneIdentity(json) } }
+        c.onPhoneIdentity = { json, _ ->
+            scope.launch {
+                if (helloReplay.onIdentity(json)) {
+                    onPhoneIdentity(json)
+                } else {
+                    logInfo("[PHONE] identity held: the box's state at SUBSCRIBE isn't known to be live yet", tag = Logger.Tags.PHONE)
+                }
+            }
+        }
 
         wireBoxStatus(c)
 
@@ -2905,8 +3038,29 @@ class CarlinkManager(
         c.onLinkDead = { reason -> handleError("usb — link dead: $reason") }
     }
 
+    /** Main thread. The session's first video key, once [helloReplay] lets it through: a paired, keyed phone is here. */
+    private fun sessionKeyed() {
+        hadPriorSession = true
+        // Never back from STREAMING, and STREAMING now when this phone's media came first ([StreamingStamp]).
+        when (streamingStamp.onKeyed(state)) {
+            State.STREAMING -> markStreaming()
+            State.DEVICE_CONNECTED -> setState(State.DEVICE_CONNECTED)
+            else -> Unit
+        }
+        setStatusText("Phone connected")
+        phoneSetup.onPhoneConnected()
+        currentPhoneType = PhoneType.CARPLAY
+        callback?.onPhoneTypeChanged(PhoneType.CARPLAY)
+        startCodecIfDeferred()
+        scheduleDelayedKeyframe()
+        // Initial sync. A session that comes up while already in Drive gets no edge from
+        // the monitor, so push the current value once the box can actually receive it.
+        driveMonitor?.let { if (it.connected) setLimitedUI(it.driving) }
+    }
+
     private fun onLanesArmed(lanes: OcbmAvLanes) {
         logInfo("[SESSION] A/V lanes armed", tag = Logger.Tags.ADAPTR)
+        lanes.videoSeam.onCodec = { hevc -> onSeamCodec(if (hevc) VideoCodec.HEVC else VideoCodec.H264) }
 
         // Where CarPlay draws. Logged only when the pane appears or goes: a resize is ~250 steps.
         lanes.videoSeam.onViewArea = { r ->
@@ -3006,9 +3160,8 @@ class CarlinkManager(
     ) {
         voiceRouter?.onUplinkGate(on)
         if (on) {
-            // A renegotiation (CVSD -> mSBC keeps the rate at 16 kHz) must restart capture: the
-            // early-return in startMicrophoneCapture would otherwise leave a PCM uplink running on
-            // a wideband SCO socket — silent corruption with no local symptom.
+            // A renegotiated format must restart capture: the early-return in startMicrophoneCapture
+            // would otherwise keep uplinking at the old rate.
             if (isMicrophoneCapturing && microphoneManager?.matchesFormat(rate, channels, codec) == false) {
                 logInfo("[MIC] uplink format changed (${rate}Hz ${channels}ch codec=$codec) — restarting capture", tag = Logger.Tags.MIC)
                 stopMicrophoneCapture()
@@ -3031,24 +3184,17 @@ class CarlinkManager(
         if (isMicrophoneCapturing) return
         val mgr = microphoneManager ?: return
 
-        // mSBC captures 16 kHz mono whatever the gate said (MicProfile.captureFormatFor); log a
-        // disagreement rather than silently encode pitch-shifted speech.
-        val (r, c) = MicProfile.captureFormatFor(rate, channels, codec)
-        if (r != rate || c != channels) {
-            logWarn("[MIC] gate said ${rate}Hz ${channels}ch but codec $codec captures ${r}Hz ${c}ch", tag = Logger.Tags.MIC)
-        }
         val input = callMicInput()
-        if (!mgr.start(captureProfileFor(r, c), codec, input)) {
+        if (!mgr.start(captureProfileFor(rate, channels), codec, input)) {
             logError("[MIC] Capture failed to start", tag = Logger.Tags.MIC)
             return
         }
         isMicrophoneCapturing = true
         micInput = input
 
-        // 20 ms of PCM per tick, matching the box's own RTP packetization (PCM); for mSBC up to a
-        // few whole 60-byte packets per tick with the ring buffer carrying the 7.5 ms remainder.
-        // The cadence and the drain size must change together or the stream underruns.
-        val chunkSize = MicProfile.uplinkDrainBytes(rate, channels, codec)
+        // 20 ms of PCM per tick, matching the box's own RTP packetization. The cadence and the drain
+        // size must change together or the stream underruns.
+        val chunkSize = MicProfile.chunkBytes(rate, channels)
         val generation = micSendGeneration.incrementAndGet()
         micSendFuture?.cancel(false)
         var failures = 0
@@ -3066,8 +3212,8 @@ class CarlinkManager(
                 }
             }, 0, MicProfile.TICK_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
 
-        logInfo("[MIC] Capture started at ${r}Hz ${c}ch codec=$codec (drain ${chunkSize}B/tick)", tag = Logger.Tags.MIC)
-        startEchoMonitor(r, c)
+        logInfo("[MIC] Capture started at ${rate}Hz ${channels}ch (drain ${chunkSize}B/tick)", tag = Logger.Tags.MIC)
+        startEchoMonitor(rate, channels)
     }
 
     /**
@@ -3093,10 +3239,7 @@ class CarlinkManager(
             startMicrophoneCapture(micRate, micChannels, micCodec)
             return
         }
-        if (callEchoMonitor == null) {
-            val (r, c) = MicProfile.captureFormatFor(micRate, micChannels, micCodec)
-            startEchoMonitor(r, c)
-        }
+        if (callEchoMonitor == null) startEchoMonitor(micRate, micChannels)
     }
 
     // ---- Call echo monitor (ported from Carlink2 [223]) ------------------------------------------
@@ -3349,8 +3492,7 @@ class CarlinkManager(
         if (!isMicrophoneCapturing) return
         // PCM: S16LE straight out to CH_MIC — the box converts to the big-endian the iPhone wants.
         // Do NOT "symmetry-fix" this against the big-endian DOWNLINK: a swapped uplink reaches
-        // Siri as noise with no local symptom. mSBC: each callback is one 60-byte eSCO packet, one
-        // CH_MIC message each (MIC_CHUNK = 16384 never splits it).
+        // Siri as noise with no local symptom.
         microphoneManager?.drainUplink(chunkSize) { client?.sendMicPcm(it) }
     }
 
@@ -3399,8 +3541,10 @@ class CarlinkManager(
         if (json.isEmpty()) {
             markPhoneLeft()
             // The adapter cleared it: that phone's session is over, so no phone is Connected until the next one
-            // names itself (11-03 bench: the old phone's row read "Connected" through a switch).
+            // names itself (11-03 bench: the old phone's row read "Connected" through a switch), and none of its
+            // track carries over to the next one.
             adapterPhone.identity(null)
+            clearCachedMediaMetadata()
             _phoneNews.update { it + 1 }
             return
         }
@@ -3412,6 +3556,8 @@ class CarlinkManager(
         val name = obj.optString("name")
         val mac = obj.optString("deviceID").lowercase()
         if (mac.isEmpty()) return
+        // Another phone with no session end seen between: none of the last one's track carries over (9 Nov bench).
+        if (adapterPhone.identified?.let { it != mac } == true) clearCachedMediaMetadata()
         adapterPhone.identity(mac)
         if (name.isNotEmpty()) phoneNames[mac] = name
         applyDriverProfile(mac, name)
@@ -3966,7 +4112,11 @@ class CarlinkManager(
      * start of the window a short-lived session is measured against.
      */
     private fun markStreamingIfFirstMedia() {
-        if (state != State.DEVICE_CONNECTED) return
+        if (streamingStamp.onMedia(state) == State.STREAMING) markStreaming()
+    }
+
+    /** STREAMING: at this phone's first media once keyed, or at its key when the media came first ([StreamingStamp]). */
+    private fun markStreaming() {
         lastStreamingStartMs = SystemClock.elapsedRealtime()
         setState(State.STREAMING)
         noteCarPlaySession()
@@ -4290,6 +4440,12 @@ class CarlinkManager(
      */
     private fun scheduleReconnect() {
         reconnectJob?.cancel()
+
+        // A USB prompt is open and watched: its OK connects, and a retry would only ask again under it.
+        if (usbPermission.watching) {
+            logInfo("[RECONNECT] not scheduled: the USB permission prompt is open and watched", tag = Logger.Tags.USB)
+            return
+        }
 
         // The display is off ([DisplayOff]): reconnecting there only churns while the car is off. Checked against the
         // system too, in case a display-off signal was missed; the display coming on connects again.

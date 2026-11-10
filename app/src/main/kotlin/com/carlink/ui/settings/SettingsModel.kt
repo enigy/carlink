@@ -168,8 +168,6 @@ object SettingsModel {
         return when (box.projectionMode) {
             Ocbm.PM_WIRED_CP -> "Wired CarPlay running"
             Ocbm.PM_WIRELESS_CP -> "Wireless CarPlay running"
-            Ocbm.PM_WIRED_AA -> "Wired Android Auto running"
-            Ocbm.PM_WIRELESS_AA -> "Wireless Android Auto running"
             else -> "Waiting for a phone"
         }
     }

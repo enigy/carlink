@@ -25,9 +25,8 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * `codec` is what the sink DECODES WITH, and it is branched on, never assumed:
  *  - [SeamCrypto.CODEC_AAC_ELD] — wireless CarPlay voice; MediaCodec with the ELD ASC.
- *  - [SeamCrypto.CODEC_PCM] — S16 **little-endian** (the seam normalises endianness): the HFP
- *    narrowband call downlink (8 kHz mono, `SEAM_PKT_PLAIN`), the seam's own mSBC decode output
- *    (16 kHz mono), and wired CarPlay's PCM voice streams. Written straight to the track.
+ *  - [SeamCrypto.CODEC_PCM] — S16 **little-endian** (the seam normalises endianness): wired
+ *    CarPlay's PCM voice streams. Written straight to the track.
  *  - anything else is dropped with a diagnostic naming it. A non-ELD stream fed to an ELD decoder
  *    is garbage or a codec exception per access unit, and that used to be the silent default.
  *

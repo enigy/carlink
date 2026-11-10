@@ -10,9 +10,7 @@ package com.carlink.ocbm.seam
  *
  * `codec` is a `SeamCrypto.CODEC_*` value with one seam-side normalisation: [SeamCrypto.CODEC_PCM]
  * in this tag ALWAYS means host-order S16LE. `AudioSeam` byte-swaps the big-endian AirPlay PCM
- * downlink, passes the little-endian HFP `SEAM_PKT_PLAIN` payload through untouched, and decodes
- * mSBC to PCM before tagging — so `VoiceRouter` never sees an endianness question or a compressed
- * bitstream under codec 0.
+ * downlink before tagging — so `VoiceRouter` never sees an endianness question under codec 0.
  *
  * The change is deliberately NOT byte-compatible with the box's own legacy `:9003` tag: nothing in
  * `:app` consumes that socket any more (the seam is the only producer), and a silent 11-vs-12

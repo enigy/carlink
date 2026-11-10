@@ -20,9 +20,9 @@ class AudioDecodersTest {
         assertEquals(AudioDecoders.Path.PCM, AudioDecoders.pathFor(SeamCrypto.CODEC_PCM))
         assertEquals(AudioDecoders.Path.AAC_LC, AudioDecoders.pathFor(SeamCrypto.CODEC_AAC_LC))
         assertEquals(AudioDecoders.Path.AAC_ELD, AudioDecoders.pathFor(SeamCrypto.CODEC_AAC_ELD))
-        // Opus is advertised by neither preset; mSBC is decoded by the seam and never reaches a player.
+        // Opus is advertised by neither preset; 4 (mSBC) is retired and never reaches a player.
         assertEquals(AudioDecoders.Path.UNSUPPORTED, AudioDecoders.pathFor(SeamCrypto.CODEC_OPUS))
-        assertEquals(AudioDecoders.Path.UNSUPPORTED, AudioDecoders.pathFor(SeamCrypto.CODEC_MSBC))
+        assertEquals(AudioDecoders.Path.UNSUPPORTED, AudioDecoders.pathFor(4))
         assertEquals(AudioDecoders.Path.UNSUPPORTED, AudioDecoders.pathFor(200))
     }
 
@@ -32,7 +32,7 @@ class AudioDecodersTest {
         assertTrue(AudioDecoders.canDecode(SeamCrypto.CODEC_AAC_LC))
         assertTrue(AudioDecoders.canDecode(SeamCrypto.CODEC_AAC_ELD))
         assertFalse(AudioDecoders.canDecode(SeamCrypto.CODEC_OPUS))
-        assertFalse(AudioDecoders.canDecode(SeamCrypto.CODEC_MSBC))
+        assertFalse(AudioDecoders.canDecode(4))
     }
 
     @Test

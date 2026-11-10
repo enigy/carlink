@@ -82,7 +82,6 @@ accessoryConfig:
   enablesLogTransfer: false
   enablesVehicleDataProtocol: false
   enablesDCX: false
-  appDrivenSetup: false
 limitedUIConfig:
   softKeyboard: true
   softPhoneKeypad: true

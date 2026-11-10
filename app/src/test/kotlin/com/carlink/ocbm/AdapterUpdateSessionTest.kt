@@ -160,6 +160,8 @@ class AdapterUpdateSessionTest {
         waitUntil(2000) { session.phase.value == UpdatePhase.Checking("1.1.0") }
         box?.infoJson = info(update = "committed", result = "committed 1.1.0 ocbm eec9db5 (from 1.0.0 ocbm f8f18c8)")
         waitUntil(2000) { session.phase.value == UpdatePhase.Updated("1.1.0") }
+        // Updated is published just before host.updated() runs, on the session's thread: wait for the read.
+        waitUntil(2000) { updated.get() >= 1 }
         assertEquals("the install is read again, for its new version", 1, updated.get())
 
         session.dismiss()
@@ -269,6 +271,17 @@ class AdapterUpdateSessionTest {
         Thread.sleep(100) // shows that the tap starts nothing while the install finishes
         assertEquals(UpdatePhase.Idle, session.phase.value)
         assertTrue(box!!.pushed.isEmpty())
+    }
+
+    @Test
+    fun `a final install read short of room while its finish frees it is read again until the package fits`() {
+        // 9 Nov bench: 2728 KB free at the first connect after the finish, 4128 KB two minutes later.
+        install.value = OneFileInstall(InstallMode.FINAL, "1.0.0")
+        box!!.infoJson = info(freeKb = 300)
+        start(timing = AdapterUpdateSession.Timing(pollMs = 20, deadlineMs = 20_000, startMs = 100, roomRecheckMs = 50, roomRecheckForMs = 2_000))
+        waitUntil(2000) { session.offer.value is UpdateOffer.CannotTake }
+        box!!.infoJson = info(freeKb = 4128)
+        waitUntil(2000) { session.offer.value is UpdateOffer.InPlace }
     }
 
     /** A trial adapter with [pkg] and too little room for it: the offer is to finish the install first. */

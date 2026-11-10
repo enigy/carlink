@@ -1,10 +1,15 @@
+// Named for the protocol (tools/proto_check.py and OCBM's docs point here), not for its one object.
+@file:Suppress("MatchingDeclarationName", "ktlint:standard:filename")
+
 package com.carlink.ocbm
 
 /**
- * OCBM v1 wire constants — a byte-faithful port of `ccpa_custom/crates/ocbm-proto/src/lib.rs`.
+ * OCBM v1 wire constants — a byte-faithful port of enigy/ocbm `crates/ocbm-proto/src/lib.rs`
+ * (reference copy: proto/ocbm-proto.lib.rs).
  *
- * Everything in the OCBM envelope is LITTLE-endian. The one exception in the whole protocol is the
- * 16-bit length inside a CH_MFI payload, which is BIG-endian (see [Mfi]).
+ * Everything in the OCBM envelope is LITTLE-endian. Numbers OCBM 1.0.5 retired (CH_MFI, CH_IP,
+ * CH_ETH, CH_RTSP, CH_ECHO/CH_DISCARD, CT_SRC/CT_ETH_*, CAP_ECHO/MFI/IP/ETH, PM_*_AA, log source 4,
+ * seam marker 0x03 and codec 4) are not defined here: an older box never sends one to this app.
  */
 object Ocbm {
     // ---- envelope ---------------------------------------------------------------------------
@@ -27,11 +32,8 @@ object Ocbm {
 
     // ---- channels ---------------------------------------------------------------------------
     const val CH_CTRL: Int = 0x0000
-    const val CH_MFI: Int = 0x0001
     const val CH_CONSOLE: Int = 0x0002
-    const val CH_IP: Int = 0x0010
     const val CH_FILE: Int = 0x0011
-    const val CH_ETH: Int = 0x0012
     const val CH_VIDEO: Int = 0x0020
     const val CH_MEDIA_AUDIO: Int = 0x0021
     const val CH_ALT_AUDIO: Int = 0x0022
@@ -41,22 +43,14 @@ object Ocbm {
     const val CH_MIC: Int = 0x0031
     const val CH_MGMT: Int = 0x0040
 
-    /** App-driven SETUP relay. Inert with `appDrivenSetup: false` — the box only relays when asked. */
-    const val CH_RTSP: Int = 0x0041 // lib.rs:65
-
     /** Box→host universal-log stream (`/tmp/box.log` + per-daemon logs); armed by CT_LOG_CTL. */
     const val CH_LOG: Int = 0x0042
-    const val CH_ECHO: Int = 0x00FF
-    const val CH_DISCARD: Int = 0x0FFF
 
     fun channelName(ch: Int): String =
         when (ch) {
             CH_CTRL -> "CTRL"
-            CH_MFI -> "MFI"
             CH_CONSOLE -> "CONSOLE"
-            CH_IP -> "IP"
             CH_FILE -> "FILE"
-            CH_ETH -> "ETH"
             CH_VIDEO -> "VIDEO"
             CH_MEDIA_AUDIO -> "MEDIA_AUDIO"
             CH_ALT_AUDIO -> "ALT_AUDIO"
@@ -65,10 +59,7 @@ object Ocbm {
             CH_INPUT -> "INPUT"
             CH_MIC -> "MIC"
             CH_MGMT -> "MGMT"
-            CH_RTSP -> "RTSP"
             CH_LOG -> "LOG"
-            CH_ECHO -> "ECHO"
-            CH_DISCARD -> "DISCARD"
             else -> "0x%04x".format(ch)
         }
 
@@ -76,10 +67,7 @@ object Ocbm {
     const val CT_HELLO: Byte = 0x01
     const val CT_HELLO_ACK: Byte = 0x02
     const val CT_MODE_SELECT: Byte = 0x03
-    const val CT_SRC: Byte = 0x04
     const val CT_SETTIME: Byte = 0x05
-    const val CT_ETH_START: Byte = 0x06
-    const val CT_ETH_STOP: Byte = 0x07
     const val CT_SUBSCRIBE: Byte = 0x10
     const val CT_STOP: Byte = 0x11
     const val CT_HEARTBEAT: Byte = 0x12
@@ -170,19 +158,15 @@ object Ocbm {
     // current mode without waiting. Mirrors `box_common::flags::owner().wire_code()`.
     const val CT_PROJ_MODE: Byte = 0x19
 
-    const val PM_NONE: Byte = 0x00 // idle — no projection session; either phone kind may claim the box
+    const val PM_NONE: Byte = 0x00 // idle — no projection session; a phone may claim the box
     const val PM_WIRED_CP: Byte = 0x01 // wired CarPlay (projection_up -> iap2d + airplayd)
     const val PM_WIRELESS_CP: Byte = 0x02 // wireless CarPlay (btd: BT + WiFi AP)
-    const val PM_WIRED_AA: Byte = 0x03 // wired Android Auto (aa-bridge AOAP pump; app drives AA over CH_IP)
-    const val PM_WIRELESS_AA: Byte = 0x04 // reserved — wireless Android Auto (unbuilt)
 
     fun pmName(m: Byte): String =
         when (m) {
             PM_NONE -> "NONE"
             PM_WIRED_CP -> "WIRED_CP"
             PM_WIRELESS_CP -> "WIRELESS_CP"
-            PM_WIRED_AA -> "WIRED_AA"
-            PM_WIRELESS_AA -> "WIRELESS_AA"
             else -> "PM_0x%02x".format(m)
         }
 
@@ -204,9 +188,8 @@ object Ocbm {
     // ---- CT_LOG_CTL (0x1B) — host→box `[CT_LOG_CTL][enabled u8][cap_kb u16 LE]` ----------------
     // Arms the CH_LOG stream: the box tails its universal log (source 0, truncated at cap_kb once
     // streamed) and the supervisor's per-daemon logs (tail-only). Entry layout on CH_LOG:
-    // [source u8][flags u8][seq u16 LE][unix_ms u64 LE][len u16 LE][text]. Consumed by gm_ccpa
-    // (OcbmClient.handleLog / logCtl); CarlinkAndroid does not arm it yet. Defined here so
-    // tools/proto_check.py keeps the three implementations in step.
+    // [source u8][flags u8][seq u16 LE][unix_ms u64 LE][len u16 LE][text]. Armed by
+    // OcbmClient.setBoxLogStream.
     const val CT_LOG_CTL: Byte = 0x1B
     const val LOG_CAP_DEFAULT_KB: Int = 0x100
     const val LOG_ENTRY_HDR: Int = 0x0E
@@ -219,7 +202,6 @@ object Ocbm {
     const val LOG_SRC_AIRPLAYD: Int = 0x01
     const val LOG_SRC_AIRPLAYD_WL: Int = 0x02
     const val LOG_SRC_IAP2D: Int = 0x03
-    const val LOG_SRC_AA_BRIDGE: Int = 0x04
     const val LOG_SRC_RX_CONNECT: Int = 0x05
     const val LOG_SRC_BT: Int = 0x06
     const val LOG_SRC_RADIO_AP_DHCP: Int = 0x07
@@ -255,14 +237,7 @@ object Ocbm {
         }
 
     // NOTE: which health bits a given deployment REQUIRES is app policy, not protocol, and stays in
-    // the app. gm_ccpa's bridge role, for one, deliberately does not require BH_WLAN_AP because the
-    // head unit owns Wi-Fi there — a rule that would be wrong for this app.
-
-    // ---- CH_IP sub-opcodes (stream-mux relay) --------------------------------------------------
-    const val IP_OPEN: Byte = 0x01 // data = target "host:port"; the box connect()s and relays
-    const val IP_DATA: Byte = 0x02 // data = stream bytes
-    const val IP_CLOSE: Byte = 0x03 // no data
-    const val IP_OPEN_UDP: Byte = 0x04 // same as IP_OPEN, UDP instead of TCP
+    // the app.
 
     // ---- CH_FILE sub-opcodes -------------------------------------------------------------------
     const val FILE_OPEN: Byte = 0x01
@@ -279,11 +254,7 @@ object Ocbm {
 
     // ---- capability bits, as reported in CT_HELLO_ACK ------------------------------------------
     const val CAP_CONSOLE: Int = 0x0000_0001
-    const val CAP_ECHO: Int = 0x0000_0002
-    const val CAP_MFI: Int = 0x0000_0004
-    const val CAP_IP: Int = 0x0000_0008
     const val CAP_FILE: Int = 0x0000_0010
-    const val CAP_ETH: Int = 0x0000_0020
     const val CAP_PHONE_POLICY: Int = 0x0000_0040
     const val CAP_PAIR_WINDOW: Int = 0x0000_0080
 
@@ -296,19 +267,21 @@ object Ocbm {
     /** The box takes [MGMT_SWITCH_DEVICE]: Connect on a phone may end another phone's wireless session (enigy/ocbm, 11-01). */
     const val CAP_PHONE_SWITCH: Int = 0x0000_0400
 
+    private const val KNOWN_CAPS: Int =
+        CAP_CONSOLE or CAP_FILE or CAP_PHONE_POLICY or CAP_PAIR_WINDOW or CAP_INSTALL or CAP_UPDATE or CAP_PHONE_SWITCH
+
     fun capsString(caps: Int): String {
         val bits = ArrayList<String>()
         if (caps and CAP_CONSOLE != 0) bits.add("CONSOLE")
-        if (caps and CAP_ECHO != 0) bits.add("ECHO")
-        if (caps and CAP_MFI != 0) bits.add("MFI")
-        if (caps and CAP_IP != 0) bits.add("IP")
         if (caps and CAP_FILE != 0) bits.add("FILE")
-        if (caps and CAP_ETH != 0) bits.add("ETH")
         if (caps and CAP_PHONE_POLICY != 0) bits.add("PHONE_POLICY")
         if (caps and CAP_PAIR_WINDOW != 0) bits.add("PAIR_WINDOW")
         if (caps and CAP_INSTALL != 0) bits.add("INSTALL")
         if (caps and CAP_UPDATE != 0) bits.add("UPDATE")
         if (caps and CAP_PHONE_SWITCH != 0) bits.add("PHONE_SWITCH")
+        // An older box also sets bits OCBM 1.0.5 retired (0x02, 0x04, 0x08, 0x20): shown, not named.
+        val unnamed = caps and KNOWN_CAPS.inv()
+        if (unnamed != 0) bits.add("0x%x".format(unnamed))
         return if (bits.isEmpty()) "none" else bits.joinToString("|")
     }
 
@@ -495,20 +468,6 @@ object Ocbm {
     // ---- Audio seam v2 markers (CH_MEDIA_AUDIO / CH_ALT_AUDIO) ----------------------------------
     // `[u32 BE len][SEAM_MAGIC "SEAV"][marker]…`; 0x00 SEAM_KEY, 0x01 SEAM_PKT, 0x02 SEAM_FORMAT.
 
-    /** `[0x03][scid 8 LE][payload]` — UNENCRYPTED access unit (no RTP, no key): the Bluetooth HFP
-     *  call lane (`btd`'s `sco_audio` on the voice seam), CarPlay and Android Auto alike. Under a PCM
-     *  SEAM_FORMAT it is one 20 ms frame of 8 kHz mono S16LE (LITTLE-endian — not the AirPlay PCM
-     *  downlink); under SEAM_CODEC_MSBC it is one raw eSCO read, a bitstream. lib.rs:530-547 */
-    const val SEAM_PKT_PLAIN: Byte = 0x03
-
-    /** SEAM_FORMAT `codec` 4 — mSBC, the HFP wideband-speech codec (HFP 1.6 §5.7.4). The payload
-     *  under it is NOT PCM: each SEAM_PKT_PLAIN carries one raw transparent-eSCO read (2-byte H2
-     *  header + 57-byte mSBC frame + pad), and `rate`/`bits` describe the DECODED audio (16 kHz
-     *  mono S16LE). A host without an mSBC decoder must drop the stream, not play the bytes.
-     *  Decoded here by `telephony/MsbcFramer.kt` (`MsbcTelephonyDecoder`, with PLC) and encoded for
-     *  the uplink by `MsbcUplinkEncoder`; macOS uses carlink_macOS/Audio/MSBCCodec.swift. */
-    const val SEAM_CODEC_MSBC: Byte = 4
-
     // ---- CH_METADATA seam markers --------------------------------------------------------------
     // Framing is [u32 BE "META"][u32 BE len][marker][payload] where len = 1 + payload.size.
     // Magic per iap2-core/src/metadata.rs:42; markers per lib.rs:36-39. Payloads are PLAINTEXT —
@@ -550,97 +509,4 @@ object Ocbm {
      * chunk is exactly one bulk transfer.
      */
     const val MIC_CHUNK: Int = 16384
-}
-
-/**
- * CH_MFI sub-framing (`crates/vendor/mfi/src/lib.rs`).
- *
- *   request : [op u8][plen u16 BE][payload]
- *   response: [status u8][rlen u16 BE][payload]
- *
- * The u16 lengths here are BIG-endian — the only big-endian field family in OCBM.
- */
-object Mfi {
-    const val OP_COPY_CERTIFICATE: Byte = 0x01
-    const val OP_CREATE_SIGNATURE: Byte = 0x02
-
-    const val STATUS_OK: Byte = 0x00
-
-    /** Chip absent, I2C failure, lock timeout (>10s), poll timeout, or an implausible chip length. */
-    const val STATUS_FAILED: Byte = 0x01
-
-    /** Unknown opcode, or sign with ilen==0 / a truncated payload. */
-    const val STATUS_UNSUPPORTED: Byte = 0x02
-
-    /**
-     * Optional 1-byte correlation tag appended AFTER the declared payload and echoed on the reply
-     * (`ocbmd::handle_mfi`, canonical `MFI_TAG_LEN`). Without it two concurrent chip users can only
-     * correlate by payload length, which cannot tell two 128-byte signatures apart — a late reply to
-     * a timed-out sign then answers the wrong digest and the phone drops the session as a crypto
-     * fault. An untagged peer degrades to the old length-correlation behaviour.
-     */
-    const val TAG_LEN: Int = 1
-
-    const val HDR_LEN: Int = 3
-    const val DIGEST_LEN: Int = 20 // SHA-1
-    const val SIG_LEN: Int = 128 // RSA-1024
-
-    /** Observed certificate length on real hardware. */
-    const val EXPECTED_CERT_LEN: Int = 945
-
-    /** `01 00 00` — a bare opcode with no length is silently dropped by the box. */
-    fun certRequest(tag: Byte? = null): ByteArray =
-        if (tag == null) {
-            byteArrayOf(OP_COPY_CERTIFICATE, 0, 0)
-        } else {
-            byteArrayOf(OP_COPY_CERTIFICATE, 0, 0, tag)
-        }
-
-    /** `02 00 14 <20-byte SHA-1 digest>`. */
-    fun signRequest(
-        digest: ByteArray,
-        tag: Byte? = null,
-    ): ByteArray {
-        require(digest.isNotEmpty() && digest.size <= 0xFFFF) { "bad digest length ${digest.size}" }
-        val out = ByteArray(HDR_LEN + digest.size + if (tag == null) 0 else TAG_LEN)
-        if (tag != null) out[HDR_LEN + digest.size] = tag
-        out[0] = OP_CREATE_SIGNATURE
-        out[1] = ((digest.size shr 8) and 0xFF).toByte()
-        out[2] = (digest.size and 0xFF).toByte()
-        System.arraycopy(digest, 0, out, HDR_LEN, digest.size)
-        return out
-    }
-
-    /** [tag] is null when the peer echoed none — an older box, or an untagged request. */
-    class Response(
-        val status: Byte,
-        val payload: ByteArray,
-        val tag: Byte? = null,
-    ) {
-        val ok: Boolean get() = status == STATUS_OK
-
-        fun statusName(): String =
-            when (status) {
-                STATUS_OK -> "OK"
-                STATUS_FAILED -> "FAILED (no chip / i2c / lock timeout)"
-                STATUS_UNSUPPORTED -> "UNSUPPORTED (bad opcode or malformed request)"
-                else -> "0x%02x".format(status)
-            }
-    }
-
-    fun parse(
-        payload: ByteArray,
-        len: Int,
-    ): Response? {
-        if (len < HDR_LEN) return null
-        val rlen = ((payload[1].toInt() and 0xFF) shl 8) or (payload[2].toInt() and 0xFF)
-        // Reject a torn/short frame rather than silently clamping: a short "certificate" would be
-        // accepted here and fail much later in MFi-SAP with an opaque pairing error.
-        if (rlen > len - HDR_LEN) return null
-        val body = if (rlen > 0) payload.copyOfRange(HDR_LEN, HDR_LEN + rlen) else ByteArray(0)
-        // Exactly one trailing byte past the declared payload is this response's correlation tag.
-        // Anything else (none, or more) means an untagged peer; fall back to length correlation.
-        val tag = if (len == HDR_LEN + rlen + TAG_LEN) payload[HDR_LEN + rlen] else null
-        return Response(payload[0], body, tag)
-    }
 }

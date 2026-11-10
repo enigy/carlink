@@ -526,7 +526,6 @@ private fun ConnectingWords(
                             LoadingStatusView(
                                 statusText = statusText,
                                 phoneConnected = LoadingSteps.projectionStarting(projectionMode),
-                                androidAuto = LoadingSteps.isAndroidAuto(projectionMode),
                             )
                         }
                     }

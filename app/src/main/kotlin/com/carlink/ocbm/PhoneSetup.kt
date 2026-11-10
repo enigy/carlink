@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -132,6 +134,12 @@ class PhoneSetup(
 
         /** A monotonic clock in ms, for the window's end. */
         fun now(): Long = SystemClock.elapsedRealtime()
+
+        /** Whether btd runs (CT_BOX_HEALTH BH_CARPLAY_WIRELESS); null before the box has said. */
+        fun wirelessUp(): Boolean? = null
+
+        /** Whether the box reports its pairing window open (BH_PAIR_WINDOW); null before the box has said. */
+        fun windowOpen(): Boolean? = null
     }
 
     data class Timing(
@@ -143,6 +151,20 @@ class PhoneSetup(
         val btStartMs: Long = 30_000,
         /** Between those tries, as SET_POLICY's after SUBSCRIBE. */
         val btRetryMs: Long = 2_000,
+        /** After this app's own MGMT_FORGET_DEVICE: no BOND_LOST is taken as news, and a window waits for the restart. */
+        val forgetQuietMs: Long = 30_000,
+        /** How often a window waiting for that restart looks at the box's health. */
+        val restartPollMs: Long = 500,
+        /** If the box never shows btd going down within this of the forget, the restart was missed: open anyway. */
+        val restartDownMs: Long = 10_000,
+        /** After a window opened in the quiet time, look again this much later, and open it once more if it closed. */
+        val reopenCheckMs: Long = 4_000,
+        /**
+         * The most one window request may take, start to logged outcome: the restart wait, Bluetooth's start and each
+         * MGMT exchange are bounded on their own, and this bounds the lot (9 Nov bench: two opens btd applied never
+         * logged a status). One past it is "no answer".
+         */
+        val windowTimeoutMs: Long = 90_000,
     )
 
     private val phaseState = MutableStateFlow<PhoneSetupPhase>(PhoneSetupPhase.None)
@@ -157,6 +179,13 @@ class PhoneSetup(
     private var adapterName: String? = null
     private var connected = false
     private var timer: Job? = null
+
+    // [Box.now] when this app last sent MGMT_FORGET_DEVICE ([onForgetSent]); the box restarts wireless as part of it.
+    private var forgotAtMs: Long? = null
+
+    // Bumped by every window request ([window]: an open, Stop's close, Settings' close): a reopen is only for the window
+    // the driver last asked for ([reopenIfClosed]).
+    private var windowGen = 0
 
     /** The adapter is known to have no phone paired: nothing to page. */
     val noPhonePaired: Boolean get() = synchronized(lock) { phones?.none == true }
@@ -194,6 +223,17 @@ class PhoneSetup(
     private fun closeOpened() {
         val status = box.pairWindow(0)
         logInfo("[PAIRING] a phone connected: closing the window Carlink opened, status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
+    }
+
+    /**
+     * The phone's session ended (PROJ_MODE to NONE, SEV_PHONE_ABSENT): no phone is connected now. Only [reset] and
+     * [onSubscribed] said so before, and on the 9 Nov bench, after the iPhone left and a Forget, Add phone took the
+     * phone as still connected: it skipped the restart wait, and gave up on Bluetooth after two tries ("btd isn't
+     * reachable") while btd restarted.
+     */
+    fun onPhoneLeft() {
+        val was = synchronized(lock) { connected.also { connected = false } }
+        if (was) logInfo("[PAIRING] the phone's session ended", tag = Logger.Tags.ADAPTR)
     }
 
     /** The session ended: nothing is known about the next one. */
@@ -241,8 +281,52 @@ class PhoneSetup(
      * all, while pairing from this screen, is "Try again". Returns the status.
      */
     suspend fun window(seconds: Int): Int? {
-        logWarn("[PAIRING] window ${if (seconds > 0) "open for ${seconds}s" else "close"} requested", tag = Logger.Tags.ADAPTR)
-        var status = box.pairWindow(seconds)
+        val asked = if (seconds > 0) "open for ${seconds}s" else "close"
+        logWarn("[PAIRING] window $asked requested", tag = Logger.Tags.ADAPTR)
+        val gen = synchronized(lock) { ++windowGen }
+        val answer = withTimeoutOrNull(timing.windowTimeoutMs) { Answer(request(seconds, gen)) }
+        if (answer != null) return answer.status
+        logWarn("[PAIRING] window $asked: no outcome within ${timing.windowTimeoutMs} ms, given up", tag = Logger.Tags.ADAPTR)
+        if (seconds > 0) moveIfAsked(PhoneSetupPhase.NotPaired(nameNow(), NO_ANSWER, NO_ANSWER_BODY))
+        return null
+    }
+
+    /** [window]'s answer: its status, null for none (no answer, or overtaken). */
+    private class Answer(
+        val status: Int?,
+    )
+
+    private suspend fun request(
+        seconds: Int,
+        gen: Int,
+    ): Int? {
+        val afterForget = seconds > 0 && forgetQuiet()
+        if (afterForget) awaitRestart()
+        if (synchronized(lock) { windowGen != gen }) {
+            // Stop (or another request) came while this one waited for the restart: it is no longer wanted.
+            logInfo("[PAIRING] a window request overtaken while it waited for the restart: not sent", tag = Logger.Tags.ADAPTR)
+            return null
+        }
+        val status = send(seconds)
+        if (afterForget && status == 0) scope.launch(Dispatchers.IO) { reopenIfClosed(seconds, gen) }
+        return status
+    }
+
+    /**
+     * One MGMT_PAIR_WINDOW, interruptible: the client bounds its own wait, and a [window] past its time limit stops it.
+     * A failure is logged and read as no answer.
+     */
+    private suspend fun ask(seconds: Int): Int? =
+        runInterruptible(Dispatchers.IO) {
+            runCatching { box.pairWindow(seconds) }
+                .onFailure { if (it is InterruptedException) throw it }
+                .onFailure { logWarn("[PAIRING] MGMT_PAIR_WINDOW failed: ${it.javaClass.simpleName} ${it.message}", tag = Logger.Tags.ADAPTR) }
+                .getOrNull()
+        }
+
+    /** One MGMT_PAIR_WINDOW, retried while Bluetooth starts, with what its answer means for the screen. */
+    private suspend fun send(seconds: Int): Int? {
+        var status = ask(seconds)
         logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"}", tag = Logger.Tags.ADAPTR)
         if (seconds > 0 && status != null && status != 0) status = whileBluetoothStarts(seconds)
         when {
@@ -250,6 +334,69 @@ class PhoneSetup(
             status != null && status != 0 -> bluetoothDown("MGMT_PAIR_WINDOW", status)
         }
         return status
+    }
+
+    /**
+     * Hold a window asked for right after a forget until the box's wireless restart is over: btd seen down, then up
+     * again. A box that says nothing, or a restart the 2 s health ticks never caught going down within
+     * [Timing.restartDownMs] of the forget, opens at once (or then); the quiet time bounds the wait either way.
+     */
+    private suspend fun awaitRestart() {
+        val since = synchronized(lock) { forgotAtMs } ?: return
+        if (box.wirelessUp() == null) return
+        // Say what the wait is, as [whileBluetoothStarts] does; the screen otherwise sits unchanged for up to 10 s.
+        val before =
+            synchronized(lock) {
+                val now = phaseState.value
+                if (!connected) phaseState.value = PhoneSetupPhase.BluetoothStarting(nameNow())
+                now
+            }
+        try {
+            restartWait(since)
+        } finally {
+            synchronized(lock) { if (phaseState.value is PhoneSetupPhase.BluetoothStarting) phaseState.value = before }
+        }
+    }
+
+    private suspend fun restartWait(since: Long) {
+        var sawDown = false
+        while (box.now() - since < timing.forgetQuietMs && !connected) {
+            when (box.wirelessUp()) {
+                null -> return
+                false -> sawDown = true
+                true -> if (sawDown || box.now() - since >= timing.restartDownMs) break
+            }
+            delay(timing.restartPollMs)
+        }
+        logInfo(
+            "[PAIRING] window after a Forget: ${if (sawDown) "the box's wireless restart is over" else "no restart seen"} " +
+                "${box.now() - since} ms after the forget; opening",
+            tag = Logger.Tags.ADAPTR,
+        )
+    }
+
+    /**
+     * A window opened in the quiet time that the box reports closed again soon after: open it once more, unless the
+     * driver has asked for something since ([windowGen]): after Stop the box must not stay discoverable.
+     */
+    private suspend fun reopenIfClosed(
+        seconds: Int,
+        gen: Int,
+    ) {
+        delay(timing.reopenCheckMs)
+        if (connected || box.windowOpen() != false || synchronized(lock) { windowGen != gen }) return
+        logWarn("[PAIRING] the window opened after a Forget closed again (the box's wireless restart): opening it once more", tag = Logger.Tags.ADAPTR)
+        val status = ask(seconds)
+        logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"} (reopened)", tag = Logger.Tags.ADAPTR)
+        if (status == 0) {
+            synchronized(lock) {
+                val now = phaseState.value as? PhoneSetupPhase.Pairing ?: return
+                if (now.endsAtMs == null) return
+                phaseState.value = now.copy(endsAtMs = box.now() + seconds * MS_PER_SECOND)
+                timer?.cancel()
+                timer = scope.launch { windowRunsOut(seconds * MS_PER_SECOND) }
+            }
+        }
     }
 
     /** "Stop" while the window is open: close it and go back to the prompt. */
@@ -282,9 +429,26 @@ class PhoneSetup(
         }
     }
 
+    /**
+     * This app sent MGMT_FORGET_DEVICE. The box removes the bond and restarts wireless, and during that restart btd's
+     * AUTH_FAILED hook fires: on the 8 Nov bench BTP_BOND_LOST came 0.55 s after the forget, and the screen said the
+     * iPhone may no longer know the adapter, about a phone the driver had just removed. The restart also closes a window
+     * opened in it (opened 2.4 s after the forget, closed 0.7 s later). See [onBtPhase] and [window].
+     */
+    fun onForgetSent() {
+        synchronized(lock) { forgotAtMs = box.now() }
+    }
+
+    /** Within [Timing.forgetQuietMs] of this app's own forget. */
+    private fun forgetQuiet(): Boolean = synchronized(lock) { forgotAtMs }?.let { box.now() - it < timing.forgetQuietMs } == true
+
     /** CT_BT_PHASE while the window is open: the progress line. */
     fun onBtPhase(phase: Byte) {
         if (phase == Ocbm.BTP_BOND_LOST) {
+            if (forgetQuiet()) {
+                logInfo("[PAIRING] BT_PHASE BOND_LOST right after this app's Forget: the box's wireless restart, not news", tag = Logger.Tags.ADAPTR)
+                return
+            }
             phoneForgot()
             return
         }
@@ -349,7 +513,7 @@ class PhoneSetup(
         var tries = 1
         do {
             delay(timing.btRetryMs)
-            status = box.pairWindow(seconds)
+            status = ask(seconds)
             tries++
         } while (refused(status) && box.now() < until && !connected)
         logWarn("[PAIRING] MGMT_PAIR_WINDOW status=${status ?: "no answer"} after $tries tries while Bluetooth started", tag = Logger.Tags.ADAPTR)
