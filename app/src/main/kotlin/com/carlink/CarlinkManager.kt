@@ -113,6 +113,7 @@ import com.carlink.ui.settings.SessionSettings
 import com.carlink.usb.AdapterHandover
 import com.carlink.usb.BridgeAccessHub
 import com.carlink.usb.BridgeAccessText
+import com.carlink.usb.BridgeUpdateHub
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.usb.UsbPermissionWait
@@ -216,6 +217,8 @@ class CarlinkManager(
         ComposedIconStore.setEnabled(true)
         // Bridge API 6: the app the adapter was handed to is done, or the owner took it back; connect as after a detach.
         BridgeAccessHub.onHandoverEnded = { if (live === this) scope.launch { startIfDisconnected("the adapter's handover ended") } }
+        // Bridge API 7: the bridge updated itself, which ended its process and this session's link: connect through the new one.
+        BridgeUpdateHub.onUpdated = { if (live === this) scope.launch { startIfDisconnected("the USB bridge was updated") } }
     }
 
     companion object {

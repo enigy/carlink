@@ -939,7 +939,9 @@ class OcbmClient(
         }
         subscribed = true
         armLanes()
-        log.i(">> CT_SUBSCRIBE (${config.size}B config) — this is the radio-wake edge")
+        // What the box makes of it depends on its state, which this side can't see: a fresh attach raises presence and
+        // wakes the radios, while a re-attach inside its heartbeat grace keeps the live session (and re-keys its A/V).
+        log.i(">> CT_SUBSCRIBE (${config.size}B config) — wakes the radios on a fresh attach; a re-attach keeps the live session")
         if (config.isNotEmpty()) {
             config
                 .toString(Charsets.UTF_8)

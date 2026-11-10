@@ -156,6 +156,9 @@ class BridgeAccessTest {
                     { bridge.resetBulkOnly() },
                     { bridge.takeTrace() },
                     { bridge.close() },
+                    // API 7: the update is Carlink's alone too.
+                    { bridge.installUpdate("{}", null) },
+                    { bridge.canInstallPackages() },
                 )
             refused.forEach { call -> assertThrows(SecurityException::class.java) { call() } }
             assertTrue(bridge.hasPermission(ADAPTER))

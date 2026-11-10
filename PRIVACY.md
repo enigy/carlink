@@ -11,7 +11,7 @@ Carlink connects to the internet for two things only, and you can turn the first
 | When | What is sent | To |
 | --- | --- | --- |
 | A song plays | Its title, artist, album and length, to look up its lyrics. This happens even while lyrics are hidden on the music card, so they are ready if you show them. Songs already looked up are read from the head unit instead. Each request also names Carlink: its version and its LRCLIB app ID, the same for every head unit, which identify the app, not you or your car. Turn off Settings › Adapter and about › Look up lyrics, and no song is ever sent. | [LRCLIB](https://lrclib.net) (lrclib.net) |
-| You convert or update your adapter | A request for the installer or update file. Nothing about you or the adapter is sent. | GitHub (github.com), where the files are published |
+| You convert or update your adapter, or update the USB Bridge | A request for the installer, update or bridge file. Nothing about you or the adapter is sent. | GitHub (github.com), where the files are published |
 
 Like any website, LRCLIB and GitHub see the head unit's internet (IP) address when it connects. Their own privacy policies cover what they keep.
 

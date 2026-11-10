@@ -6,6 +6,13 @@
         android:name="android.hardware.usb.host"
         android:required="false" />
 
+    <!-- API 7, the bridge's own update (BridgeUpdater): fetch the APK Carlink pins from its GitHub release, and install
+         it as an update of this package. Nothing else uses the network. UPDATE_PACKAGES_WITHOUT_USER_ACTION lets
+         Android 12 and later skip the confirm when it allows; the bridge still handles one. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+
     <!-- CallerVerifier reads the display app's installer and signing certificate. -->
     <queries>
         <package android:name="com.enigy.carlink3" />
@@ -27,6 +34,12 @@
             android:name=".BridgeService"
             android:exported="true"
             tools:ignore="ExportedService" />
+
+        <!-- The install session's status for the bridge's own update. Not exported: only the system's PendingIntent
+             reaches it. -->
+        <receiver
+            android:name=".UpdateStatusReceiver"
+            android:exported="false" />
 
         <!-- The authority GoogleTemplatesHost writes cluster maneuver icons to but never
              registers. Must be exported: the host and the cluster read it from other UIDs. -->
