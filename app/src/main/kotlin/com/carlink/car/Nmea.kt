@@ -30,6 +30,7 @@ object Nmea {
         val bearingDeg: Float? = null,
         /** Android's horizontal accuracy, metres at 68 %, or null. */
         val accuracyM: Float? = null,
+        /** Satellites in the fix, or null. Android reports 0 when it doesn't know (the emulator always does), so 0 is written as none. */
         val satellites: Int? = null,
     )
 
@@ -62,7 +63,7 @@ object Nmea {
                 longitude(fix.longitude),
                 if (fix.longitude < 0) "W" else "E",
                 "1",
-                field("%02d", fix.satellites?.takeIf { it >= 0 }?.coerceAtMost(99)),
+                field("%02d", fix.satellites?.takeIf { it > 0 }?.coerceAtMost(99)),
                 field("%.1f", hdop),
                 field("%.1f", msl),
                 "M",

@@ -40,6 +40,13 @@ class NmeaTest {
     }
 
     @Test
+    fun `no satellite count, or Android's 0, leaves the field empty`() {
+        val zero = Nmea.gga(fix.copy(satellites = 0))
+        assertTrue(zero, zero.contains(",W,1,,0.9,"))
+        assertEquals(zero, Nmea.gga(fix.copy(satellites = null)))
+    }
+
+    @Test
     fun `without Android 14's sea level height the ellipsoid stands in with no separation`() {
         val gga = Nmea.gga(fix.copy(mslAltitudeM = null))
         assertTrue(gga, gga.contains(",156.2,M,0.0,M,,*"))
