@@ -20,7 +20,7 @@ private const val TAG = "CARLINK_PLAYER"
  *
  * This is a "mirror player" — no audio decode or playback happens locally. The connected
  * phone plays media over the USB link; the adapter relays metadata + transport state frames
- * (CarPlay / Android Auto MEDIA_DATA messages), and AAOS Media Center + steering-wheel
+ * (the iPhone's CarPlay now-playing), and AAOS Media Center + steering-wheel
  * control gestures are routed back to the adapter as USB commands via [Callback].
  *
  * Why [SimpleBasePlayer]?

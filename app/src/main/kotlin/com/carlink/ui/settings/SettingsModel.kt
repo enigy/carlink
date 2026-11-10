@@ -81,12 +81,7 @@ object SettingsModel {
         type: PhoneType,
         wireless: Boolean,
     ): String {
-        val family =
-            when {
-                isCarPlay(type) -> "CarPlay"
-                type == PhoneType.ANDROID_AUTO -> "Android Auto"
-                else -> "projection"
-            }
+        val family = if (isCarPlay(type)) "CarPlay" else "projection"
         return if (wireless) "Wireless $family" else "Wired $family"
     }
 

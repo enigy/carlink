@@ -562,7 +562,7 @@ class MediaSessionManager(
                             MediaMetadata
                                 .Builder()
                                 .setTitle("Browsing not available")
-                                .setSubtitle("Carlink mirrors phone projection — open the app to start CarPlay/Android Auto")
+                                .setSubtitle("Carlink mirrors phone projection — open the app to start CarPlay")
                                 .setIsBrowsable(false)
                                 .setIsPlayable(false)
                                 .build(),
@@ -614,7 +614,7 @@ class MediaSessionManager(
                                 MediaMetadata
                                     .Builder()
                                     .setTitle("Browsing not available")
-                                    .setSubtitle("Carlink mirrors phone projection — open the app to start CarPlay/Android Auto")
+                                    .setSubtitle("Carlink mirrors phone projection — open the app to start CarPlay")
                                     .setIsBrowsable(false)
                                     .setIsPlayable(false)
                                     .build(),

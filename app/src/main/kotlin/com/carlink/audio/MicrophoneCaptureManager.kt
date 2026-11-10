@@ -36,15 +36,15 @@ data class MicFormatConfig(
 }
 
 /**
- * Predefined microphone formats from CPC200-CCPA protocol.
+ * Microphone formats, indexed by the stock CPC200-CCPA protocol's `decodeType`.
  *
- * The capture format is NOT static — it is selected dynamically from the `decodeType`
- * field of the adapter's `AUDIO_INPUT_CONFIG` command at session start. CarPlay/Siri
- * use 16kHz wideband; Android Auto phone calls switch to 8kHz HFP/SCO narrowband.
+ * The capture format is NOT static: under OCBM it is the uplink format the adapter negotiates
+ * (`CT_UPLINK` rate and channels), which [MicProfile.decodeTypeFor] maps onto this table. Siri
+ * and CarPlay calls use 16 kHz mono; 8 kHz mono stays for a session that negotiates narrowband.
  * See `documents/reference/adapter/RE_Documention/03_Audio_Processing/microphone_processing.md`.
  */
 object MicFormats {
-    val PHONE_CALL = MicFormatConfig(8000, 1) // decodeType=3: Android Auto phone calls (HFP/SCO narrowband). CarPlay phone calls use SIRI_VOICE
+    val PHONE_CALL = MicFormatConfig(8000, 1) // decodeType=3: 8 kHz narrowband, a CT_UPLINK at 8 kHz mono. CarPlay phone calls use SIRI_VOICE
     val SIRI_VOICE = MicFormatConfig(16000, 1) // decodeType=5: Siri/voice assistant + CarPlay phone calls (iAP2 wideband)
 
     // Dead-code-in-practice: WebRTC AECM accepts only 8kHz/16kHz, and the firmware does
@@ -173,8 +173,8 @@ class MicrophoneCaptureManager(
         ) == PackageManager.PERMISSION_GRANTED
 
     /**
-     * Start capture. [decodeType] should come from the adapter's `AUDIO_INPUT_CONFIG`:
-     *  - 3 = Android Auto phone call (8kHz HFP/SCO narrowband)
+     * Start capture. [decodeType] indexes [MicFormats]; [MicProfile.decodeTypeFor] maps the negotiated uplink onto it:
+     *  - 3 = 8 kHz narrowband
      *  - 5 = Siri / voice assistant / CarPlay phone call (16kHz wideband — default)
      *  - 6 = enhanced voice (24kHz mono): firmware accepts the format but does not
      *        forward the audio downstream — dead in practice.
