@@ -71,7 +71,7 @@ sealed interface PhoneSetupPhase {
         val body: String,
     ) : PhoneSetupPhase
 
-    /** A paired iPhone answered the adapter and reset the link twice: it has most likely forgotten the pairing (BTP_BOND_LOST). */
+    /** A paired iPhone kept answering and resetting the link, or refused its key: it most likely forgot the pairing (BTP_BOND_LOST). */
     data class PhoneForgot(
         val name: String,
     ) : PhoneSetupPhase
@@ -460,9 +460,10 @@ class PhoneSetup(
     }
 
     /**
-     * BTP_BOND_LOST: a paired iPhone answered the adapter's call and reset the link twice, so it most likely forgot the
-     * pairing (5 Nov bench: six pages, each answered and reset, and pairing offered only after a minute's wait). Say so
-     * at once, with how to re-pair. Not while a phone is connected or the driver is already pairing.
+     * BTP_BOND_LOST: a paired iPhone answered the adapter's call and reset the link three times in a row, or refused its
+     * stored key, so it most likely forgot the pairing (5 Nov bench: six pages, each answered and reset, and pairing
+     * offered only after a minute's wait). Say so at once, with how to re-pair. Not while a phone is connected or the
+     * driver is already pairing.
      */
     private fun phoneForgot() {
         val shown =
@@ -473,7 +474,7 @@ class PhoneSetup(
                 phaseState.value = PhoneSetupPhase.PhoneForgot(nameNow())
                 now
             }
-        logWarn("[PAIRING] BT_PHASE BOND_LOST: a paired iPhone reset the link twice; asking for a re-pair (was $shown)", tag = Logger.Tags.ADAPTR)
+        logWarn("[PAIRING] BT_PHASE BOND_LOST: a paired iPhone kept resetting the link or refused its key; asking for a re-pair (was $shown)", tag = Logger.Tags.ADAPTR)
     }
 
     /** CT_PAIRING_CODE while the window is open (empty clears it); the Pair / Cancel prompt itself is the manager's. */
