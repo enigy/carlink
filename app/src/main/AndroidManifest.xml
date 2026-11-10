@@ -64,12 +64,15 @@
         android:name="android.software.car.templates_host"
         android:required="false" />
 
-    <!-- Package visibility (targetSdk 30+). Both lookups return null without this: binding the
-         sideloaded USB bridge's service (usb/CarlinkBridge) and resolving the cluster icon
-         authority it hosts (NavigationStateManager.initialize). -->
+    <!-- Package visibility (targetSdk 30+): binding the sideloaded USB bridge's service
+         (usb/CarlinkBridge) returns null without this. -->
     <queries>
         <package android:name="android.car.usb.handler" />
-        <provider android:authorities="com.google.android.apps.automotive.templates.host.ClusterIconContentProvider" />
+        <!-- Bridge 1.0.9's update: the head unit's "install unknown apps" page for the bridge (BridgeUpdateHub). -->
+        <intent>
+            <action android:name="android.settings.MANAGE_UNKNOWN_APP_SOURCES" />
+            <data android:scheme="package" />
+        </intent>
         <!-- The built-in Files app, opened from the bridge setup panel to install the bridge from a
              USB drive (util/FilesLauncher, Carlink2 [210]). -->
         <package android:name="com.android.documentsui" />

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,13 +29,15 @@ import com.carlink.ui.components.DialogWeight
 import com.carlink.usb.BridgeAccess
 import com.carlink.usb.BridgeAccessHub
 import com.carlink.usb.BridgeAccessText
+import com.carlink.usb.BridgeUpdateHub
+import com.carlink.util.FilesLauncher
 import kotlinx.coroutines.launch
 import java.util.Date
 
 /**
  * Adapter and about › USB bridge (bridge 1.0.8, API 6): the bridge's version, and the owner's opt-in that lets apps
  * they approve use the adapter. Turning it on is for parked, behind the risk dialog; turning it off works while
- * driving and needs no dialog.
+ * driving and needs no dialog. From 2.24, the bridge this Carlink pins when it is newer ([BridgeUpdateRows]).
  */
 @Composable
 internal fun UsbBridgeGroup(
@@ -47,10 +50,22 @@ internal fun UsbBridgeGroup(
     var askRisk by remember { mutableStateOf(false) }
     var refusal by remember { mutableStateOf<String?>(null) }
     val switch = BridgeAccessText.switchState(access, live.driving)
+    val updateOffer by BridgeUpdateHub.offer.collectAsState()
+    val updateStep by BridgeUpdateHub.step.collectAsState()
+    LaunchedEffect(Unit) { BridgeUpdateHub.refresh(context) }
+    val allowInstalls: (() -> Unit)? = remember { BridgeUpdateHub.allowInstallsIntent(context)?.let { { BridgeUpdateHub.openAllowInstalls(context) } } }
     SettingsGroup(modifier = modifier) {
         SettingRow(title = "USB bridge", icon = Icons.Default.Usb) {
             Text(access.bridgeVersion ?: "- - -", style = SettingsStyle.RowTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        BridgeUpdateRows(
+            offer = updateOffer,
+            step = updateStep,
+            driving = live.driving,
+            onUpdate = { pin -> BridgeUpdateHub.update(context, pin) },
+            onAllowInstalls = allowInstalls,
+            onOpenFiles = { FilesLauncher.open(context, "[BRIDGE_UPDATE]") },
+        )
         GroupDivider()
         SwitchRow(
             title = BridgeAccessText.SWITCH_TITLE,

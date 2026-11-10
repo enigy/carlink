@@ -62,7 +62,6 @@ import com.carlink.media.PlayStatus
 import com.carlink.media.TrackChangeHold
 import com.carlink.media.TrackWords
 import com.carlink.navigation.LaneActivity
-import com.carlink.navigation.NavigationStateManager
 import com.carlink.navigation.OcbmNavigationFeed
 import com.carlink.navigation.compose.ComposedIconStore
 import com.carlink.ocbm.AdapterPhone
@@ -116,6 +115,7 @@ import com.carlink.ui.settings.SessionSettings
 import com.carlink.usb.AdapterHandover
 import com.carlink.usb.BridgeAccessHub
 import com.carlink.usb.BridgeAccessText
+import com.carlink.usb.BridgeUpdateHub
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.usb.UsbPermissionWait
@@ -214,12 +214,13 @@ class CarlinkManager(
 
     init {
         live = this
-        // Carlink: cluster/HUD navigation (from Carlink2). Resolves the Templates Host icon
-        // authority the bridge hosts; the compose icon store renders maneuver bitmaps for it.
-        NavigationStateManager.initialize(context.applicationContext)
+        // Carlink: cluster/HUD navigation (from Carlink2): the compose icon store renders maneuver bitmaps
+        // for the Templates Host icon authority the bridge hosts.
         ComposedIconStore.setEnabled(true)
         // Bridge API 6: the app the adapter was handed to is done, or the owner took it back; connect as after a detach.
         BridgeAccessHub.onHandoverEnded = { if (live === this) scope.launch { startIfDisconnected("the adapter's handover ended") } }
+        // Bridge API 7: the bridge updated itself, which ended its process and this session's link: connect through the new one.
+        BridgeUpdateHub.onUpdated = { if (live === this) scope.launch { startIfDisconnected("the USB bridge was updated") } }
     }
 
     companion object {

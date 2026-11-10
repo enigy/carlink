@@ -40,16 +40,16 @@ object InstallerImage {
      */
     val PINNED: PinnedImage? =
         PinnedImage(
-            // "1.0.5 ocbm dcb95cc", CarPlay only, every binary built from dcb95cc: its files match the pinned update package
-            // (benched 9 Nov; Scott, 10 Nov).
-            tag = "installer-1.0.5",
-            url = "https://github.com/enigy/ocbm/releases/download/installer-1.0.5/A15W_Update.img",
-            sizeBytes = 1_911_614L,
-            sha256 = "2344a8d4b8842707ee9c6a51a3820e85651d279f03e25c87b31a754cfa4d0a6f",
+            // "1.0.6 ocbm f2bf538", every binary built from f2bf538: its files match the pinned update package (published
+            // 10 Nov; the code benched 10 Nov on b84a58b, which differs only in VERSION).
+            tag = "installer-1.0.6",
+            url = "https://github.com/enigy/ocbm/releases/download/installer-1.0.6/A15W_Update.img",
+            sizeBytes = 1_914_305L,
+            sha256 = "75204b5c4272bf48b607ddb56acdcc165de6987726b4a2cdfcf629325cae3d8c",
         )
 
     /** Where the stick guide is: the installer image's release page (M7). A build with the switch off points at it. */
-    const val STICK_GUIDE = "github.com/enigy/ocbm/releases/tag/installer-1.0.5"
+    const val STICK_GUIDE = "github.com/enigy/ocbm/releases/tag/installer-1.0.6"
 
     /** The name the stock firmware installs from, at the root of a stick in the adapter. */
     const val FILE_NAME = "A15W_Update.img"

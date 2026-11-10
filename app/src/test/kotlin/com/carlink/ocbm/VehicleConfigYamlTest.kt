@@ -98,6 +98,16 @@ metadata:
   tier: proven
 """.trimStart('\n')
 
+    /**
+     * The document enigy/ocbm's receiver pins as `APP_EMITTED_DOCUMENT` (crates/vendor/receiver/src/vehicle_config.rs),
+     * its drift guard for this emitter: the GM panel's push with the split layout and lanes asked for, and an icon
+     * label that needs escaping. When this literal changes, paste it there too, unedited.
+     */
+    @Test
+    fun `the document OCBM's receiver pins renders byte for byte`() {
+        assertEquals(RECEIVER_FIXTURE, VehicleConfigYaml.render(RECEIVER_FIXTURE_SPEC))
+    }
+
     @Test
     fun `the default document renders byte for byte`() {
         assertEquals(expected, VehicleConfigYaml.render(VehicleConfigSpec()))
@@ -405,5 +415,132 @@ metadata:
             threw = true
         }
         assertTrue(threw)
+    }
+
+    private companion object {
+        /** The truck's push with the split layout and lanes asked for, and an icon label that needs escaping. */
+        val RECEIVER_FIXTURE_SPEC =
+            VehicleConfigSpec(
+                viewArea2 = PixelRect(0, 0, 1680, 960),
+                viewAreaAnimMs = SplitViewArea.TRANSITION_MS,
+                metadataTier = "extended",
+                metadataSkip = VehicleConfigSpec.LANES_ONLY_SKIP,
+                oemIconImages =
+                    listOf(
+                        OemIcon.Image(120, 120, "AAAA"),
+                        OemIcon.Image(180, 180, "BBBB"),
+                        OemIcon.Image(256, 256, "CCCC"),
+                    ),
+                oemIconLabel = "Owner's \"Roadster\" \\ EV\u0007",
+            )
+
+        val RECEIVER_FIXTURE =
+            """
+name: "CarLink GM 2400x960"
+version: 1
+wireless: true
+hot_handover: false
+pairing: just_works
+rightHandDrive: false
+nightMode: false
+view_area_anim_ms: 500
+displayPanelsConfig:
+  mainDisplayPanel:
+    displayPanelID: DisplayPanel.Main
+    pixelDimensions:
+      width: 2400
+      height: 960
+  altDisplayPanels: []
+videoStreamsConfig:
+  mainVideoStream:
+    videoStreamID: VideoStream.Main
+    pixelDimensions:
+      width: 2400
+      height: 960
+    maxFPS: 60
+    viewAreas:
+    - viewArea:
+        originX: 0
+        originY: 0
+        width: 2400
+        height: 960
+      safeArea:
+        originX: 0
+        originY: 0
+        width: 2400
+        height: 960
+      drawUIOutsideSafeArea: false
+    - viewArea:
+        originX: 0
+        originY: 0
+        width: 1680
+        height: 960
+      safeArea:
+        originX: 0
+        originY: 0
+        width: 1680
+        height: 960
+      drawUIOutsideSafeArea: false
+      initial: true
+    hidConfig:
+      dPadSupport: false
+      knobSupport: false
+      knobSupportsHomeAndBackButton: false
+      knobSupportsNudge: false
+      mediaButtonsSupport: true
+      telephonyButtonsSupport: true
+      touchpadSupport: false
+      touchpadButtonsSupport: false
+      touchScreenMode: High Fidelty
+      touchScreenSupportsCancel: true
+      touchScreenSupportsMultiTouch: true
+      steeringWheelSupport: false
+    primaryInput: Touchpad
+  altVideoStreams: []
+accessoryConfig:
+  enablesMainBufferedAudio: false
+  enablesHEVC: true
+  enablesUIAppearance: true
+  enablesMapAppearance: true
+  enablesCornerMasks: false
+  enablesVideoPlayback: true
+  enablesViewAreas: true
+  enablesEnhancedSiri: false
+  enablesFocusTransfer: false
+  enablesUIContext: false
+  enablesUISync: false
+  enablesFileTransfer: false
+  enablesLogTransfer: false
+  enablesVehicleDataProtocol: false
+  enablesDCX: false
+limitedUIConfig:
+  softKeyboard: true
+  softPhoneKeypad: true
+  nonMusicLists: true
+  musicLists: true
+  japanMaps: false
+  longAlerts: true
+oemIconConfig:
+  images:
+    - width: 120
+      height: 120
+      imageBase64: "AAAA"
+    - width: 180
+      height: 180
+      imageBase64: "BBBB"
+    - width: 256
+      height: 256
+      imageBase64: "CCCC"
+  label: "Owner's \"Roadster\" \\ EV"
+  visible: true
+audio:
+  wired:
+    preset: wired_pcm
+  wireless:
+    preset: wireless_8
+metadata:
+  tier: extended
+  skip: [communications, call_history, power, app_discovery, destination, device_info]
+""".trimStart('\n')
     }
 }

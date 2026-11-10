@@ -10,8 +10,8 @@ Only the newest release gets security fixes. Update to it before reporting, if y
 
 | Component | Supported | Where it comes from |
 | --- | --- | --- |
-| Carlink app (`com.enigy.carlink3`) | The newest release (2.23 today) | Google Play, or the APK on the GitHub release |
-| Carlink USB Bridge | The version the newest release ships (1.0.8 today) | `app/carlink_bridge.apk` in this repo, and the GitHub release |
+| Carlink app (`com.enigy.carlink3`) | The newest release (2.24 today) | Google Play, or the APK on the GitHub release |
+| Carlink USB Bridge | The version the newest release ships (1.0.9 today) | `app/carlink_bridge.apk` in this repo, and the GitHub release |
 | OCBM adapter software | Reported to its own repo, [enigy/ocbm](https://github.com/enigy/ocbm) | The adapter's one-file install |
 | Older app and bridge versions | No |  |
 
@@ -47,7 +47,7 @@ Please keep the report private until a fix is released, or for 90 days, whicheve
 In scope:
 
 - **The Carlink app**: how it handles what the adapter and the iPhone send it, its settings and saved data, and what it sends over the network (lyrics lookups to LRCLIB, release downloads from GitHub).
-- **The Carlink USB Bridge**: it should answer only Carlink builds signed with the pinned keys, and its icon provider only the car's system apps. From 1.0.8 the owner may approve other apps, by package and signing key, and hand them the adapter. An app the owner didn't approve reaching the adapter, an approved app reaching it without a handover, or any app but Carlink reaching an access call (approve, hand over and the rest) is High. What an approved app does with the adapter while the owner has handed it over is the owner's choice, not a vulnerability.
+- **The Carlink USB Bridge**: it should answer only Carlink builds signed with the pinned keys, and its icon provider only the car's system apps. From 1.0.8 the owner may approve other apps, by package and signing key, and hand them the adapter. An app the owner didn't approve reaching the adapter, an approved app reaching it without a handover, or any app but Carlink reaching an access call (approve, hand over and the rest) is High. What an approved app does with the adapter while the owner has handed it over is the owner's choice, not a vulnerability. From 1.0.9 the bridge reaches the internet for one thing only: fetching its own update from the GitHub release Carlink pins, when the owner taps Update in Settings, parked. The bridge checks the file's size, SHA-256, package name and version code before it installs it, and only Carlink may ask; an update from anywhere else, or one installed without the owner's tap, is Critical.
 - **Cluster and HUD**: the cluster service should bind only to the car's own templates host.
 - **Logs**: Save Logs should hide phone names, Bluetooth addresses, callers and places. A personal detail that gets through is a bug to report here.
 - **This repo's build and release pipeline**: the GitHub Actions workflows, signing, and the Google Play upload.

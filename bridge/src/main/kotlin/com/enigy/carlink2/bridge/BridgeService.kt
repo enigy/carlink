@@ -26,7 +26,8 @@ import android.util.Log
  * Every call but getApiVersion() is the display app's alone ([CallerVerifier]), a session
  * handle's ([Handle], API 5) included. From API 6 the owner may let apps it approves in Carlink use
  * openSession, their own handles, getStatus, hasPermission and requestPermission, while Carlink hands
- * the adapter over and on adapters only ([AccessControl]); off, the default, changes nothing.
+ * the adapter over and on adapters only ([AccessControl]); off, the default, changes nothing. API 7: Carlink, and only
+ * Carlink, may ask the bridge to update itself to the version it pins ([BridgeUpdater]).
  */
 class BridgeService : Service() {
     private lateinit var usbManager: UsbManager
@@ -34,6 +35,7 @@ class BridgeService : Service() {
     private lateinit var callers: CallerVerifier
     private lateinit var prompt: PermissionPrompt
     private lateinit var apps: AccessControl
+    private lateinit var updates: BridgeUpdater
 
     /** Who called: Carlink, or an approved app (API 6). */
     private sealed interface Caller {
@@ -223,6 +225,19 @@ class BridgeService : Service() {
                 enforceCaller()
                 apps.setListener(listener)
             }
+
+            override fun installUpdate(
+                json: String?,
+                listener: IBridgeUpdateListener?,
+            ) {
+                enforceCaller()
+                updates.start(json, listener)
+            }
+
+            override fun canInstallPackages(): Boolean {
+                enforceCaller()
+                return updates.canInstall()
+            }
         }
 
     /**
@@ -342,6 +357,7 @@ class BridgeService : Service() {
         callers = CallerVerifier(this, BuildConfig.CALLER_CERTS)
         prompt = PermissionPrompt(this, usbManager).apply { register() }
         apps = AccessControl(this, usbManager, usb, callers)
+        updates = BridgeUpdater(this, BridgeUpdates.parts(this))
         register(detachReceiver, IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED))
         val packages =
             IntentFilter().apply {
@@ -427,7 +443,7 @@ class BridgeService : Service() {
             }
         return "bridge api=${BridgeContract.API_VERSION} v=${BuildConfig.VERSION_NAME} " +
             "user=${Process.myUid() / PER_USER_RANGE} handler=${fixedHandlerComponent()} " +
-            "devices=$devices session=$sessionText ${apps.describe()} ${prompt.describe()} ${BridgeStats.describe()}"
+            "devices=$devices session=$sessionText ${apps.describe()} ${updates.describe()} ${prompt.describe()} ${BridgeStats.describe()}"
     }
 
     @SuppressLint("DiscouragedApi")

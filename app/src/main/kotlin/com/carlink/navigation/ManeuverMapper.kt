@@ -19,11 +19,10 @@ import com.carlink.logging.logWarn
  * (decompiled from DelayedWKSApp). Neither artefact is checked into this repo —
  * the mapping table here is the only in-tree source of truth.
  *
- * Icon source is protocol-dependent:
- *   AA      → adapter-forwarded NAVI_IMAGE bitmap (Google Maps pre-rendered PNG)
- *   CarPlay → static VectorDrawable resource icons (createWithResource, which marshals
- *             a stable resource ID that Templates Host caches by name — avoids the
- *             per-bitmap-identity thrashing you get from createWithBitmap).
+ * Icon source: the composed route icon ([com.carlink.navigation.compose.ComposedIconStore]) once it
+ * is ready, else static VectorDrawable resource icons (createWithResource, which marshals a stable
+ * resource ID that Templates Host caches by name — avoids the per-bitmap-identity thrashing you get
+ * from createWithBitmap).
  *
  * The sideloaded bridge's ClusterIconProvider (:bridge) claims the orphaned GM cluster-icon
  * ContentProvider authority so Templates Host's CarIcon→PNG conversion succeeds; that
@@ -45,15 +44,15 @@ import com.carlink.logging.logWarn
  */
 object ManeuverMapper {
     /** Cache built Maneuver objects to avoid icon thrashing.
-     *  Key space is implicitly bounded: cpType (0-53) × turnSide (0-1) × hasAaIcon (0-1)
+     *  Key space is implicitly bounded: cpType (0-53) × turnSide (0-1) × composed (0-1)
      *  → at most ~216 entries. No explicit eviction beyond [clearCache]. */
     private val maneuverCache = HashMap<Int, Maneuver>()
 
-    /** Identity hash of the AA icon Bitmap used in the last cached entry.
+    /** Identity hash of the composed icon Bitmap used in the last cached entry.
      *  Uses System.identityHashCode (object identity), NOT a content hash — so the
      *  same pixels delivered as a new Bitmap instance will invalidate the cache.
      *  Acceptable: an extra rebuild is cheaper than a content-hashing pass. */
-    private var lastCachedAaIconHash = 0
+    private var lastCachedIconHash = 0
 
     /**
      * Map a CPManeuverType + turnSide to a Maneuver.TYPE_* constant.
@@ -286,10 +285,10 @@ object ManeuverMapper {
     }
 
     /**
-     * Convert a driver-relative iAP2/AA exit angle into the androidx swept-angle convention
+     * Convert a driver-relative iAP2 exit angle into the androidx swept-angle convention
      * expected by [Maneuver.Builder.setRoundaboutExitAngle].
      *
-     * Source angle (iAP2 `0x000b JunctionElementExitAngle`, or AA `NaviTurnAngle`) is
+     * Source angle (iAP2 `0x000b JunctionElementExitAngle`) is
      * driver-relative signed degrees: 0=straight, +90=right, −90=left, ±180=back. Templates
      * Host buckets the SWEPT angle instead (≈180=straight, ≈0/360=u-turn). Per
      * `documents/reference/gminfo/projection/cluster_maneuver_mapping.md` §3:
@@ -316,7 +315,7 @@ object ManeuverMapper {
     /** Evict maneuver cache on disconnect or icon change. */
     fun clearCache() {
         maneuverCache.clear()
-        lastCachedAaIconHash = 0
+        lastCachedIconHash = 0
     }
 
     /**
@@ -341,9 +340,7 @@ object ManeuverMapper {
         // until the step changes, so distance ticks never swap it — with ONE exception: a static
         // fallback is upgraded once the composed icon for that step is ready. [201] keyed the hold
         // on the route object and never upgraded, so every mid-drive route re-send pinned the
-        // static fallback for the rest of the step. AA (no route plan) is left alone: its
-        // NAVI_IMAGE can land just after the maneuver change, and holding there would pin the
-        // previous step's icon for a whole step.
+        // static fallback for the rest of the step. Without a route plan there is no step to hold.
         val stepKey =
             com.carlink.navigation.compose.ComposedIconStore.currentRoute()?.let {
                 StepKey(state.maneuverType, state.roadName, state.turnSide, state.exitAngle)
@@ -423,13 +420,8 @@ object ManeuverMapper {
         composedIcon: android.graphics.Bitmap? = null,
         exitAngle: Int? = null,
     ): Maneuver {
-        // Priority: composed (D16, CarPlay+composer enabled) > AA pre-rendered (Android Auto)
-        //         > static VectorDrawable (everything else).
-        val aaIcon =
-            composedIcon
-                ?: NavigationStateManager.currentManeuverIcon
-                    ?.takeIf { NavigationStateManager.canUseAaManeuverIcon() }
-        val aaIconHash = aaIcon?.let { System.identityHashCode(it) } ?: 0
+        // Priority: composed (D16, CarPlay+composer enabled) > static VectorDrawable.
+        val iconHash = composedIcon?.let { System.identityHashCode(it) } ?: 0
 
         // Roundabout WITH_ANGLE refinement (mapping doc §3/§5): when an ENTER_AND_EXIT
         // roundabout (cpType 28-46, the same range [mapManeuverType] maps to ENTER_AND_EXIT)
@@ -453,10 +445,10 @@ object ManeuverMapper {
         // androidxAngle (1..360) occupies the high bits; cpType (0-53) bits 16-21; turnSide
         // bit 8; icon-source flags bits 0-1. 360 shl 22 stays within Int range.
         val angleKey = (androidxAngle ?: 0) shl 22
-        val cacheKey = angleKey or (cpType shl 16) or (turnSide shl 8) or (if (aaIcon != null) 1 else 0) or composedFlag
+        val cacheKey = angleKey or (cpType shl 16) or (turnSide shl 8) or composedFlag
 
         maneuverCache[cacheKey]?.let { cached ->
-            if (aaIcon == null || aaIconHash == lastCachedAaIconHash) {
+            if (composedIcon == null || iconHash == lastCachedIconHash) {
                 return cached
             }
         }
@@ -466,9 +458,8 @@ object ManeuverMapper {
         // as pure data — the real type feeds GM's OnStarTurnByTurnManager for
         // classification, fallback rendering, and roundabout exit counting.
         //
-        // Icon source depends on protocol (see class KDoc for the full rationale):
-        //   AA      -> adapter-forwarded NAVI_IMAGE bitmap (Google Maps pre-rendered)
-        //   CarPlay -> static VectorDrawable resource icons (stable IPC hashing)
+        // Icon source (see class KDoc for the full rationale): the composed bitmap when ready,
+        // else static VectorDrawable resource icons (stable IPC hashing).
         val baseType = mapManeuverType(cpType, turnSide)
         // Upgrade to the directional `..._WITH_ANGLE` type only when we resolved a swept angle
         // for an ENTER_AND_EXIT roundabout; otherwise keep the base type unchanged.
@@ -493,11 +484,11 @@ object ManeuverMapper {
         }
 
         val icon: CarIcon
-        if (aaIcon != null) {
-            icon = CarIcon.Builder(IconCompat.createWithBitmap(aaIcon)).build()
-            lastCachedAaIconHash = aaIconHash
+        if (composedIcon != null) {
+            icon = CarIcon.Builder(IconCompat.createWithBitmap(composedIcon)).build()
+            lastCachedIconHash = iconHash
             logInfo(
-                "[MANEUVER] AA bitmap (${aaIcon.width}x${aaIcon.height}), type=$type " +
+                "[MANEUVER] composed bitmap (${composedIcon.width}x${composedIcon.height}), type=$type " +
                     "(cpType=$cpType, turnSide=$turnSide)",
                 tag = Logger.Tags.NAVI,
             )
