@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import com.carlink.car.CarGpsFeed
 import com.carlink.car.VehicleData
@@ -82,6 +83,7 @@ import com.carlink.util.LogCallback
 import com.carlink.util.SigningCerts
 import com.carlink.voice.VoiceKeys
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -194,6 +196,7 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.RequestPermission(),
         ) { isGranted ->
             logInfo("Microphone permission ${if (isGranted) "granted" else "denied"}", tag = "MAIN")
+            PermissionPrompt.answered()
             if (isGranted) carlinkManager?.checkCallPathIfNeeded()
             requestSpeedPermission()
         }
@@ -205,6 +208,7 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.RequestPermission(),
         ) { isGranted ->
             logInfo("Vehicle speed permission ${if (isGranted) "granted" else "denied"}", tag = "MAIN")
+            PermissionPrompt.answered()
             VehicleData.start(applicationContext)
             requestLocationPermission()
         }
@@ -215,6 +219,7 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.RequestMultiplePermissions(),
         ) { granted ->
             logInfo("Location permission for Car GPS: $granted", tag = "MAIN")
+            PermissionPrompt.answered()
         }
 
     /**
@@ -286,9 +291,10 @@ class MainActivity : ComponentActivity() {
         checkBridgeInstalled()
         application.registerActivityLifecycleCallbacks(carAppActivityWindow)
         ClusterBindingState.onLost = clusterLost
-        // Cluster steps held during a USB permission prompt run when it closes.
+        // Cluster steps held during a USB or runtime permission prompt run once both have closed.
         lifecycleScope.launch {
-            UsbPermissionPrompt.open.collect { open -> if (!open) releaseHeldClusterSteps() }
+            combine(UsbPermissionPrompt.open, PermissionPrompt.open) { usb, asked -> usb || asked }
+                .collect { open -> if (!open) releaseHeldClusterSteps() }
         }
         if (ClusterNavigation.isEnabled(this)) {
             Handler(Looper.getMainLooper()).postDelayed({
@@ -360,6 +366,8 @@ class MainActivity : ComponentActivity() {
         applyDisplayMode()
         checkBridgeInstalled()
         BridgeSetupNotification.cancel(this) // back from Files: the way-back note is done
+        // Resumed: no permission dialog is over this activity, so a held cluster step can run unless the USB prompt is up.
+        if (!UsbPermissionPrompt.isOpen) releaseHeldClusterSteps()
     }
 
     /**
@@ -820,7 +828,7 @@ class MainActivity : ComponentActivity() {
             requestSpeedPermission()
         } else {
             logInfo("Requesting microphone permission", tag = "MAIN")
-            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            PermissionPrompt.ask(micPermissionLauncher, Manifest.permission.RECORD_AUDIO)
         }
     }
 
@@ -838,7 +846,7 @@ class MainActivity : ComponentActivity() {
             requestLocationPermission()
         } else {
             logInfo("Requesting vehicle speed permission", tag = "MAIN")
-            speedPermissionLauncher.launch(VehicleData.SPEED_PERMISSION)
+            PermissionPrompt.ask(speedPermissionLauncher, VehicleData.SPEED_PERMISSION)
         }
     }
 
@@ -846,7 +854,7 @@ class MainActivity : ComponentActivity() {
     private fun requestLocationPermission() {
         if (!VehicleStore.get(this).carGps.value || CarGpsFeed.permitted(this)) return
         logInfo("Requesting the location permission for Car GPS", tag = "MAIN")
-        locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        PermissionPrompt.ask(locationPermissionLauncher, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
     }
 
     /**
@@ -923,12 +931,12 @@ class MainActivity : ComponentActivity() {
     private val clusterRebind = ClusterRebind()
     private val clusterLost: () -> Unit = { Handler(Looper.getMainLooper()).post(::onClusterLost) }
 
-    // A launch or bring-back held while a USB permission prompt was open ([UsbPermissionPrompt]).
+    // A launch or bring-back held while a system prompt was over this activity ([promptShowing]).
     private var heldClusterLaunch = false
     private var heldBringBack = false
 
     /**
-     * Run what [UsbPermissionPrompt] held, once the prompt has closed: the launch first (it schedules
+     * Run what [promptShowing] held, once the prompt has closed: the launch first (it schedules
      * its own bring-back), otherwise just the bring-back. Main thread.
      */
     private fun releaseHeldClusterSteps() {
@@ -937,12 +945,12 @@ class MainActivity : ComponentActivity() {
             heldClusterLaunch -> {
                 heldClusterLaunch = false
                 heldBringBack = false
-                logInfo("[CLUSTER] USB permission prompt closed — launching the held CarAppActivity", tag = "MAIN")
+                logInfo("[CLUSTER] prompt closed — launching the held CarAppActivity", tag = "MAIN")
                 launchCarAppActivity()
             }
             heldBringBack -> {
                 heldBringBack = false
-                logInfo("[CLUSTER] USB permission prompt closed — bringing MainActivity back", tag = "MAIN")
+                logInfo("[CLUSTER] prompt closed — bringing MainActivity back", tag = "MAIN")
                 bringMainActivityBack()
             }
         }
@@ -958,15 +966,29 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * The system prompt a cluster step would cover, or null: the USB permission prompt ([UsbPermissionPrompt]), or a
+     * runtime permission dialog ([PermissionPrompt]) while it is over this activity. A dialog still waiting while this
+     * activity is resumed is already behind it, so it holds nothing.
+     */
+    private fun promptShowing(): String? =
+        when {
+            UsbPermissionPrompt.isOpen -> "USB permission prompt"
+            PermissionPrompt.isOpen && !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) -> "permission dialog"
+            else -> null
+        }
+
+    /**
      * Launch the hidden CarAppActivity; retried after 4 s if a previous session is still alive.
      *
-     * Held while a USB permission prompt is open ([UsbPermissionPrompt]), and so is the bring-back
-     * after it: either one put over the system dialog paused it and left the whole screen ignoring
-     * touches (emulator, 2026-10-20). Both run once the prompt closes ([releaseHeldClusterSteps]).
+     * Held while a system prompt is up ([promptShowing]), and so is the bring-back after it: either one put over the
+     * USB dialog paused it and left the whole screen ignoring touches (emulator, 2026-10-20), and the bring-back buried
+     * a permission dialog under MainActivity, unanswerable (Mac bench, 11 Nov). Both run once the prompt closes
+     * ([releaseHeldClusterSteps]).
      */
     private fun launchCarAppActivity() {
-        if (UsbPermissionPrompt.isOpen) {
-            if (!heldClusterLaunch) logInfo("[CLUSTER] USB permission prompt open — holding the CarAppActivity launch", tag = "MAIN")
+        val prompt = promptShowing()
+        if (prompt != null) {
+            if (!heldClusterLaunch) logInfo("[CLUSTER] $prompt open — holding the CarAppActivity launch", tag = "MAIN")
             heldClusterLaunch = true
             return
         }
@@ -992,8 +1014,8 @@ class MainActivity : ComponentActivity() {
             Handler(Looper.getMainLooper()).postDelayed({
                 when {
                     isDestroyed || isFinishing -> Unit
-                    UsbPermissionPrompt.isOpen -> {
-                        logInfo("[CLUSTER] USB permission prompt open — holding the bring-back", tag = "MAIN")
+                    promptShowing() != null -> {
+                        logInfo("[CLUSTER] ${promptShowing()} open — holding the bring-back", tag = "MAIN")
                         heldBringBack = true
                     }
                     else -> bringMainActivityBack()

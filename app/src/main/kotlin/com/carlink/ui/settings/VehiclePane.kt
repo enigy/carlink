@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.carlink.PermissionPrompt
 import com.carlink.car.CarGpsFeed
 import com.carlink.car.VehicleData
 import com.carlink.car.VehicleReadings
@@ -47,17 +50,27 @@ internal fun VehiclePane(modifier: Modifier = Modifier) {
     var energyAllowed by remember { mutableStateOf(granted(context, VehicleData.ENERGY_PERMISSION)) }
     val askLocation =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            PermissionPrompt.answered()
             locationAllowed = CarGpsFeed.permitted(context)
         }
     val askEnergy =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+            PermissionPrompt.answered()
             energyAllowed = ok
             if (ok) VehicleData.start(context.applicationContext) // read and watch range and the fuel warning now
         }
+    // Back from the system's app settings ([ask]): take up what was granted there.
+    LifecycleResumeEffect(Unit) {
+        locationAllowed = CarGpsFeed.permitted(context)
+        val energyNow = granted(context, VehicleData.ENERGY_PERMISSION)
+        if (energyNow && !energyAllowed) VehicleData.start(context.applicationContext)
+        energyAllowed = energyNow
+        onPauseOrDispose { }
+    }
 
     Column(modifier = modifier.widthIn(max = VEHICLE_PANE_MAX_WIDTH), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         PaneHeader(title = "Vehicle", subtitle = "What the truck gives the iPhone. Changes apply the next time the iPhone connects.")
-        GpsGroup(store, gps, locationAllowed, onAsk = { askLocation.launch(LOCATION_PERMISSIONS) })
+        GpsGroup(store, gps, locationAllowed, onAsk = { ask(context, askLocation, LOCATION_PERMISSIONS) })
         SectionLabel("Shared with the iPhone")
         SharedGroup(
             store = store,
@@ -65,9 +78,22 @@ internal fun VehiclePane(modifier: Modifier = Modifier) {
             readings = readings,
             energyAllowed = energyAllowed,
             // Range and the low-fuel warning need CAR_ENERGY: asked for when either is turned on.
-            onEnergyNeeded = { if (!energyAllowed) askEnergy.launch(VehicleData.ENERGY_PERMISSION) },
+            onEnergyNeeded = { if (!energyAllowed) ask(context, askEnergy, VehicleData.ENERGY_PERMISSION) },
         )
     }
+}
+
+/**
+ * Ask for a permission or, while an earlier dialog still waits unanswered (Android would refuse this request without
+ * asking), open Carlink's page in the system's app settings instead.
+ */
+private fun <I> ask(
+    context: Context,
+    launcher: ActivityResultLauncher<I>,
+    input: I,
+) {
+    if (PermissionPrompt.isOpen && PermissionPrompt.openAppSettings(context)) return
+    PermissionPrompt.ask(launcher, input)
 }
 
 /** Car GPS for the iPhone, and the location permission it needs while it's on. */

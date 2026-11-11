@@ -6,6 +6,8 @@ import android.car.hardware.CarPropertyValue
 import android.car.hardware.property.CarPropertyManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
@@ -40,6 +42,22 @@ object VehicleData {
     private var car: Car? = null
     private var props: CarPropertyManager? = null
     private val subscribed = mutableSetOf<Int>()
+    private val handler = Handler(Looper.getMainLooper())
+
+    /**
+     * The low-fuel warning, read again every minute while it is readable. On the Mac's emulator (11 Nov) its change
+     * events never arrived: the car service had no listener for it though the value read at connect, and Carlink logged
+     * no failed watch. A warning that comes on mid-drive must still reach the phone, and a car that never sends the
+     * event costs one read a minute.
+     */
+    private val recheckFuelLow =
+        object : Runnable {
+            override fun run() {
+                val mgr = props ?: return
+                runCatching { mgr.getProperty<Any>(VehiclePropertyIds.FUEL_LEVEL_LOW, 0) }.getOrNull()?.let(::take)
+                handler.postDelayed(this, FUEL_LOW_RECHECK_MS)
+            }
+        }
 
     private val callback =
         object : CarPropertyManager.CarPropertyEventCallback {
@@ -67,19 +85,29 @@ object VehicleData {
         }
         runCatching {
             Car.createCar(context, null, Car.CAR_WAIT_TIMEOUT_DO_NOT_WAIT) { c, ready ->
-                if (ready) connect(c, context) else logWarn("[VEHICLE] car service disconnected", tag = Logger.Tags.ADAPTR)
+                if (ready) connect(c, context) else onCarLost()
             }
         }.onSuccess { car = it }
             .onFailure { logWarn("[VEHICLE] Car.createCar failed: ${it.message}", tag = Logger.Tags.ADAPTR) }
     }
 
     fun stop() {
+        logInfo("[VEHICLE] stopped (watching ${names(subscribed)})", tag = Logger.Tags.ADAPTR)
+        handler.removeCallbacks(recheckFuelLow)
         runCatching { props?.unregisterCallback(callback) }
         props = null
         subscribed.clear()
         runCatching { car?.disconnect() }
         car = null
         VehicleReadings.clear()
+    }
+
+    /** The car service went away: its managers go with it, so the next connect watches everything again. */
+    private fun onCarLost() {
+        logWarn("[VEHICLE] car service disconnected", tag = Logger.Tags.ADAPTR)
+        handler.removeCallbacks(recheckFuelLow)
+        props = null
+        subscribed.clear()
     }
 
     private fun connect(
@@ -99,12 +127,20 @@ object VehicleData {
                 .getOrDefault(emptyList())
         val names = visible.map(VehiclePropertyIds::toString).sorted()
         logInfo("[VEHICLE] speed permission=$speedAllowed; ${visible.size} properties visible: ${names.joinToString()}", tag = Logger.Tags.ADAPTR)
+        val added = mutableListOf<Int>()
         for ((id, rate) in WATCHED) {
             if (id !in visible || id in subscribed) continue
             runCatching { mgr.getProperty<Any>(id, 0) }.getOrNull()?.let(::take)
             val ok = runCatching { mgr.registerCallback(callback, id, rate) }.getOrDefault(false)
-            if (ok) subscribed += id else logWarn("[VEHICLE] could not watch ${VehiclePropertyIds.toString(id)}", tag = Logger.Tags.ADAPTR)
+            if (ok) added += id else logWarn("[VEHICLE] could not watch ${VehiclePropertyIds.toString(id)}", tag = Logger.Tags.ADAPTR)
         }
+        subscribed += added
+        logInfo(
+            "[VEHICLE] watching ${names(subscribed)} (new: ${names(added)}; not readable: ${names(WATCHED.keys - visible.toSet())})",
+            tag = Logger.Tags.ADAPTR,
+        )
+        handler.removeCallbacks(recheckFuelLow)
+        if (VehiclePropertyIds.FUEL_LEVEL_LOW in visible) handler.postDelayed(recheckFuelLow, FUEL_LOW_RECHECK_MS)
         // Static, so read once rather than watched: what the car runs on.
         for (id in READ_ONCE) {
             if (id in visible) runCatching { mgr.getProperty<Any>(id, 0) }.getOrNull()?.let(::take)
@@ -125,7 +161,11 @@ object VehicleData {
             VehiclePropertyIds.ENV_OUTSIDE_TEMPERATURE -> VehicleReadings.update { it.copy(outsideC = f) }
             VehiclePropertyIds.VEHICLE_SPEED_DISPLAY_UNITS -> VehicleReadings.update { it.copy(speedUnit = (v.value as? Int)?.takeIf { ok }) }
             VehiclePropertyIds.RANGE_REMAINING -> VehicleReadings.update { it.copy(rangeM = f) }
-            VehiclePropertyIds.FUEL_LEVEL_LOW -> VehicleReadings.update { it.copy(fuelLow = (v.value as? Boolean)?.takeIf { ok }) }
+            VehiclePropertyIds.FUEL_LEVEL_LOW -> {
+                val low = (v.value as? Boolean)?.takeIf { ok }
+                if (low != VehicleReadings.state.value.fuelLow) logInfo("[VEHICLE] low fuel warning: ${low ?: "unknown"}", tag = Logger.Tags.ADAPTR)
+                VehicleReadings.update { it.copy(fuelLow = low) }
+            }
             VehiclePropertyIds.INFO_FUEL_TYPE -> {
                 val types = (v.value as? Array<*>)?.mapNotNull { it as? Int }
                 VehicleReadings.update { it.copy(fuelTypes = types?.takeIf { ok }) }
@@ -150,4 +190,8 @@ object VehicleData {
 
     /** Static properties, read at each connect: the fuel types (the truck: [3], diesel). */
     private val READ_ONCE = listOf(VehiclePropertyIds.INFO_FUEL_TYPE)
+
+    private const val FUEL_LOW_RECHECK_MS = 60_000L
+
+    private fun names(ids: Collection<Int>): String = ids.joinToString { VehiclePropertyIds.toString(it) }.ifEmpty { "none" }
 }
