@@ -575,6 +575,9 @@ class CarlinkManager(
     private val currentState = AtomicReference(State.DISCONNECTED)
     val state: State get() = currentState.get()
 
+    /** The status line last shown ([setStatusText]), for a screen that attaches to a live session (MainScreen seeds from it). */
+    val statusText: String get() = lastStatusText
+
     private var callback: Callback? = null
 
     // ---- OCBM session -----------------------------------------------------------------------
@@ -1142,6 +1145,9 @@ class CarlinkManager(
                     }
 
                     this@CarlinkManager.callback = finalCallback
+                    // A new screen over a live session (a rebuilt activity adopted this manager) heard nothing
+                    // since it was seeded; bring it up to date rather than wait for the next change.
+                    replayTo(finalCallback)
                     this@CarlinkManager.videoSurface = finalSurface
 
                     // A new Surface is a new epoch: retire the old one first so its codec is
@@ -3912,7 +3918,9 @@ class CarlinkManager(
                 logInfo("[META] requestUI${url?.let { " ($it)" } ?: ""} — bringing the app forward", tag = Logger.Tags.ADAPTR)
                 scope.launch { callback?.onHostUIPressed() }
             }
-            null -> logWarn("[META] META_CMD has no string 'type'", tag = Logger.Tags.ADAPTR)
+            // The phone's video DataStream rides POST /command as {params: {data}} with no type, about once a second
+            // while a video is pending (the Mac, 10 Nov), so this is logged once, like an unhandled verb.
+            null -> if (unhandledCommands.add("")) logInfo("[META] a command with no 'type' (not handled)", tag = Logger.Tags.ADAPTR)
             else -> if (unhandledCommands.add(type)) logInfo("[META] command '$type' (not handled)", tag = Logger.Tags.ADAPTR)
         }
     }
@@ -4200,6 +4208,13 @@ class CarlinkManager(
     }
 
     @Volatile private var lastStatusText = ""
+
+    /** Bring a newly attached [Callback] up to date: the state, the status line, a pairing code awaiting an answer. */
+    private fun replayTo(cb: Callback) {
+        cb.onStateChanged(state)
+        lastStatusText.takeIf { it.isNotEmpty() }?.let(cb::onStatusTextChanged)
+        pairingCode?.let(cb::onPairingCodeChanged)
+    }
 
     private fun setStatusText(text: String) {
         // Timestamped in the trail so a drive log shows how long each connecting step really lasts.
