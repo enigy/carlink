@@ -28,3 +28,32 @@ interface FuelPriceSource {
 
 /** Nearest first, with the stations known to sell the fuel ahead of the ones whose tags don't say (the diesel rule). */
 internal fun List<Station>.nearestFirst(here: GeoPoint): List<Station> = sortedWith(compareBy({ it.sellsFuel != true }, { Geo.metres(here, it.at) }))
+
+/**
+ * The station service answered that it is busy (HTTP 429 or 5xx) or took too long to answer: the card says so and tries
+ * again later, after [retryAfterS] when the service said (the Mac's 11 Nov bench: overpass-api.de at capacity, 502s and
+ * answers 25 to 32 s late). [why] is the status or "timeout", for the log.
+ */
+class SourceBusy(
+    val why: String,
+    val retryAfterS: Long? = null,
+    cause: Throwable? = null,
+) : IOException(why, cause)
+
+/** The service couldn't be reached at all: no internet, or no route to it. The card says "No internet". */
+class SourceUnreachable(
+    val why: String,
+    cause: Throwable? = null,
+) : IOException(why, cause)
+
+/** An HTTP answer other than 200: busy for 429 and 5xx (with the `Retry-After` seconds when sent), else a plain failure. */
+fun httpFailure(
+    code: Int,
+    retryAfter: String?,
+): IOException {
+    val busy = code == HTTP_TOO_MANY_REQUESTS || code >= HTTP_SERVER_ERROR
+    return if (busy) SourceBusy("HTTP $code", retryAfter?.trim()?.toLongOrNull()) else IOException("HTTP $code")
+}
+
+private const val HTTP_TOO_MANY_REQUESTS = 429
+private const val HTTP_SERVER_ERROR = 500

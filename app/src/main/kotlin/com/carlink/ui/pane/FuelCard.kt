@@ -63,9 +63,9 @@ import java.util.Locale
  * the driver's engine override and grade), and the low-fuel warning as an amber banner ([LowFuel]: the car's warning,
  * or the range at the driver's threshold); then, with Settings › Vehicle › Nearby stations on, the stations around
  * ([FuelStations]). Parked, it adds the tank's bar (only when the level and the tank's size are both read), small print
- * and up to four stations, a tap opening a station's sheet; moving, the range, the fuel and at most three big rows in
- * large type, no small print, no scrolling, a tap starting directions at once ([onDirections]). Unknown counts as
- * moving ([DrivingState.parked]).
+ * and up to three stations under their source's credit, a tap opening a station's sheet; moving, the range, the fuel
+ * and at most three big rows in large type, no small print, no scrolling, a tap starting directions at once
+ * ([onDirections]). Unknown counts as moving ([DrivingState.parked]).
  *
  * Range, the level and the warning need CAR_ENERGY, and the stations the location permission. The card asks for
  * CAR_ENERGY by itself once per run, when it is opened parked, never at the app's start (the buried-dialog bug of 11
@@ -86,6 +86,7 @@ internal fun FuelCard(
     val grade by store.fuelGrade.collectAsState()
     val lowAt by store.lowFuelAt.collectAsState()
     val nearby by store.nearbyStations.collectAsState()
+    val source by store.stationSource.collectAsState()
     // Read and watch range, the level and the warning as soon as they are allowed.
     val energy = rememberCardPermission(arrayOf(VehicleData.ENERGY_PERMISSION)) { VehicleData.start(context.applicationContext) }
     val location = rememberCardPermission(LOCATION_PERMISSIONS)
@@ -97,7 +98,7 @@ internal fun FuelCard(
     }
     val imperial = vehicle.distanceImperial(Locale.getDefault())
     val low = LowFuel.isLow(vehicle, lowAt, imperial)
-    FollowStations(active, nearby, location.allowed, low)
+    FollowStations(active, listOf(nearby, location.allowed, source), low)
     val fuel = CarFuel.of(vehicle.fuelTypes, engine, grade)
     var picked by remember { mutableStateOf<StationRow?>(null) }
     LaunchedEffect(parked) { if (!parked) picked = null } // the sheet is a parked view
@@ -138,12 +139,11 @@ private fun CarData(
     val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
     val imperial = look.imperial
     if (look.low) LowFuelBanner()
-    if (energy.allowed) Range(vehicle, imperial) else AllowFuel { energy.ask(fromButton = true) }
+    if (energy.allowed) Range(vehicle, imperial) else AllowFuel(hint = look.parked) { energy.ask(fromButton = true) }
     Text(fuel.label, style = MaterialTheme.typography.headlineMedium, color = if (fuel.kind == CarFuel.Kind.UNKNOWN) secondary else LocalContentColor.current)
     if (look.parked) {
         vehicle.fuelFraction()?.let { TankBar(it) }
         VehicleText.tank(vehicle, imperial)?.let { Text("Tank: $it", style = MaterialTheme.typography.titleMedium, color = secondary) }
-        Text("Range and fuel from the truck", style = MaterialTheme.typography.bodyLarge, color = secondary)
     }
 }
 
@@ -161,16 +161,18 @@ private fun Stations(
     StationsSection(view, rows, look, onTap = onTap, onAllowLocation = onAllowLocation)
 }
 
-/** Tells [FuelStations] when the card is up, a setting it hangs on changed, or low fuel came on. */
+/**
+ * Tells [FuelStations] when the card is up, a setting it hangs on changed ([settings]: Nearby stations, the location
+ * permission, the source, so a source picked while the card is up looks up at once), or low fuel came on.
+ */
 @Composable
 private fun FollowStations(
     active: Boolean,
-    nearby: Boolean,
-    locationAllowed: Boolean,
+    settings: List<Any>,
     low: Boolean,
 ) {
     val context = LocalContext.current
-    LaunchedEffect(active, nearby, locationAllowed) { FuelStations.onCard(context, active) }
+    LaunchedEffect(active, settings) { FuelStations.onCard(context, active) }
     LaunchedEffect(low) { if (low) FuelStations.onLowFuel(context) }
     DisposableEffect(Unit) { onDispose { FuelStations.onCard(context, visible = false) } }
 }
@@ -207,9 +209,12 @@ private fun rememberCardPermission(
             allowed = ok
             if (ok) granted()
         }
-    // Back from the system's app settings, or a grant made in Settings › Vehicle.
+    // Back from the system's app settings, or a grant made in Settings › Vehicle: a grant there starts what it allows too
+    // (the Mac's 11 Nov bench: the range stayed "not read" until Carlink restarted).
     LifecycleResumeEffect(Unit) {
-        allowed = isGranted(context, permissions[0])
+        val now = isGranted(context, permissions[0])
+        if (now && !allowed) granted()
+        allowed = now
         onPauseOrDispose { }
     }
     return CardPermission(allowed) { button ->
@@ -253,13 +258,26 @@ private fun LowFuelBanner() {
     }
 }
 
-/** Without CAR_ENERGY: the card's request, with an Allow at the head unit's touch height. */
+/**
+ * Without CAR_ENERGY: the card's request, with an Allow at the head unit's touch height. Parked, a [hint] says where the
+ * switch is when Android no longer asks and Allow opens Carlink's app info (the Mac's 11 Nov bench: three levels down).
+ */
 @Composable
-private fun AllowFuel(onAllow: () -> Unit) {
+private fun AllowFuel(
+    hint: Boolean,
+    onAllow: () -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Allow Carlink to read the fuel", style = MaterialTheme.typography.headlineSmall)
         FilledTonalButton(onClick = onAllow, modifier = Modifier.heightIn(min = 72.dp)) {
             Text("Allow", style = MaterialTheme.typography.titleLarge)
+        }
+        if (hint) {
+            Text(
+                "If no question comes, Allow opens Carlink's app info: under Permissions, find Car information.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA),
+            )
         }
     }
 }
@@ -295,5 +313,5 @@ private val LOCATION_PERMISSIONS = arrayOf(Manifest.permission.ACCESS_FINE_LOCAT
 
 private const val SECONDARY_ALPHA = 0.72f
 private const val TRACK_ALPHA = 0.22f
-private const val PARKED_ROWS = 4
+private const val PARKED_ROWS = 3
 private const val MOVING_ROWS = 3

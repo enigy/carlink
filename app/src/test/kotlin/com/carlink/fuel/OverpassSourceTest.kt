@@ -2,7 +2,10 @@ package com.carlink.fuel
 
 import com.carlink.ui.settings.FuelGrade
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** OpenStreetMap through Overpass, from a made-up answer (no real stations or places). */
@@ -26,7 +29,7 @@ class OverpassSourceTest {
     @Test
     fun `the query asks for fuel within the radius, with dots in every locale`() {
         assertEquals(
-            "[out:json][timeout:15];nwr[\"amenity\"=\"fuel\"](around:8047,-33.900000,151.200000);out center tags 40;",
+            "[out:json][timeout:50];nwr[\"amenity\"=\"fuel\"](around:8047,-33.900000,151.200000);out center tags;",
             OverpassSource.query(here, 8_046.72),
         )
     }
@@ -45,9 +48,38 @@ class OverpassSourceTest {
         assertEquals("diesel drops a station tagged no", listOf("osm:node/1", "osm:way/2", "osm:node/5"), OverpassSource.parse(answer, diesel).map { it.id })
     }
 
+    /** The Mac's 11 Nov bench: overpass-api.de at capacity answered 502 and 25-32 s late. */
+    @Test
+    fun `a busy answer is busy, with its Retry-After, and the next lookup asks the next instance`() {
+        val busy = httpFailure(502, null)
+        assertTrue(busy is SourceBusy)
+        assertEquals("HTTP 502", (busy as SourceBusy).why)
+        assertEquals(120L, (httpFailure(429, " 120 ") as SourceBusy).retryAfterS)
+        assertFalse("a bad request is not busy", httpFailure(400, null) is SourceBusy)
+        val asked = mutableListOf<String>()
+        val source =
+            OverpassSource(listOf("https://one.example/api/interpreter", "https://two.example/api/interpreter")) { endpoint, _ ->
+                asked += endpoint
+                if (asked.size == 1) throw SourceBusy("HTTP 504") else answer
+            }
+        assertThrows(SourceBusy::class.java) { source.stationsNear(here, diesel, 8_000.0) }
+        assertEquals(3, source.stationsNear(here, diesel, 8_000.0).size)
+        assertEquals(listOf("https://one.example/api/interpreter", "https://two.example/api/interpreter"), asked)
+    }
+
+    @Test
+    fun `the wait before asking a busy service again`() {
+        assertEquals(30L, RetryWait.seconds(1, null))
+        assertEquals(60L, RetryWait.seconds(2, null))
+        assertEquals(240L, RetryWait.seconds(4, null))
+        assertEquals("capped at 5 min", 300L, RetryWait.seconds(9, null))
+        assertEquals("its own Retry-After when longer", 90L, RetryWait.seconds(1, 90))
+        assertEquals(300L, RetryWait.seconds(1, 3_600))
+    }
+
     @Test
     fun `for diesel the stations known to sell it come first, then the nearest`() {
-        val source = OverpassSource { answer }
+        val source = OverpassSource(post = { _, _ -> answer })
         assertEquals(listOf("osm:node/1", "osm:way/2", "osm:node/5"), source.stationsNear(here, diesel, 8_000.0).map { it.id })
         assertEquals("gasoline: nearest first", listOf("osm:way/2", "osm:node/3", "osm:node/1", "osm:node/5"), source.stationsNear(here, gasoline, 8_000.0).map { it.id })
     }

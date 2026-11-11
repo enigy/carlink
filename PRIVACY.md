@@ -12,9 +12,9 @@ Carlink connects to the internet for three things only, and you can turn off the
 | --- | --- | --- |
 | A song plays | Its title, artist, album and length, to look up its lyrics. This happens even while lyrics are hidden on the music card, so they are ready if you show them. Songs already looked up are read from the head unit instead. Each request also names Carlink: its version and its LRCLIB app ID, the same for every head unit, which identify the app, not you or your car. Turn off Settings › Adapter and about › Look up lyrics, and no song is ever sent. | [LRCLIB](https://lrclib.net) (lrclib.net) |
 | You convert or update your adapter, or update the USB Bridge | A request for the installer, update or bridge file. Nothing about you or the adapter is sent. | GitHub (github.com), where the files are published |
-| Nearby stations is on (Settings › Vehicle, off by default) and the Fuel card is up | The car's position and a search radius, to find fuel stations around: when the card first shows, then after about 3 miles or 15 minutes, and when the fuel runs low. Carlink doesn't store the position or the stations. | [OpenStreetMap](https://www.openstreetmap.org) through the Overpass API (overpass-api.de) |
+| Nearby stations is on (Settings › Vehicle, off by default) and the Fuel card is up | The car's position and a search radius, to find fuel stations around: when the card first shows, then after about 3 miles or 15 minutes, and when the fuel runs low. Carlink doesn't store the position or the stations. | [OpenStreetMap](https://www.openstreetmap.org) through the Overpass API: overpass-api.de (FOSSGIS), and overpass.private.coffee when that one is busy |
 
-Like any website, LRCLIB, GitHub and the Overpass API see the head unit's internet (IP) address when it connects. Their own privacy policies cover what they keep.
+Like any website, LRCLIB, GitHub and the Overpass servers see the head unit's internet (IP) address when it connects. Their own privacy policies cover what they keep.
 
 ## What stays on the head unit
 

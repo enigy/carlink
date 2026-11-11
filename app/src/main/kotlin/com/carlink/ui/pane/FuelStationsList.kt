@@ -48,10 +48,10 @@ internal fun StationsSection(
             if (!big) Text("Turn on Nearby stations in Settings › Vehicle to see stations around", style = MaterialTheme.typography.bodyLarge, color = secondary)
         FuelStations.Status.NEEDS_LOCATION -> AllowLocation(onAllowLocation)
         else -> {
+            // The source's attribution (ODbL for OpenStreetMap) heads its stations, in view without scrolling, in both layouts.
+            if (rows.isNotEmpty()) view.attribution?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = secondary) }
             rows.forEach { StationRowView(it, imperial, big, onTap) }
             note(view, rows.isEmpty(), imperial)?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = secondary) }
-            // The source's attribution (ODbL for OpenStreetMap) stays with its stations in both layouts.
-            if (rows.isNotEmpty()) view.attribution?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = secondary) }
         }
     }
 }
@@ -68,6 +68,7 @@ private fun note(
         FuelStations.Status.LOOKING -> "Finding stations nearby".takeIf { empty }
         FuelStations.Status.READY -> "No stations within ${if (imperial) "5 mi" else "8 km"}".takeIf { empty }
         FuelStations.Status.OFFLINE -> aged("No internet", "No internet", empty, age)
+        FuelStations.Status.BUSY -> aged("The station service is busy, trying again soon", "The station service is busy", empty, age)
         FuelStations.Status.FAILED -> aged("Couldn't get the stations", "Couldn't update", empty, age)
         FuelStations.Status.OFF, FuelStations.Status.NEEDS_LOCATION -> null
     }
@@ -103,13 +104,15 @@ private fun StationRowView(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(row.station.name, style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Moving: both lines large, no small print (the Mac's 11 Nov bench).
+            val type = MaterialTheme.typography
+            Text(row.station.name, style = if (big) type.headlineMedium else type.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val words = listOfNotNull(row.distanceM?.let { StationText.distance(it, imperial) }, tags(row), "out of reach".takeIf { row.outOfReach })
-            if (words.isNotEmpty()) Text(words.joinToString(" · "), style = MaterialTheme.typography.titleMedium, color = secondary)
+            if (words.isNotEmpty()) Text(words.joinToString(" · "), style = if (big) type.titleLarge else type.titleMedium, color = secondary)
         }
         row.station.price?.let { price ->
             Column(horizontalAlignment = Alignment.End) {
-                Text(StationText.price(price, row.station.currency), style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge)
+                Text(StationText.price(price, row.station.currency), style = if (big) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge)
                 val at = row.station.priceAtMs
                 if (!big && at != null) {
                     val stale = StationText.stale(at, now)
