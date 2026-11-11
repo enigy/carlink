@@ -2008,6 +2008,21 @@ class CarlinkManager(
         }
     }
 
+    /**
+     * Route A: tell the phone, through the box, whether its video may play now and the play queue's [status]
+     * (`setVideoPlaybackAllowed`, as LIVI sends it). [VideoPlayback] decides when. A box without route A drops it.
+     */
+    private fun sendVideoAllowed(
+        allowed: Boolean,
+        status: VideoPlayback.Status,
+    ) {
+        val c = client ?: return
+        scope.launch(Dispatchers.IO) {
+            val sent = c.sendCommand(Ocbm.CMD_VIDEO_ALLOWED, (if (allowed) 1 else 0).toByte(), status.wire)
+            logInfo("[VIDEO] the phone is told video ${if (allowed) "may play" else "may not play"} ($status): sent=$sent", tag = Logger.Tags.ADAPTR)
+        }
+    }
+
     // ==================== Device Management ====================
 
     /**
@@ -2242,6 +2257,8 @@ class CarlinkManager(
             send = { stream, json -> client?.sendDataStream(stream, json) ?: false },
             engine = videoEngine,
             parked = { isParked },
+            announce = { allowed, status -> sendVideoAllowed(allowed, status) },
+            pausePhone = { sendMediaButton(Ocbm.MEDIA_BTN_PAUSE) },
         )
     private var connectPlayJob: Job? = null
 
@@ -3101,6 +3118,8 @@ class CarlinkManager(
         // Initial sync. A session that comes up while already in Drive gets no edge from
         // the monitor, so push the current value once the box can actually receive it.
         driveMonitor?.let { if (it.connected) setLimitedUI(it.driving) }
+        // Route A's video: the phone hears whether it may play from the session's start, not knowing being no.
+        videoPlayback.onParked(isParked)
     }
 
     private fun onLanesArmed(lanes: OcbmAvLanes) {

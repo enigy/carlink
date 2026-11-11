@@ -469,6 +469,20 @@ object Ocbm {
     const val CMD_REQUEST_UI_URL: Byte = 0x12
     const val REQUEST_UI_URL_MAX: Int = 255
 
+    /**
+     * `[INPUT_COMMAND][CMD_VIDEO_ALLOWED][allowed 0|1][VIDEO_STATUS_*]` -> `setVideoPlaybackAllowed{
+     * videoPlaybackAllowed, playbackStatus}` to the phone: route A's video may play only while the car is known
+     * to be parked, and the phone hears it at the session's start, at play start and at each change, as LIVI
+     * sends it. Kept for RECORD when it comes early; a box without route A drops it. Box commit on airplay-video
+     * (2026-11-11). lib.rs:524
+     */
+    const val CMD_VIDEO_ALLOWED: Byte = 0x13
+
+    /** playbackStatus, LIVI's words: nothing queued (`idle`), a queued video allowed to show (`video`), one that may not (`audioOnly`). lib.rs:526 */
+    const val VIDEO_STATUS_IDLE: Byte = 0
+    const val VIDEO_STATUS_VIDEO: Byte = 1
+    const val VIDEO_STATUS_AUDIO_ONLY: Byte = 2
+
     const val APPEARANCE_STREAM_MAIN: Byte = 0x00 // lib.rs:275
     const val APPEARANCE_STREAM_ALT: Byte = 0x01 // lib.rs:276
     const val APPEARANCE_MODE_LIGHT: Byte = 0x00 // lib.rs:277

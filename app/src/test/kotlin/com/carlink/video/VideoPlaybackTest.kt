@@ -38,17 +38,33 @@ class VideoPlaybackTest {
         }
 
         override fun snapshot() = now
+
+        override var onFailed: ((code: String) -> Unit)? = null
+
+        /** The player failing, as ExoPlayer reports it. */
+        fun fail(code: String) {
+            now = now.copy(failed = true, ready = false, rate = 0.0)
+            onFailed?.invoke(code)
+        }
     }
 
     private val sent = mutableListOf<Pair<Int, JSONObject>>()
     private val texts = mutableListOf<String>()
     private val engine = FakeEngine()
     private var parked = true
+    private val announced = mutableListOf<Pair<Boolean, VideoPlayback.Status>>()
+    private var pauses = 0
     private val playback =
-        VideoPlayback({ stream, json ->
-            texts += json
-            sent.add(stream to JSONObject(json))
-        }, engine, { parked })
+        VideoPlayback(
+            send = { stream, json ->
+                texts += json
+                sent.add(stream to JSONObject(json))
+            },
+            engine = engine,
+            parked = { parked },
+            announce = { allowed, status -> announced += allowed to status },
+            pausePhone = { pauses++ },
+        )
 
     private fun record(
         message: String,
@@ -142,19 +158,38 @@ class VideoPlaybackTest {
         playback.onRecord(rate(1.0))
         assertEquals("rate 0.0", engine.calls.last())
         assertFalse(playback.showing.value)
+        assertEquals("a refused play presses the phone's Pause", 1, pauses)
+        assertEquals(listOf(false to VideoPlayback.Status.AUDIO_ONLY), announced)
         assertFalse(playback.showRequested())
+        playback.onRecord(rate(0.0)) // the phone followed the Pause
         parked = true
         playback.onRecord(rate(1.0))
         assertTrue(playback.showing.value)
+        assertEquals("play start tells the phone", true to VideoPlayback.Status.VIDEO, announced.last())
         parked = false
         playback.onParked(false)
         assertEquals("rate 0.0", engine.calls.last())
         assertFalse("losing parked closes the screen", playback.showing.value)
+        assertEquals("and presses Pause on a phone that plays", 2, pauses)
+        assertEquals(false to VideoPlayback.Status.AUDIO_ONLY, announced.last())
         engine.calls.clear()
         parked = true
         playback.onParked(true)
         assertTrue("becoming parked plays nothing by itself", engine.calls.isEmpty())
         assertFalse(playback.showing.value)
+        assertEquals(true to VideoPlayback.Status.VIDEO, announced.last())
+    }
+
+    @Test
+    fun `the session's start tells the phone, idle with nothing queued`() {
+        parked = false
+        playback.onParked(false) // the session starts, its car state not known
+        assertEquals(listOf(false to VideoPlayback.Status.IDLE), announced)
+        parked = true
+        playback.onParked(true)
+        assertEquals(true to VideoPlayback.Status.IDLE, announced.last())
+        playback.onParked(false)
+        assertEquals("nothing plays, so no Pause", 0, pauses)
     }
 
     @Test
@@ -187,6 +222,38 @@ class VideoPlaybackTest {
         playback.onRecord(record(insert))
         playback.onRecord(record("""{"type":"removePlayQueueItem"}"""))
         assertNull("no uuid: the queued item goes", playback.state.item)
+        playback.onRecord(record(insert))
+        announced.clear()
+        playback.onRecord(rate(1.0))
+        assertEquals("the next item's play start tells the phone again", listOf(true to VideoPlayback.Status.VIDEO), announced)
+    }
+
+    @Test
+    fun `a property request is answered with a value, the logs as empty lists`() {
+        playback.onRecord(record(insert))
+        playback.onRecord(record("""{"type":"property","kind":"request","messageID":13,"property":"playbackAccessLog"}"""))
+        val answer = sent.last().second
+        assertEquals("playbackAccessLog", answer.getString("property"))
+        assertEquals(13, answer.getInt("messageID"))
+        assertTrue(texts.last(), texts.last().contains(""""value":[]"""))
+        playback.onRecord(record("""{"type":"property","kind":"request","messageID":14,"property":"playbackErrorLog"}"""))
+        val errorLog = sent.last().second.getJSONArray("value")
+        assertEquals(0, errorLog.length())
+        playback.onRecord(record("""{"type":"property","kind":"request","messageID":15,"property":"somethingNew"}"""))
+        assertFalse("anything else has no value, as LIVI answers", sent.last().second.has("value"))
+        assertEquals(15, sent.last().second.getInt("messageID"))
+    }
+
+    @Test
+    fun `a player failure closes the screen, and the next item starts clean`() {
+        playback.onRecord(record(insert))
+        playback.onRecord(rate(1.0))
+        assertTrue(playback.showing.value)
+        engine.fail("ERROR_CODE_DRM_SCHEME_UNSUPPORTED")
+        assertFalse(playback.showing.value)
+        assertEquals("ERROR_CODE_DRM_SCHEME_UNSUPPORTED", playback.state.failed)
+        playback.onRecord(record(insert))
+        assertNull(playback.state.failed)
     }
 
     @Test
@@ -198,6 +265,10 @@ class VideoPlaybackTest {
         playback.close()
         assertFalse(playback.showing.value)
         assertEquals("rate 0.0", engine.calls.last())
+        assertEquals("nothing played, so no Pause", 0, pauses)
+        playback.onRecord(rate(1.0))
+        playback.close()
+        assertEquals("Close presses Pause on a phone that plays", 1, pauses)
     }
 
     @Test

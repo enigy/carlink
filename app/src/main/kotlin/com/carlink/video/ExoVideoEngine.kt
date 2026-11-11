@@ -50,6 +50,8 @@ class ExoVideoEngine(
 
     @Volatile private var snap = VideoEngine.Snapshot()
 
+    @Volatile override var onFailed: ((code: String) -> Unit)? = null
+
     private val listener =
         object : Player.Listener {
             override fun onEvents(
@@ -64,6 +66,7 @@ class ExoVideoEngine(
             override fun onPlayerError(error: PlaybackException) {
                 logWarn("[VIDEO] the player failed: ${error.errorCodeName}", tag = Logger.Tags.ADAPTR)
                 snap = snap.copy(failed = true, ready = false, rate = 0.0)
+                onFailed?.invoke(error.errorCodeName)
             }
         }
 
@@ -140,7 +143,8 @@ class ExoVideoEngine(
         val duration = p.duration.takeIf { it != C.TIME_UNSET }?.let { it / MS_PER_S } ?: 0.0
         snap =
             VideoEngine.Snapshot(
-                ready = p.playbackState == Player.STATE_READY,
+                // Still ready at the item's end, its position at its duration, as LIVI reports an end: not ready reads as a failure.
+                ready = p.playbackState == Player.STATE_READY || p.playbackState == Player.STATE_ENDED,
                 rate = if (p.isPlaying) p.playbackParameters.speed.toDouble() else 0.0,
                 positionS = p.currentPosition / MS_PER_S,
                 durationS = duration,

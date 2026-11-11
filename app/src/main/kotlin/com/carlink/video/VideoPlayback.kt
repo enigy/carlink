@@ -2,6 +2,7 @@ package com.carlink.video
 
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
+import com.carlink.ocbm.Ocbm
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,7 +23,10 @@ import org.json.JSONObject
  *
  * The [engine] plays the item; the screen ([VideoOverlay]) shows while [showing]. Video is parked only, and parked
  * must be known: unless [parked] says so, a play request leaves it paused, and losing it pauses the video and
- * closes the screen. Logs name the address's host only.
+ * closes the screen. The phone hears whether video may play ([announce], LIVI's `setVideoPlaybackAllowed`) at the
+ * session's start, at play start and at each change. A pause the car makes presses the phone's Pause key too, as
+ * LIVI pauses the phone: on the Mac's 10 Nov bench the phone didn't follow `playbackInfo`'s rate. Logs name
+ * the address's host only.
  */
 class VideoPlayback(
     /** Sends one JSON answer on the phone's stream; false when it was dropped. Any thread. */
@@ -30,7 +34,25 @@ class VideoPlayback(
     private val engine: VideoEngine,
     /** Whether the car is known to be parked now: false when it is moving or its state isn't known. */
     private val parked: () -> Boolean,
+    /** Tells the phone, through the box, whether video may play now and the queue's [Status]. Any thread. */
+    private val announce: (allowed: Boolean, status: Status) -> Unit,
+    /** Presses Pause on the phone (its media key), so its player follows a pause the car made. Any thread. */
+    private val pausePhone: () -> Unit,
 ) {
+    /** The play queue's status as `setVideoPlaybackAllowed` names it (LIVI's words), with its wire byte. */
+    enum class Status(
+        val wire: Byte,
+    ) {
+        /** Nothing queued. */
+        IDLE(Ocbm.VIDEO_STATUS_IDLE),
+
+        /** A queued video that may show. */
+        VIDEO(Ocbm.VIDEO_STATUS_VIDEO),
+
+        /** A queued video that may not show now. */
+        AUDIO_ONLY(Ocbm.VIDEO_STATUS_AUDIO_ONLY),
+    }
+
     /** The item the phone queued: its `uuid`, where to start, and its address (kept, never logged past the host). */
     data class Item(
         val uuid: String?,
@@ -38,10 +60,11 @@ class VideoPlayback(
         val url: String?,
     )
 
-    /** The queued item and the position the phone last set. */
+    /** The queued item, the position the phone last set, and the player's error code once it failed on the item. */
     data class State(
         val item: Item? = null,
         val positionS: Double = 0.0,
+        val failed: String? = null,
     )
 
     @Volatile
@@ -57,6 +80,18 @@ class VideoPlayback(
 
     /** Whether the video screen is up ([VideoOverlay]). */
     val showing: StateFlow<Boolean> = showingState.asStateFlow()
+
+    init {
+        engine.onFailed = { code -> onPlayerFailed(code) }
+    }
+
+    /** The player failed on the item (DRM it can't play, a network failure): its screen closes. */
+    @Synchronized
+    private fun onPlayerFailed(code: String) {
+        state = state.copy(failed = code)
+        showingState.value = false
+        logInfo("[VIDEO] the player failed ($code): its screen closed", tag = Logger.Tags.ADAPTR)
+    }
 
     /** One `{"kind":"dataStream"}` record from the box. Any thread. */
     @Synchronized
@@ -78,6 +113,7 @@ class VideoPlayback(
         when (val type = message.optString("type")) {
             "insertPlayQueueItem" -> {
                 val item = state.item
+                askedRate = 0.0 // a new item waits for its own setRate
                 logInfo("[VIDEO] the phone queued an item: ${hostOf(item?.url) ?: "no address"}, from ${item?.startS} s", tag = Logger.Tags.ADAPTR)
                 item?.url?.let { engine.load(it, item.startS) }
             }
@@ -90,6 +126,7 @@ class VideoPlayback(
                 } else {
                     logInfo("[VIDEO] the phone removed an item that isn't the queued one: it stays", tag = Logger.Tags.ADAPTR)
                 }
+            "property", "getProperty" -> logInfo("[VIDEO] the phone asks for ${message.optString("property").ifEmpty { "a nameless property" }}", tag = Logger.Tags.ADAPTR)
             "playbackInfo", "setProperty" -> Unit
             else -> logInfo("[VIDEO] the phone sent '$type' (not handled)", tag = Logger.Tags.ADAPTR)
         }
@@ -110,38 +147,55 @@ class VideoPlayback(
     /** Stop the player and close the screen: the queue is empty. */
     private fun drop(why: String) {
         engine.stop()
+        askedRate = 0.0
         showingState.value = false
         logInfo("[VIDEO] $why", tag = Logger.Tags.ADAPTR)
     }
 
+    /** Whether the phone thinks its video plays: it asked for a rate and hasn't asked for 0 since. */
+    private val phonePlays get() = askedRate > 0.0 && state.item != null
+
     private fun playAt(rate: Double) {
+        val starting = askedRate <= 0.0 && rate > 0.0
         askedRate = rate
         when {
             rate <= 0.0 -> engine.setRate(0.0)
             !parked() -> {
                 engine.setRate(0.0)
-                logInfo("[VIDEO] the phone asks to play, but the car isn't known to be parked: video plays parked only", tag = Logger.Tags.ADAPTR)
+                if (starting) announce(false, statusOf(state, false))
+                pausePhone()
+                logInfo("[VIDEO] the phone asks to play, but the car isn't known to be parked: video plays parked only, Pause sent", tag = Logger.Tags.ADAPTR)
                 return
             }
             else -> {
                 engine.setRate(rate)
                 showingState.value = true
+                if (starting) announce(true, statusOf(state, true))
             }
         }
         logInfo("[VIDEO] the phone asks for rate $rate", tag = Logger.Tags.ADAPTR)
     }
 
     /**
-     * Whether the car is known to be parked changed: losing it (moving, or the car's state no longer known) pauses
-     * the video and closes its screen. Becoming parked plays nothing by itself.
+     * Whether the car is known to be parked changed, and the phone hears it; also called at the session's start, so
+     * the phone hears it then. Losing it (moving, or the car's state no longer known) pauses the video, closes its
+     * screen, and presses Pause on a phone that thinks it plays. Becoming parked plays nothing by itself.
      */
     @Synchronized // with onRecord: a play request decided just before this sees its screen closed here
     fun onParked(nowParked: Boolean) {
-        if (nowParked) return
-        engine.setRate(0.0)
-        if (!showingState.value) return
-        showingState.value = false
-        logInfo("[VIDEO] the car isn't known to be parked: the video paused and its screen closed", tag = Logger.Tags.ADAPTR)
+        if (!nowParked) {
+            val wasPlaying = phonePlays
+            engine.setRate(0.0)
+            if (showingState.value) {
+                showingState.value = false
+                logInfo("[VIDEO] the car isn't known to be parked: the video paused and its screen closed", tag = Logger.Tags.ADAPTR)
+            }
+            if (wasPlaying) {
+                pausePhone()
+                logInfo("[VIDEO] Pause sent to the phone, so its player follows", tag = Logger.Tags.ADAPTR)
+            }
+        }
+        announce(nowParked, statusOf(state, nowParked))
     }
 
     /** iOS asked for the car's video screen (`requestUI` with `videoplayback:`). True when there is one to show. */
@@ -160,12 +214,14 @@ class VideoPlayback(
         return shown
     }
 
-    /** The screen's Close: pause and close; the phone sees the rate drop to 0 at its next poll. */
+    /** The screen's Close: pause and close, and press Pause on a phone that thinks it plays. */
     @Synchronized
     fun close() {
+        val wasPlaying = phonePlays
         engine.setRate(0.0)
         showingState.value = false
-        logInfo("[VIDEO] closed on the car's screen", tag = Logger.Tags.ADAPTR)
+        if (wasPlaying) pausePhone()
+        logInfo("[VIDEO] closed on the car's screen${if (wasPlaying) ", Pause sent to the phone" else ""}", tag = Logger.Tags.ADAPTR)
     }
 
     /** Forget the queue and free the player: the session ended. */
@@ -184,6 +240,17 @@ class VideoPlayback(
         /** CMTime's flags: valid, and the ones that make it not a number (+infinity, -infinity, indefinite). */
         private const val CMTIME_VALID = 0x1L
         private const val CMTIME_NOT_NUMERIC = 0x1CL
+
+        /** The queue's status for the phone: nothing queued, or a queued video that may or may not show. */
+        fun statusOf(
+            state: State,
+            allowed: Boolean,
+        ): Status =
+            when {
+                state.item == null -> Status.IDLE
+                allowed -> Status.VIDEO
+                else -> Status.AUDIO_ONLY
+            }
 
         /** [state] after the phone's [message]. */
         fun apply(
@@ -240,9 +307,23 @@ class VideoPlayback(
             for (key in listOf("type", "controlMessage", "property", "messageID")) {
                 message.opt(key)?.let { answer.put(key, it) }
             }
-            if (message.optString("type") == "playbackInfo") answer.put("value", info(state, playing))
+            when (message.optString("type")) {
+                "playbackInfo" -> answer.put("value", info(state, playing))
+                "property", "getProperty" -> propertyValue(message.optString("property"))?.let { answer.put("value", it) }
+            }
             return answer
         }
+
+        /**
+         * A `property` request's value. The player's access and error logs, which the phone asks for (the Mac's
+         * 10 Nov bench: `playbackAccessLog`), are empty lists: Carlink keeps neither. Anything else is answered
+         * without a value, as LIVI answers every property request.
+         */
+        fun propertyValue(name: String): Any? =
+            when (name) {
+                "playbackAccessLog", "playbackErrorLog" -> JSONArray()
+                else -> null
+            }
 
         /** `playbackInfo`'s value: the player's state, with the queued item's uuid. */
         fun info(
