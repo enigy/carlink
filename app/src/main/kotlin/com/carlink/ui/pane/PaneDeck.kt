@@ -1,7 +1,10 @@
 package com.carlink.ui.pane
 
-/** The cards the pane shows in turn, in swipe order: the route first, the music, the clock (with the truck's speed and outside temperature) last. */
-enum class PaneCard { DIRECTIONS, MEDIA, CLOCK }
+/**
+ * The cards the pane shows in turn, in swipe order: the route first, the truck's range and fuel, the music, the clock
+ * (with the truck's speed and outside temperature) last.
+ */
+enum class PaneCard { DIRECTIONS, FUEL, MEDIA, CLOCK }
 
 /**
  * What fills the pane behind the card: the plain day or night colour ([PLAIN]); the album art with a
@@ -43,19 +46,21 @@ data class Aside(
  * the deck resumes where it was.
  */
 object PaneDeck {
-    /** The cards available now. The clock is always there, so the deck is never empty. */
+    /** The cards available now. The clock is always there, so the deck is never empty. [fuel]: the Fuel card is dealt. */
     fun pages(
         navigating: Boolean,
         hasTrack: Boolean,
+        fuel: Boolean = false,
     ): List<PaneCard> =
         buildList {
             if (navigating) add(PaneCard.DIRECTIONS)
+            if (fuel) add(PaneCard.FUEL)
             if (hasTrack) add(PaneCard.MEDIA)
             add(PaneCard.CLOCK)
         }
 
-    /** A fresh pane's card: the music, else the route, else the clock. */
-    fun default(pages: List<PaneCard>): PaneCard = if (PaneCard.MEDIA in pages) PaneCard.MEDIA else pages.first()
+    /** A fresh pane's card: the music, else the route, else the clock. The Fuel card comes by a swipe or low fuel only. */
+    fun default(pages: List<PaneCard>): PaneCard = if (PaneCard.MEDIA in pages) PaneCard.MEDIA else pages.firstOrNull { it != PaneCard.FUEL } ?: PaneCard.CLOCK
 
     /**
      * The card for the pane once CarPlay shows [inFront] full on its side: the next card that is not
@@ -64,7 +69,7 @@ object PaneDeck {
     fun beside(
         inFront: PaneCard,
         pages: List<PaneCard>,
-    ): PaneCard = pages.firstOrNull { it != inFront } ?: PaneCard.CLOCK
+    ): PaneCard = pages.firstOrNull { it != inFront && it != PaneCard.FUEL } ?: PaneCard.CLOCK
 
     /**
      * The card for the pane once the driver leaves the CarPlay app the pane's title put in front
@@ -106,4 +111,29 @@ object PaneDeck {
             PaneCard.DIRECTIONS in current && PaneCard.DIRECTIONS !in previous && shown == PaneCard.CLOCK -> PaneCard.DIRECTIONS
             else -> shown
         }
+}
+
+/**
+ * The pane and the low-fuel warning (Settings › Vehicle › Show on low fuel): the Fuel card comes up when the warning
+ * comes on, and the card it replaced comes back when it goes off, if the driver hasn't swiped away since.
+ */
+object LowFuelDeck {
+    /** The card to show as the warning comes on with [shown] up: the Fuel card, where the deck has it. */
+    fun onLow(
+        pages: List<PaneCard>,
+        shown: PaneCard,
+    ): PaneCard = if (PaneCard.FUEL in pages) PaneCard.FUEL else shown
+
+    /**
+     * The card to show as the warning goes off: [before], the card the warning replaced, while the Fuel card it brought
+     * is still up and [before] is still dealt. A card the driver swiped to stays.
+     */
+    fun onCleared(
+        before: PaneCard?,
+        shown: PaneCard,
+        pages: List<PaneCard>,
+    ): PaneCard {
+        val back = before?.takeIf { it != PaneCard.FUEL && it in pages } ?: return shown
+        return if (shown == PaneCard.FUEL) back else shown
+    }
 }

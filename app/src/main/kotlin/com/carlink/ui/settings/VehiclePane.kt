@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,6 +26,7 @@ import com.carlink.car.VehicleData
 import com.carlink.car.VehicleReadings
 import com.carlink.car.VehicleState
 import com.carlink.car.VehicleStatusValues
+import com.carlink.fuel.CarFuel
 import com.carlink.logging.logWarn
 import java.util.Locale
 
@@ -60,7 +60,7 @@ internal fun VehiclePane(modifier: Modifier = Modifier) {
             energyAllowed = ok
             if (ok) VehicleData.start(context.applicationContext) // read and watch range and the fuel warning now
         }
-    // Back from the system's app settings ([ask]): take up what was granted there.
+    // Back from the system's app settings ([PermissionPrompt.askOrOpenSettings]): take up what was granted there.
     LifecycleResumeEffect(Unit) {
         locationAllowed = CarGpsFeed.permitted(context)
         val energyNow = granted(context, VehicleData.ENERGY_PERMISSION)
@@ -69,9 +69,11 @@ internal fun VehiclePane(modifier: Modifier = Modifier) {
         onPauseOrDispose { }
     }
 
+    val askEnergyIfNeeded = { if (!energyAllowed) PermissionPrompt.askOrOpenSettings(context, askEnergy, VehicleData.ENERGY_PERMISSION) }
+
     Column(modifier = modifier.widthIn(max = VEHICLE_PANE_MAX_WIDTH), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         PaneHeader(title = "Vehicle", subtitle = "What the truck gives the iPhone. Changes apply the next time the iPhone connects.")
-        GpsGroup(store, gps, locationAllowed, onAsk = { ask(context, askLocation, LOCATION_PERMISSIONS) })
+        GpsGroup(store, gps, locationAllowed, onAsk = { PermissionPrompt.askOrOpenSettings(context, askLocation, LOCATION_PERMISSIONS) })
         EngineGroup(store, engine, readings)
         SectionLabel("Shared with the iPhone")
         SharedGroup(
@@ -80,22 +82,11 @@ internal fun VehiclePane(modifier: Modifier = Modifier) {
             readings = readings,
             energyAllowed = energyAllowed,
             // Range and the low-fuel warning need CAR_ENERGY: asked for when either is turned on.
-            onEnergyNeeded = { if (!energyAllowed) ask(context, askEnergy, VehicleData.ENERGY_PERMISSION) },
+            onEnergyNeeded = askEnergyIfNeeded,
         )
+        SectionLabel("Fuel card")
+        FuelCardGroup(store, readings, engine, onEnergyNeeded = askEnergyIfNeeded)
     }
-}
-
-/**
- * Ask for a permission or, while an earlier dialog still waits unanswered (Android would refuse this request without
- * asking), open Carlink's page in the system's app settings instead.
- */
-private fun <I> ask(
-    context: Context,
-    launcher: ActivityResultLauncher<I>,
-    input: I,
-) {
-    if (PermissionPrompt.isOpen && PermissionPrompt.openAppSettings(context)) return
-    PermissionPrompt.ask(launcher, input)
 }
 
 /** Car GPS for the iPhone, and the location permission it needs while it's on. */
@@ -145,6 +136,59 @@ private fun EngineGroup(
                 store.setEngineChoice(it)
             },
         )
+    }
+}
+
+/**
+ * The side pane's Fuel card: whether the deck has it, whether low fuel brings it up, and a gasoline car's grade. Turning
+ * either on asks for CAR_ENERGY, which the card's range and warning need.
+ */
+@Composable
+private fun FuelCardGroup(
+    store: VehicleStore,
+    readings: VehicleState,
+    engine: EngineChoice,
+    onEnergyNeeded: () -> Unit,
+) {
+    val card by store.fuelCard.collectAsState()
+    val onLow by store.fuelOnLow.collectAsState()
+    val grade by store.fuelGrade.collectAsState()
+    val fuel = CarFuel.of(readings.fuelTypes, engine, grade)
+    SettingsGroup {
+        SwitchRow(
+            title = "Show the Fuel card",
+            subtitle = "Range and fuel in the side pane, from the truck",
+            checked = card,
+            onCheckedChange = { on ->
+                logWarn("[UI_ACTION] Fuel card -> $on", tag = "UI")
+                store.setFuelCard(on)
+                if (on) onEnergyNeeded()
+            },
+        )
+        GroupDivider()
+        SwitchRow(
+            title = "Show on low fuel",
+            subtitle = "The pane turns to the Fuel card when the low-fuel warning comes on",
+            checked = onLow,
+            onCheckedChange = { on ->
+                logWarn("[UI_ACTION] Fuel card on low fuel -> $on", tag = "UI")
+                store.setFuelOnLow(on)
+                if (on) onEnergyNeeded()
+            },
+        )
+        if (fuel.kind == CarFuel.Kind.GASOLINE) {
+            GroupDivider()
+            ChoiceSetting(
+                title = "Fuel grade",
+                subtitle = "The car says unleaded but not which grade",
+                options = CarFuel.grades(readings.fuelTypes),
+                selected = fuel.grade ?: FuelGrade.REGULAR,
+                onSelect = {
+                    logWarn("[UI_ACTION] Fuel grade -> ${it.code}", tag = "UI")
+                    store.setFuelGrade(it)
+                },
+            )
+        }
     }
 }
 

@@ -38,6 +38,19 @@ object PermissionPrompt {
         }
     }
 
+    /**
+     * Ask with [launcher] or, while an earlier dialog still waits unanswered (Android would refuse this request without
+     * asking), open Carlink's page in the system's app settings instead. For an Allow button that must always work.
+     */
+    fun <I> askOrOpenSettings(
+        context: Context,
+        launcher: ActivityResultLauncher<I>,
+        input: I,
+    ) {
+        if (isOpen && openAppSettings(context)) return
+        ask(launcher, input)
+    }
+
     /** The request's answer came back. */
     fun answered() {
         state.value = false

@@ -32,4 +32,22 @@ class VehicleStateTest {
         assertEquals(17, VehicleState(outsideC = 16.5f).outside(imperial = false))
         assertNull(VehicleState(speedMps = 1f).outside(imperial = true))
     }
+
+    @Test
+    fun `the Fuel card's distances follow the car's distance unit, then its speed unit`() {
+        assertTrue(VehicleState(distanceUnit = VehicleState.MILE, speedUnit = VehicleState.KPH).distanceImperial(Locale.GERMANY))
+        assertFalse(VehicleState(distanceUnit = VehicleState.KILOMETER).distanceImperial(Locale.US))
+        assertFalse(VehicleState(distanceUnit = VehicleState.METER).distanceImperial(Locale.US))
+        assertTrue("no distance unit: the speed unit", VehicleState(speedUnit = VehicleState.MPH).distanceImperial(Locale.GERMANY))
+    }
+
+    @Test
+    fun `the tank's bar needs both the level and the tank's size`() {
+        // The 10 Nov probe drive: 88.2 L of 90.75 L.
+        assertEquals(0.972f, VehicleState(fuelLevelMl = 88_200f, fuelCapacityMl = 90_750f).fuelFraction()!!, 0.001f)
+        assertNull(VehicleState(fuelLevelMl = 88_200f).fuelFraction())
+        assertNull(VehicleState(fuelCapacityMl = 90_750f).fuelFraction())
+        assertNull("a tank of no size", VehicleState(fuelLevelMl = 1f, fuelCapacityMl = 0f).fuelFraction())
+        assertEquals("a level past the tank's size is full", 1f, VehicleState(fuelLevelMl = 95_000f, fuelCapacityMl = 90_750f).fuelFraction()!!, 0f)
+    }
 }

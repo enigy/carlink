@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * driver picks one ([EngineChoice]). The data points (range, the low-fuel warning, the outside temperature) are shared
  * one by one ([VehicleStatusValues.Shares]), off by default. The truck's, not a driver's: one file for every iPhone.
  * Changes apply when the phone next connects, since the adapter declares them as the session starts.
+ * The Fuel card's own settings ([fuelCard], [fuelOnLow], [fuelGrade]) apply at once.
  */
 class VehicleStore private constructor(
     context: Context,
@@ -21,6 +22,9 @@ class VehicleStore private constructor(
     private val gpsState = MutableStateFlow(prefs.getBoolean(KEY_GPS, true))
     private val sharesState = MutableStateFlow(readShares())
     private val engineState = MutableStateFlow(EngineChoice.of(prefs.getString(KEY_ENGINE, null)))
+    private val fuelCardState = MutableStateFlow(prefs.getBoolean(KEY_FUEL_CARD, true))
+    private val fuelOnLowState = MutableStateFlow(prefs.getBoolean(KEY_FUEL_ON_LOW, true))
+    private val fuelGradeState = MutableStateFlow(FuelGrade.of(prefs.getString(KEY_FUEL_GRADE, null)))
 
     /** Whether the head unit's GPS goes to the phone. */
     val carGps: StateFlow<Boolean> = gpsState.asStateFlow()
@@ -30,6 +34,15 @@ class VehicleStore private constructor(
 
     /** The engine type the phone gets: the car's, or the driver's pick. */
     val engineChoice: StateFlow<EngineChoice> = engineState.asStateFlow()
+
+    /** The Fuel card in the side pane's deck (default on). */
+    val fuelCard: StateFlow<Boolean> = fuelCardState.asStateFlow()
+
+    /** The pane turns to the Fuel card when the low-fuel warning comes on (default on). */
+    val fuelOnLow: StateFlow<Boolean> = fuelOnLowState.asStateFlow()
+
+    /** A gasoline car's grade, which the car can't report (default regular). */
+    val fuelGrade: StateFlow<FuelGrade> = fuelGradeState.asStateFlow()
 
     fun setCarGps(on: Boolean) {
         prefs.edit().putBoolean(KEY_GPS, on).apply()
@@ -51,6 +64,21 @@ class VehicleStore private constructor(
         engineState.value = choice
     }
 
+    fun setFuelCard(on: Boolean) {
+        prefs.edit().putBoolean(KEY_FUEL_CARD, on).apply()
+        fuelCardState.value = on
+    }
+
+    fun setFuelOnLow(on: Boolean) {
+        prefs.edit().putBoolean(KEY_FUEL_ON_LOW, on).apply()
+        fuelOnLowState.value = on
+    }
+
+    fun setFuelGrade(grade: FuelGrade) {
+        prefs.edit().putString(KEY_FUEL_GRADE, grade.code).apply()
+        fuelGradeState.value = grade
+    }
+
     private fun readShares() =
         VehicleStatusValues.Shares(
             range = prefs.getBoolean(KEY_RANGE, false),
@@ -63,6 +91,9 @@ class VehicleStore private constructor(
         private const val PREFS_NAME = "carlink_vehicle"
         private const val KEY_GPS = "car_gps_for_phone"
         private const val KEY_ENGINE = "engine_type"
+        private const val KEY_FUEL_CARD = "fuel_card"
+        private const val KEY_FUEL_ON_LOW = "fuel_card_on_low_fuel"
+        private const val KEY_FUEL_GRADE = "fuel_grade"
         private const val KEY_RANGE = "share_range"
         private const val KEY_LOW_FUEL = "share_low_fuel"
         private const val KEY_OUTSIDE = "share_outside_temperature"

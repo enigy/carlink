@@ -5,6 +5,7 @@ import com.carlink.car.VehicleStatusValues.Shares
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.text.DecimalFormatSymbols
 
 /** Settings › Vehicle's words. */
 class VehicleTextTest {
@@ -35,6 +36,18 @@ class VehicleTextTest {
         assertEquals("Your choice (the car reports Diesel)", VehicleText.engine(EngineChoice.GASOLINE, diesel))
         assertEquals("Your choice (the car reports none yet)", VehicleText.engine(EngineChoice.ELECTRIC, VehicleState()))
         assertTrue(VehicleText.engine(EngineChoice.CAR, VehicleState()).contains("Gasoline, the adapter's default"))
+    }
+
+    @Test
+    fun `the Fuel card shows the range large and the tank in the car's units`() {
+        val truck = VehicleState(rangeM = 502_000f, fuelLevelMl = 88_200f, fuelCapacityMl = 90_750f)
+        assertEquals(312 to "mi", VehicleText.rangeFigure(truck, imperial = true))
+        assertEquals(502 to "km", VehicleText.rangeFigure(truck, imperial = false))
+        assertEquals(null, VehicleText.rangeFigure(VehicleState(), imperial = true))
+        assertEquals("88 of 91 L", VehicleText.tank(truck, imperial = false))
+        val point = DecimalFormatSymbols.getInstance().decimalSeparator
+        assertEquals("23${point}3 of 24${point}0 gal", VehicleText.tank(truck, imperial = true))
+        assertEquals(null, VehicleText.tank(VehicleState(fuelLevelMl = 1f), imperial = true))
     }
 
     @Test

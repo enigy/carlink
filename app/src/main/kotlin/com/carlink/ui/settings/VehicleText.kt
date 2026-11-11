@@ -10,6 +10,8 @@ internal object VehicleText {
     private const val METRES_PER_MILE = 1609.344f
     private const val FAHRENHEIT_SCALE = 1.8f
     private const val FAHRENHEIT_OFFSET = 32f
+    private const val ML_PER_LITRE = 1000f
+    private const val ML_PER_US_GALLON = 3785.41f
 
     const val NOT_READ = "Not read from the car yet"
     const val NEEDS_PERMISSION = "Carlink needs the car's energy permission to read it"
@@ -52,6 +54,15 @@ internal object VehicleText {
         return if (imperial) "${(m / METRES_PER_MILE).roundToInt()} mi" else "${(m / METRES_PER_KM).roundToInt()} km"
     }
 
+    /** The range as the Fuel card shows it large: its whole number and unit, (312, "mi"); null until it is read. */
+    fun rangeFigure(
+        state: VehicleState,
+        imperial: Boolean,
+    ): Pair<Int, String>? {
+        val m = state.rangeM ?: return null
+        return if (imperial) (m / METRES_PER_MILE).roundToInt() to "mi" else (m / METRES_PER_KM).roundToInt() to "km"
+    }
+
     fun lowFuel(
         state: VehicleState,
         permitted: Boolean,
@@ -66,6 +77,20 @@ internal object VehicleText {
     ): String {
         val c = state.outsideC ?: return NOT_READ
         return if (imperial) "${(c * FAHRENHEIT_SCALE + FAHRENHEIT_OFFSET).roundToInt()} °F" else "${c.roundToInt()} °C"
+    }
+
+    /** The tank for the Fuel card's small print: "88 of 91 L", or "23.3 of 24.0 gal". Null unless both are read. */
+    fun tank(
+        state: VehicleState,
+        imperial: Boolean,
+    ): String? {
+        val level = state.fuelLevelMl ?: return null
+        val size = state.fuelCapacityMl?.takeIf { it > 0f } ?: return null
+        return if (imperial) {
+            "%.1f of %.1f gal".format(level / ML_PER_US_GALLON, size / ML_PER_US_GALLON)
+        } else {
+            "${(level / ML_PER_LITRE).roundToInt()} of ${(size / ML_PER_LITRE).roundToInt()} L"
+        }
     }
 
     /** The category list's line: the GPS, and how many data points the iPhone gets. */

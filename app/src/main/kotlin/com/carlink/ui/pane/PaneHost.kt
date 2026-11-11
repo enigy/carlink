@@ -127,7 +127,8 @@ private fun rememberDeck(
     session: Boolean,
 ): Deck {
     val nav by NavigationStateManager.state.collectAsState()
-    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack)
+    val lowFuel = rememberLowFuel()
+    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack, fuel = rememberFuelDealt(lowFuel))
     var shown by remember { mutableStateOf(PaneDeck.default(pages)) }
     var dealt by remember { mutableStateOf(pages) }
     // Now Playing put in front by the pane's title, and the card the pane stepped to; null when it is
@@ -168,6 +169,7 @@ private fun rememberDeck(
             shown = next
         }
     }
+    FollowLowFuel(lowFuel, pages, shown) { shown = it }
     LaunchedEffect(session) { if (!session) aside = null }
     return Deck(pages, shown, onShown = { shown = it }) { app ->
         val to = PaneDeck.beside(app, pages)
@@ -235,6 +237,7 @@ private fun PaneHost(
                         PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, header = header, modifier = Modifier.fillMaxSize()) { which, m ->
                             when (which) {
                                 PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
+                                PaneCard.FUEL -> FuelCard(active = deck.shown == PaneCard.FUEL, modifier = m)
                                 PaneCard.MEDIA -> MusicCard(carlinkManager, media, lyrics, m) { wordsTop = it }
                                 PaneCard.CLOCK -> ClockCard(modifier = m)
                             }
@@ -307,6 +310,7 @@ private fun paneTitle(
         null -> "Phone"
         PaneCard.MEDIA -> appName?.takeIf { it.isNotBlank() } ?: "Music"
         PaneCard.DIRECTIONS -> "Directions"
+        PaneCard.FUEL -> "Fuel"
         PaneCard.CLOCK -> "Carlink"
     }
 

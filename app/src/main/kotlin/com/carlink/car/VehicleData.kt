@@ -161,6 +161,9 @@ object VehicleData {
             VehiclePropertyIds.ENV_OUTSIDE_TEMPERATURE -> VehicleReadings.update { it.copy(outsideC = f) }
             VehiclePropertyIds.VEHICLE_SPEED_DISPLAY_UNITS -> VehicleReadings.update { it.copy(speedUnit = (v.value as? Int)?.takeIf { ok }) }
             VehiclePropertyIds.RANGE_REMAINING -> VehicleReadings.update { it.copy(rangeM = f) }
+            VehiclePropertyIds.FUEL_LEVEL -> VehicleReadings.update { it.copy(fuelLevelMl = f) }
+            VehiclePropertyIds.INFO_FUEL_CAPACITY -> VehicleReadings.update { it.copy(fuelCapacityMl = f) }
+            VehiclePropertyIds.DISTANCE_DISPLAY_UNITS -> VehicleReadings.update { it.copy(distanceUnit = (v.value as? Int)?.takeIf { ok }) }
             VehiclePropertyIds.FUEL_LEVEL_LOW -> {
                 val low = (v.value as? Boolean)?.takeIf { ok }
                 if (low != VehicleReadings.state.value.fuelLow) logInfo("[VEHICLE] low fuel warning: ${low ?: "unknown"}", tag = Logger.Tags.ADAPTR)
@@ -186,10 +189,13 @@ object VehicleData {
             // Settings › Vehicle, for the phone: range as it drops, and the low-fuel warning when it turns on or off.
             VehiclePropertyIds.RANGE_REMAINING to CarPropertyManager.SENSOR_RATE_NORMAL,
             VehiclePropertyIds.FUEL_LEVEL_LOW to CarPropertyManager.SENSOR_RATE_ONCHANGE,
+            // The Fuel card: the tank's level for its bar, and the unit the car shows distances in.
+            VehiclePropertyIds.FUEL_LEVEL to CarPropertyManager.SENSOR_RATE_NORMAL,
+            VehiclePropertyIds.DISTANCE_DISPLAY_UNITS to CarPropertyManager.SENSOR_RATE_ONCHANGE,
         )
 
-    /** Static properties, read at each connect: the fuel types (the truck: [3], diesel). */
-    private val READ_ONCE = listOf(VehiclePropertyIds.INFO_FUEL_TYPE)
+    /** Static properties, read at each connect: the fuel types (the truck: [3], diesel) and the tank's size. */
+    private val READ_ONCE = listOf(VehiclePropertyIds.INFO_FUEL_TYPE, VehiclePropertyIds.INFO_FUEL_CAPACITY)
 
     private const val FUEL_LOW_RECHECK_MS = 60_000L
 
