@@ -8,6 +8,7 @@ import com.carlink.car.VehicleReadings
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
+import com.carlink.ui.settings.FuelGrade
 import com.carlink.ui.settings.StationSource
 import com.carlink.ui.settings.VehicleStore
 import kotlinx.coroutines.CoroutineScope
@@ -19,27 +20,35 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
 
 /**
- * The Fuel card's stations: looked up from the source Settings › Vehicle picks, when [LookupThrottle] says so, and kept
- * in memory only. A failed lookup keeps the last list with its age. A busy service ([SourceBusy]) is tried again while
- * the card is up, 30 s later and doubling to 5 min, or after its own Retry-After. Logs carry counts, timings, HTTP
- * statuses and sizes, never a
- * position, a station's name or an address: a list of stations near home says where the driver lives.
+ * The Fuel card's stations: looked up from the source Settings › Vehicle › Price source picks, when [LookupThrottle] says
+ * so, and kept in memory only. Google Places needs the driver's key and room in the month's lookups ([GooglePlacesStore]);
+ * without either the card shows the free stations and says why ([View.notice]). A failed lookup keeps the last list with
+ * its age. A busy service ([SourceBusy]) is tried again while the card is up, 30 s later and doubling to 5 min, or after
+ * its own Retry-After. Logs carry counts, timings, HTTP statuses and sizes, never a position, a station's name or
+ * address, or the key: a list of stations near home says where the driver lives.
  */
 object FuelStations {
     enum class Status { OFF, NEEDS_LOCATION, NO_POSITION, LOOKING, READY, BUSY, OFFLINE, FAILED }
 
-    /** What the card shows: the [status], the last [stations] and when they came ([fetchedAt], elapsedRealtime). */
+    /**
+     * What the card shows: the [status], the last [stations] and when they came ([fetchedAt], elapsedRealtime), the
+     * source's [attribution], why the free stations stand in for Google's ([notice]), and Google's refusal in the
+     * driver's words ([problem]).
+     */
     data class View(
         val status: Status = Status.OFF,
         val stations: List<Station> = emptyList(),
         val fetchedAt: Long? = null,
         val attribution: String? = null,
+        val notice: String? = null,
+        val problem: String? = null,
     )
 
-    /** How far the card looks: 5 miles. */
-    const val RADIUS_M = 8_046.72
+    private const val MS_PER_S = 1_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val throttle = LookupThrottle()
@@ -47,6 +56,8 @@ object FuelStations {
     private val hereState = MutableStateFlow<GeoPoint?>(null)
     private val overpass by lazy { OverpassSource() }
     private val demo by lazy { DemoSource() }
+
+    @Volatile private var google: GooglePlacesSource? = null
 
     @Volatile private var visible = false
 
@@ -91,6 +102,41 @@ object FuelStations {
     /** Low fuel just came on: one lookup, nearest first. */
     fun onLowFuel(context: Context) = lookUpIfDue(context.applicationContext, lowFuelRose = true)
 
+    /**
+     * Settings' Test for the driver's Google key: one lookup at the head unit's last position, in words. It counts toward
+     * the month's lookups like any other.
+     */
+    suspend fun testGoogle(context: Context): String =
+        withContext(Dispatchers.IO) {
+            val app = context.applicationContext
+            val keys = GooglePlacesStore.get(app)
+            val here = hereState.value ?: FuelLocation.lastFix(app)
+            val blocked =
+                when {
+                    !keys.hasKey.value -> "Enter a key first."
+                    !keys.allowsLookup() -> "This month's lookup limit is reached."
+                    here == null -> "Carlink doesn't know where the car is yet. Allow the location, then try again."
+                    else -> null
+                }
+            if (blocked != null || here == null) return@withContext blocked.orEmpty()
+            val store = VehicleStore.get(app)
+            val fuel = carFuel(store).takeIf { it.hasStations } ?: CarFuel(CarFuel.Kind.GASOLINE, FuelGrade.REGULAR)
+            keys.spendLookup()
+            try {
+                val stations = google(app).stationsNear(here, fuel, radiusM(store))
+                logInfo("[FUEL] Google Places test: ${stations.size} stations (${stations.count { it.price != null }} priced)", tag = Logger.Tags.ADAPTR)
+                "It works: ${stations.size} stations nearby, ${stations.count { it.price != null }} with a ${fuel.label.lowercase()} price."
+            } catch (e: GoogleKeyProblem) {
+                e.words
+            } catch (e: SourceBusy) {
+                "Google is busy (${e.why}). Try again in a minute."
+            } catch (_: SourceUnreachable) {
+                "No internet."
+            } catch (e: IOException) {
+                "Couldn't read Google's answer (${e.javaClass.simpleName})."
+            }
+        }
+
     private fun onPosition(
         app: Context,
         fix: GeoPoint,
@@ -105,12 +151,12 @@ object FuelStations {
     ) {
         val store = VehicleStore.get(app)
         if (!store.nearbyStations.value || !CarGpsFeed.permitted(app)) return
-        val fuel = CarFuel.of(VehicleReadings.state.value.fuelTypes, store.engineChoice.value, store.fuelGrade.value)
+        val fuel = carFuel(store)
         if (!fuel.hasStations) return
-        val source = sourceFor(store)
-        if (source.name != sourceName) {
+        val pick = pick(app, store)
+        if (pick.source.name != sourceName) {
             throttle.reset()
-            sourceName = source.name
+            sourceName = pick.source.name
         }
         val here = hereState.value
         if (here == null) {
@@ -122,23 +168,26 @@ object FuelStations {
         throttle.ran(now, here)
         viewState.value = viewState.value.copy(status = Status.LOOKING)
         retry?.cancel()
-        looking = scope.launch { lookUp(app, source, here, fuel) }
+        looking = scope.launch { lookUp(app, pick, here, fuel, radiusM(store)) }
     }
 
     private fun lookUp(
         app: Context,
-        source: FuelPriceSource,
+        pick: Pick,
         here: GeoPoint,
         fuel: CarFuel,
+        radiusM: Double,
     ) {
+        val source = pick.source
+        if (source is GooglePlacesSource) GooglePlacesStore.get(app).spendLookup()
         val started = SystemClock.elapsedRealtime()
-        val outcome = runCatching { source.stationsNear(here, fuel, RADIUS_M) }
+        val outcome = runCatching { source.stationsNear(here, fuel, radiusM) }
         val ms = SystemClock.elapsedRealtime() - started
         val stations = outcome.getOrNull()
         if (stations != null) {
             busyInARow = 0
-            viewState.value = View(Status.READY, stations, SystemClock.elapsedRealtime(), source.attribution)
-            logInfo("[FUEL] ${source.name}: ${stations.size} stations in $ms ms", tag = Logger.Tags.ADAPTR)
+            viewState.value = View(Status.READY, stations, SystemClock.elapsedRealtime(), source.attribution, pick.notice)
+            logInfo("[FUEL] ${source.name}: ${stations.size} stations (${stations.count { it.price != null }} priced) in $ms ms", tag = Logger.Tags.ADAPTR)
             return
         }
         val e = outcome.exceptionOrNull() ?: return
@@ -146,10 +195,11 @@ object FuelStations {
             when (e) {
                 is SourceBusy -> Status.BUSY
                 is SourceUnreachable -> Status.OFFLINE
-                // A bad answer (IOException, JSONException), or a bug in reading it: the card says it couldn't, the app goes on.
+                // A bad answer (IOException, JSONException), Google refusing the key, or a bug in reading it: the card
+                // says it couldn't, and the app goes on.
                 else -> Status.FAILED
             }
-        viewState.value = viewState.value.copy(status = status)
+        viewState.value = viewState.value.copy(status = status, notice = pick.notice, problem = (e as? GoogleKeyProblem)?.words)
         val why = (e as? SourceBusy)?.why ?: (e as? SourceUnreachable)?.why ?: e.message ?: e.javaClass.simpleName
         if (e !is SourceBusy) {
             logWarn("[FUEL] ${source.name}: $status after $ms ms ($why)", tag = Logger.Tags.ADAPTR)
@@ -160,7 +210,7 @@ object FuelStations {
         retry = scope.launch { retryAfter(app, waitS) }
     }
 
-    /** A busy service, asked again after [waitS] while the card is still up, Nearby stations on and the fuel the same. */
+    /** A busy service, asked again after [waitS] while the card is still up and Nearby stations on. */
     private suspend fun retryAfter(
         app: Context,
         waitS: Long,
@@ -170,15 +220,47 @@ object FuelStations {
         val here = hereState.value
         if (!visible || here == null) return
         if (!store.nearbyStations.value || !CarGpsFeed.permitted(app)) return
-        val fuel = CarFuel.of(VehicleReadings.state.value.fuelTypes, store.engineChoice.value, store.fuelGrade.value)
         throttle.ran(SystemClock.elapsedRealtime(), here)
-        lookUp(app, sourceFor(store), here, fuel)
+        lookUp(app, pick(app, store), here, carFuel(store), radiusM(store))
     }
 
-    private fun sourceFor(store: VehicleStore): FuelPriceSource = if (BuildConfig.DEBUG && store.stationSource.value == StationSource.DEMO) demo else overpass
+    /** The source to ask, and why it isn't the one picked. */
+    private class Pick(
+        val source: FuelPriceSource,
+        val notice: String? = null,
+    )
 
-    private const val MS_PER_S = 1_000L
+    private fun pick(
+        app: Context,
+        store: VehicleStore,
+    ): Pick {
+        val keys = GooglePlacesStore.get(app)
+        return when (store.stationSource.value) {
+            StationSource.DEMO -> if (BuildConfig.DEBUG) Pick(demo) else Pick(overpass)
+            StationSource.GOOGLE ->
+                when {
+                    !keys.hasKey.value -> Pick(overpass, "No Google key yet: free stations, without prices")
+                    !keys.allowsLookup() -> Pick(overpass, "Monthly lookup limit reached: free stations, without prices")
+                    else -> Pick(google(app))
+                }
+            StationSource.FREE -> Pick(overpass)
+        }
+    }
+
+    private fun google(app: Context): GooglePlacesSource =
+        google ?: GooglePlacesSource(
+            key = { GooglePlacesStore.get(app).key() },
+            appHeaders = GooglePlacesSource.appHeaders(app),
+        ).also { google = it }
 }
+
+/** The fuel the card looks for: the car's, the driver's engine override and grade. */
+private fun carFuel(store: VehicleStore) = CarFuel.of(VehicleReadings.state.value.fuelTypes, store.engineChoice.value, store.fuelGrade.value)
+
+/** How far the card looks, Settings › Vehicle › Search radius. */
+private fun radiusM(store: VehicleStore) = store.searchRadiusMi.value * METRES_PER_MILE
+
+private const val METRES_PER_MILE = 1609.344
 
 /** How long to wait before asking a busy service again: 30 s, doubling to 5 min, and never less than its Retry-After. */
 object RetryWait {

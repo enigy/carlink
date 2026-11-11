@@ -32,11 +32,18 @@ internal object FuelLocation {
         val lm = context.getSystemService(LocationManager::class.java) ?: return
         val l = LocationListener { onFix(it.point()) }
         runCatching {
-            PROVIDERS.firstNotNullOfOrNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }?.let { onFix(it.point()) }
+            lastFix(context)?.let(onFix)
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, UPDATE_MS, UPDATE_M, l, Looper.getMainLooper())
             manager = lm
             listener = l
         }.onFailure { logWarn("[FUEL] no position updates: ${it.javaClass.simpleName}", tag = Logger.Tags.ADAPTR) }
+    }
+
+    /** The head unit's last known position (for Settings' Google Test, and the card's first lookup); null without the permission or a fix. */
+    fun lastFix(context: Context): GeoPoint? {
+        if (!CarGpsFeed.permitted(context)) return null
+        val lm = context.getSystemService(LocationManager::class.java) ?: return null
+        return PROVIDERS.firstNotNullOfOrNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }?.point()
     }
 
     fun stop() {

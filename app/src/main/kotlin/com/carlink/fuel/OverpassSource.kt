@@ -1,11 +1,7 @@
 package com.carlink.fuel
 
-import com.carlink.BuildConfig
 import org.json.JSONObject
-import java.io.IOException
 import java.net.HttpURLConnection
-import java.net.SocketTimeoutException
-import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
 
@@ -56,7 +52,6 @@ class OverpassSource(
 
         /** Overpass's own limit for the query, under the read timeout, so the server gives up first. */
         private const val QUERY_TIMEOUT_S = 50
-        private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 60_000
         const val KEEP = 40
 
@@ -114,51 +109,16 @@ class OverpassSource(
             return listOfNotNull(street.ifBlank { null }, city).joinToString(", ").ifBlank { null }
         }
 
+        /** The query to [endpoint]: busy for 429, 5xx or a read timeout ([httpFailure]), the JSON for 200. */
         private fun postTo(
             endpoint: String,
             query: String,
         ): String {
-            val conn = URL(endpoint).openConnection() as HttpURLConnection
-            try {
-                conn.connectTimeout = CONNECT_TIMEOUT_MS
-                conn.readTimeout = READ_TIMEOUT_MS
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                // Overpass's usage policy: a client names itself (a default curl name drew 406 on the 11 Nov bench).
-                conn.setRequestProperty("User-Agent", "Carlink/${BuildConfig.VERSION_NAME} (Android Automotive; https://github.com/enigy/carlink)")
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-                send(conn, "data=${URLEncoder.encode(query, Charsets.UTF_8.name())}")
-                return read(conn)
-            } finally {
-                conn.disconnect()
-            }
+            val body = "data=${URLEncoder.encode(query, Charsets.UTF_8.name())}".toByteArray(Charsets.UTF_8)
+            // Http names Carlink in the User-Agent, as Overpass's policy asks (a default curl name drew 406 on the bench).
+            val answer = Http.post(endpoint, mapOf("Content-Type" to "application/x-www-form-urlencoded"), body, READ_TIMEOUT_MS)
+            if (answer.code != HttpURLConnection.HTTP_OK) throw httpFailure(answer.code, answer.retryAfter)
+            return answer.body
         }
-
-        /** Connect and send the query: any failure here is no connection. */
-        private fun send(
-            conn: HttpURLConnection,
-            body: String,
-        ) {
-            try {
-                conn.connect()
-                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            } catch (e: IOException) {
-                throw SourceUnreachable(e.javaClass.simpleName, e)
-            }
-        }
-
-        /** The answer: busy for 429, 5xx or a read timeout ([httpFailure]), the JSON for 200. */
-        private fun read(conn: HttpURLConnection): String {
-            val code = timed { conn.responseCode }
-            if (code != HttpURLConnection.HTTP_OK) throw httpFailure(code, conn.getHeaderField("Retry-After"))
-            return timed { conn.inputStream.bufferedReader().use { it.readText() } }
-        }
-
-        private inline fun <T> timed(block: () -> T): T =
-            try {
-                block()
-            } catch (e: SocketTimeoutException) {
-                throw SourceBusy("timeout", cause = e)
-            }
     }
 }

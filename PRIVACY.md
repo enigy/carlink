@@ -6,13 +6,14 @@ Carlink collects no data about you. It has no analytics, no telemetry, no crash 
 
 ## What leaves the head unit
 
-Carlink connects to the internet for three things only, and you can turn off the first and the last (which is off until you turn it on). None goes to the developer, and none carries your name, your phone's name or an account.
+Carlink connects to the internet for three things only, and you can turn off the first and the last (which is off until you turn it on). Fuel prices from Google come only with a key of your own. None goes to the developer, and none carries your name, your phone's name or an account.
 
 | When | What is sent | To |
 | --- | --- | --- |
 | A song plays | Its title, artist, album and length, to look up its lyrics. This happens even while lyrics are hidden on the music card, so they are ready if you show them. Songs already looked up are read from the head unit instead. Each request also names Carlink: its version and its LRCLIB app ID, the same for every head unit, which identify the app, not you or your car. Turn off Settings › Adapter and about › Look up lyrics, and no song is ever sent. | [LRCLIB](https://lrclib.net) (lrclib.net) |
 | You convert or update your adapter, or update the USB Bridge | A request for the installer, update or bridge file. Nothing about you or the adapter is sent. | GitHub (github.com), where the files are published |
 | Nearby stations is on (Settings › Vehicle, off by default) and the Fuel card is up | The car's position and a search radius, to find fuel stations around: when the card first shows, then after about 3 miles or 15 minutes, and when the fuel runs low. Carlink doesn't store the position or the stations. | [OpenStreetMap](https://www.openstreetmap.org) through the Overpass API: overpass-api.de (FOSSGIS), and overpass.private.coffee when that one is busy |
+| As above, with Settings › Vehicle › Price source set to Google Places | The same position and radius, with the Google API key you entered, to get each station's fuel prices. Google bills the lookups to your own Google Cloud account; Carlink counts them and stops at the monthly limit you set. Carlink doesn't store what Google sends. | Google (places.googleapis.com) |
 
 Like any website, LRCLIB, GitHub and the Overpass servers see the head unit's internet (IP) address when it connects. Their own privacy policies cover what they keep.
 
@@ -23,6 +24,7 @@ Carlink keeps a few things on the head unit so it works the next time you drive.
 | What | Why | How long, and how to remove it |
 | --- | --- | --- |
 | Your settings, including each iPhone's own settings | So each driver gets their choices back | Until you change them or uninstall |
+| Your Google API key, if you enter one for fuel prices | So the Fuel card can ask Google. It's encrypted with a key kept in the head unit's keystore, and Settings shows only its last four characters. | Until you tap Remove in Settings › Vehicle, or uninstall |
 | Phones the adapter has seen: name, model, Bluetooth address, when last connected | The Phones list, and the order phones connect in | Until you tap Forget on the phone, or uninstall |
 | Song lyrics | So songs heard before show their lyrics without going online | Until they fill 100 MB; then the songs played least, and longest ago, are deleted first. Settings › Adapter and about › Clear deletes them all. |
 | Album art | So covers show again quickly | In the app's cache; the system or Clear cache removes it |

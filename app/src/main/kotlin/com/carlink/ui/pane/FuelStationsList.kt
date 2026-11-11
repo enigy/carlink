@@ -52,6 +52,8 @@ internal fun StationsSection(
             if (rows.isNotEmpty()) view.attribution?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = secondary) }
             rows.forEach { StationRowView(it, imperial, big, onTap) }
             note(view, rows.isEmpty(), imperial)?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = secondary) }
+            // Why the free stations stand in for Google's (no key, the month's limit): small print, parked only.
+            if (!big) view.notice?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = secondary) }
         }
     }
 }
@@ -69,7 +71,7 @@ private fun note(
         FuelStations.Status.READY -> "No stations within ${if (imperial) "5 mi" else "8 km"}".takeIf { empty }
         FuelStations.Status.OFFLINE -> aged("No internet", "No internet", empty, age)
         FuelStations.Status.BUSY -> aged("The station service is busy, trying again soon", "The station service is busy", empty, age)
-        FuelStations.Status.FAILED -> aged("Couldn't get the stations", "Couldn't update", empty, age)
+        FuelStations.Status.FAILED -> view.problem?.let { "Google: $it" } ?: aged("Couldn't get the stations", "Couldn't update", empty, age)
         FuelStations.Status.OFF, FuelStations.Status.NEEDS_LOCATION -> null
     }
 }

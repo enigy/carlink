@@ -22,7 +22,14 @@ class VehicleStore private constructor(
 ) {
     private val prefs: SharedPreferences = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val gpsState = MutableStateFlow(prefs.getBoolean(KEY_GPS, true))
-    private val sharesState = MutableStateFlow(readShares())
+    private val sharesState =
+        MutableStateFlow(
+            VehicleStatusValues.Shares(
+                range = prefs.getBoolean(KEY_RANGE, false),
+                lowFuel = prefs.getBoolean(KEY_LOW_FUEL, false),
+                outsideTemperature = prefs.getBoolean(KEY_OUTSIDE, false),
+            ),
+        )
     private val engineState = MutableStateFlow(EngineChoice.of(prefs.getString(KEY_ENGINE, null)))
     private val fuelCardState = MutableStateFlow(prefs.getBoolean(KEY_FUEL_CARD, true))
     private val fuelOnLowState = MutableStateFlow(prefs.getBoolean(KEY_FUEL_ON_LOW, true))
@@ -30,6 +37,7 @@ class VehicleStore private constructor(
     private val lowFuelAtState = MutableStateFlow(prefs.getInt(KEY_LOW_FUEL_AT, LowFuel.DEFAULT_AT))
     private val nearbyState = MutableStateFlow(prefs.getBoolean(KEY_NEARBY, false))
     private val stationSourceState = MutableStateFlow(StationSource.of(prefs.getString(KEY_STATION_SOURCE, null)))
+    private val radiusState = MutableStateFlow(prefs.getInt(KEY_RADIUS_MI, DEFAULT_RADIUS_MI))
 
     /** Whether the head unit's GPS goes to the phone. */
     val carGps: StateFlow<Boolean> = gpsState.asStateFlow()
@@ -55,8 +63,11 @@ class VehicleStore private constructor(
     /** The Fuel card looks up stations nearby, sending the car's position to [stationSource] (default off). */
     val nearbyStations: StateFlow<Boolean> = nearbyState.asStateFlow()
 
-    /** Where the stations come from: OpenStreetMap, or made-up ones in a debug build. */
+    /** Where the stations come from: OpenStreetMap, Google Places with the driver's key, or made-up ones in a debug build. */
     val stationSource: StateFlow<StationSource> = stationSourceState.asStateFlow()
+
+    /** How far the card looks for stations, miles (default 5); shown in the car's unit. */
+    val searchRadiusMi: StateFlow<Int> = radiusState.asStateFlow()
 
     fun setCarGps(on: Boolean) {
         prefs.edit().putBoolean(KEY_GPS, on).apply()
@@ -108,12 +119,10 @@ class VehicleStore private constructor(
         stationSourceState.value = source
     }
 
-    private fun readShares() =
-        VehicleStatusValues.Shares(
-            range = prefs.getBoolean(KEY_RANGE, false),
-            lowFuel = prefs.getBoolean(KEY_LOW_FUEL, false),
-            outsideTemperature = prefs.getBoolean(KEY_OUTSIDE, false),
-        )
+    fun setSearchRadiusMi(miles: Int) {
+        prefs.edit().putInt(KEY_RADIUS_MI, miles).apply()
+        radiusState.value = miles
+    }
 
     companion object {
         // PERSISTENCE CONTRACT: renaming any of these orphans the stored choice.
@@ -126,6 +135,11 @@ class VehicleStore private constructor(
         private const val KEY_LOW_FUEL_AT = "low_fuel_at_range"
         private const val KEY_NEARBY = "fuel_nearby_stations"
         private const val KEY_STATION_SOURCE = "fuel_station_source"
+        private const val KEY_RADIUS_MI = "fuel_search_radius_mi"
+        const val DEFAULT_RADIUS_MI = 5
+
+        /** The radii Settings › Vehicle offers, miles. */
+        val RADII_MI = listOf(2, 5, 10, 20)
         private const val KEY_RANGE = "share_range"
         private const val KEY_LOW_FUEL = "share_low_fuel"
         private const val KEY_OUTSIDE = "share_outside_temperature"
