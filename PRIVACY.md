@@ -6,14 +6,15 @@ Carlink collects no data about you. It has no analytics, no telemetry, no crash 
 
 ## What leaves the head unit
 
-Carlink connects to the internet for two things only, and you can turn the first off. Neither goes to the developer, and neither carries your name, your phone's name or an account.
+Carlink connects to the internet for three things only, and you can turn off the first and the last (which is off until you turn it on). None goes to the developer, and none carries your name, your phone's name or an account.
 
 | When | What is sent | To |
 | --- | --- | --- |
 | A song plays | Its title, artist, album and length, to look up its lyrics. This happens even while lyrics are hidden on the music card, so they are ready if you show them. Songs already looked up are read from the head unit instead. Each request also names Carlink: its version and its LRCLIB app ID, the same for every head unit, which identify the app, not you or your car. Turn off Settings › Adapter and about › Look up lyrics, and no song is ever sent. | [LRCLIB](https://lrclib.net) (lrclib.net) |
 | You convert or update your adapter, or update the USB Bridge | A request for the installer, update or bridge file. Nothing about you or the adapter is sent. | GitHub (github.com), where the files are published |
+| Nearby stations is on (Settings › Vehicle, off by default) and the Fuel card is up | The car's position and a search radius, to find fuel stations around: when the card first shows, then after about 3 miles or 15 minutes, and when the fuel runs low. Carlink doesn't store the position or the stations. | [OpenStreetMap](https://www.openstreetmap.org) through the Overpass API (overpass-api.de) |
 
-Like any website, LRCLIB and GitHub see the head unit's internet (IP) address when it connects. Their own privacy policies cover what they keep.
+Like any website, LRCLIB, GitHub and the Overpass API see the head unit's internet (IP) address when it connects. Their own privacy policies cover what they keep.
 
 ## What stays on the head unit
 
@@ -36,9 +37,9 @@ Carlink does not keep audio, contacts, call history, messages or your routes. Th
 | Microphone | Siri and phone calls: your voice goes to your iPhone through the adapter while you talk. Nothing is recorded or kept. |
 | Vehicle speed | Holding back features while the vehicle moves (Limit features while driving), and the turn alert. Read on the head unit only. |
 | Outside temperature and display units | Showing the temperature in the side pane, in the car's own units; and, if you share it in Settings › Vehicle, giving it to your iPhone |
-| Location | Car GPS for the iPhone (Settings › Vehicle, on by default): the head unit's GPS goes to your iPhone through the adapter, to help its own. Read only while Carlink runs, never stored, sent nowhere else. |
+| Location | Car GPS for the iPhone (Settings › Vehicle, on by default): the head unit's GPS goes to your iPhone through the adapter, to help its own. Nearby stations (off by default): the car's position goes to OpenStreetMap to find fuel stations, as above. Read only while Carlink runs, never stored, sent nowhere else. |
 | Vehicle energy and information | The car's engine type (gasoline, diesel or electric), or the one you choose in Settings › Vehicle, goes to your iPhone each time it connects. Range and the low-fuel warning go only if you share them there (off by default). Your iPhone may use them in CarPlay. Never stored. |
-| Internet | Lyrics lookups and adapter downloads, as above |
+| Internet | Lyrics lookups, adapter downloads and nearby stations, as above |
 | Notifications | Incoming calls, and setting up the USB Bridge |
 | Car templates and surfaces | Turn-by-turn directions on the cluster and HUD |
 | Foreground services and wake lock | Keeping CarPlay, music and calls running while Carlink is on screen |

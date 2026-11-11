@@ -237,7 +237,7 @@ private fun PaneHost(
                         PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, header = header, modifier = Modifier.fillMaxSize()) { which, m ->
                             when (which) {
                                 PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
-                                PaneCard.FUEL -> FuelCard(active = deck.shown == PaneCard.FUEL, modifier = m)
+                                PaneCard.FUEL -> FuelCard(active = deck.shown == PaneCard.FUEL, onDirections = { carlinkManager.openDirections(it.at) }, modifier = m)
                                 PaneCard.MEDIA -> MusicCard(carlinkManager, media, lyrics, m) { wordsTop = it }
                                 PaneCard.CLOCK -> ClockCard(modifier = m)
                             }

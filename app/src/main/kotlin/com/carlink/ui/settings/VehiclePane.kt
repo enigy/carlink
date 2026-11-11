@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.carlink.BuildConfig
 import com.carlink.PermissionPrompt
 import com.carlink.car.CarGpsFeed
 import com.carlink.car.VehicleData
@@ -88,6 +89,7 @@ internal fun VehiclePane(modifier: Modifier = Modifier) {
         )
         SectionLabel("Fuel card")
         FuelCardGroup(store, readings, engine, onEnergyNeeded = askEnergyIfNeeded)
+        NearbyGroup(store, locationAllowed, onLocationNeeded = { if (!locationAllowed) PermissionPrompt.askOrOpenSettings(context, askLocation, LOCATION_PERMISSIONS) })
     }
 }
 
@@ -192,6 +194,50 @@ private fun FuelCardGroup(
                 onSelect = {
                     logWarn("[UI_ACTION] Fuel grade -> ${it.code}", tag = "UI")
                     store.setFuelGrade(it)
+                },
+            )
+        }
+    }
+}
+
+/**
+ * Nearby stations (off by default): the Fuel card looks up stations around, which sends the car's position to the source
+ * (OpenStreetMap). Turning it on asks for the location permission Car GPS uses. Debug builds can pick made-up stations.
+ */
+@Composable
+private fun NearbyGroup(
+    store: VehicleStore,
+    locationAllowed: Boolean,
+    onLocationNeeded: () -> Unit,
+) {
+    val nearby by store.nearbyStations.collectAsState()
+    val source by store.stationSource.collectAsState()
+    SettingsGroup {
+        SwitchRow(
+            title = "Nearby stations",
+            subtitle =
+                if (nearby && !locationAllowed) {
+                    "On, but Carlink needs the location permission to find stations"
+                } else {
+                    "Sends the car's position to OpenStreetMap to find fuel stations around. Off by default."
+                },
+            checked = nearby,
+            onCheckedChange = { on ->
+                logWarn("[UI_ACTION] Nearby stations -> $on", tag = "UI")
+                store.setNearbyStations(on)
+                if (on) onLocationNeeded()
+            },
+        )
+        if (BuildConfig.DEBUG && nearby) {
+            GroupDivider()
+            ChoiceSetting(
+                title = "Station source (debug)",
+                subtitle = "Demo shows made-up stations and prices around the car, and sends nothing",
+                options = StationSource.entries,
+                selected = source,
+                onSelect = {
+                    logWarn("[UI_ACTION] Station source -> ${it.code}", tag = "UI")
+                    store.setStationSource(it)
                 },
             )
         }

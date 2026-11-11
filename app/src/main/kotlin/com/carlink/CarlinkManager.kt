@@ -44,6 +44,8 @@ import com.carlink.device.KnownDeviceSnapshot
 import com.carlink.device.KnownDeviceStore
 import com.carlink.device.mergeDeviceList
 import com.carlink.device.phonePolicyJson
+import com.carlink.fuel.Directions
+import com.carlink.fuel.GeoPoint
 import com.carlink.logging.DriveLog
 import com.carlink.logging.DriveLogging
 import com.carlink.logging.LogExport
@@ -1947,6 +1949,18 @@ class CarlinkManager(
     fun openCarPlayApp(url: String) {
         val c = client ?: return
         logInfo("[CARPLAY_UI] requestUI url=$url", tag = Logger.Tags.ADAPTR)
+        scope.launch(Dispatchers.IO) { c.sendRequestUiUrl(url) }
+    }
+
+    /**
+     * CarPlay's route preview to [at] ([Directions]): a station tapped on the Fuel card. GO starts
+     * guidance; with a route running, CarPlay offers Add Stop (the Mac's bench, 11 Nov). The coordinates aren't logged:
+     * a log of stations tapped near home says where the driver lives.
+     */
+    fun openDirections(at: GeoPoint) {
+        val c = client ?: return
+        val url = Directions.url(at)
+        logInfo("[CARPLAY_UI] requestUI directions to a station (${url.length} B)", tag = Logger.Tags.ADAPTR)
         scope.launch(Dispatchers.IO) { c.sendRequestUiUrl(url) }
     }
 

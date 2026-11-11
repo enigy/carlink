@@ -14,7 +14,8 @@ import kotlinx.coroutines.flow.asStateFlow
  * driver picks one ([EngineChoice]). The data points (range, the low-fuel warning, the outside temperature) are shared
  * one by one ([VehicleStatusValues.Shares]), off by default. The truck's, not a driver's: one file for every iPhone.
  * Changes apply when the phone next connects, since the adapter declares them as the session starts.
- * The Fuel card's own settings ([fuelCard], [fuelOnLow], [lowFuelAt], [fuelGrade]) apply at once.
+ * The Fuel card's own settings ([fuelCard], [fuelOnLow], [lowFuelAt], [fuelGrade], [nearbyStations], [stationSource]) apply
+ * at once.
  */
 class VehicleStore private constructor(
     context: Context,
@@ -27,6 +28,8 @@ class VehicleStore private constructor(
     private val fuelOnLowState = MutableStateFlow(prefs.getBoolean(KEY_FUEL_ON_LOW, true))
     private val fuelGradeState = MutableStateFlow(FuelGrade.of(prefs.getString(KEY_FUEL_GRADE, null)))
     private val lowFuelAtState = MutableStateFlow(prefs.getInt(KEY_LOW_FUEL_AT, LowFuel.DEFAULT_AT))
+    private val nearbyState = MutableStateFlow(prefs.getBoolean(KEY_NEARBY, false))
+    private val stationSourceState = MutableStateFlow(StationSource.of(prefs.getString(KEY_STATION_SOURCE, null)))
 
     /** Whether the head unit's GPS goes to the phone. */
     val carGps: StateFlow<Boolean> = gpsState.asStateFlow()
@@ -48,6 +51,12 @@ class VehicleStore private constructor(
 
     /** The range, in the car's distance unit, at which the Fuel card warns of low fuel ([LowFuel]; default 25). */
     val lowFuelAt: StateFlow<Int> = lowFuelAtState.asStateFlow()
+
+    /** The Fuel card looks up stations nearby, sending the car's position to [stationSource] (default off). */
+    val nearbyStations: StateFlow<Boolean> = nearbyState.asStateFlow()
+
+    /** Where the stations come from: OpenStreetMap, or made-up ones in a debug build. */
+    val stationSource: StateFlow<StationSource> = stationSourceState.asStateFlow()
 
     fun setCarGps(on: Boolean) {
         prefs.edit().putBoolean(KEY_GPS, on).apply()
@@ -89,6 +98,16 @@ class VehicleStore private constructor(
         lowFuelAtState.value = at
     }
 
+    fun setNearbyStations(on: Boolean) {
+        prefs.edit().putBoolean(KEY_NEARBY, on).apply()
+        nearbyState.value = on
+    }
+
+    fun setStationSource(source: StationSource) {
+        prefs.edit().putString(KEY_STATION_SOURCE, source.code).apply()
+        stationSourceState.value = source
+    }
+
     private fun readShares() =
         VehicleStatusValues.Shares(
             range = prefs.getBoolean(KEY_RANGE, false),
@@ -105,6 +124,8 @@ class VehicleStore private constructor(
         private const val KEY_FUEL_ON_LOW = "fuel_card_on_low_fuel"
         private const val KEY_FUEL_GRADE = "fuel_grade"
         private const val KEY_LOW_FUEL_AT = "low_fuel_at_range"
+        private const val KEY_NEARBY = "fuel_nearby_stations"
+        private const val KEY_STATION_SOURCE = "fuel_station_source"
         private const val KEY_RANGE = "share_range"
         private const val KEY_LOW_FUEL = "share_low_fuel"
         private const val KEY_OUTSIDE = "share_outside_temperature"

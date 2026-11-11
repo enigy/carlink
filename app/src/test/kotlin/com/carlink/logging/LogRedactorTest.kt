@@ -46,4 +46,18 @@ class LogRedactorTest {
         assertEquals("<number …4567>", call(null, "+15551234567").logLabel)
         assertEquals("Unknown caller", call(null, null).logLabel)
     }
+
+    /** The Fuel card's station taps: the box logs the directions link it sends on. Coordinates made up. */
+    @Test
+    fun `a directions link loses its coordinates`() {
+        assertEquals(
+            "[input] requestUI url=maps:?daddr=<place>&dirflg=d sent=true",
+            LogRedactor.line("[input] requestUI url=maps:?daddr=-33.900000,151.200000&dirflg=d sent=true"),
+        )
+        assertEquals(
+            "https://maps.apple.com/directions?destination=<place>&mode=driving",
+            LogRedactor.line("https://maps.apple.com/directions?destination=12.5,-7.25&mode=driving"),
+        )
+        assertEquals("maps: alone stays", "requestUI url=maps:", LogRedactor.line("requestUI url=maps:"))
+    }
 }
