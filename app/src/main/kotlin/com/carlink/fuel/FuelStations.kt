@@ -64,11 +64,11 @@ object FuelStations {
 
     @Volatile private var looking: Job? = null
 
-    // What the last lookup asked: its source, why (a notice), the radius and the key; a change looks up again at once.
-    @Volatile private var pickKey: String? = null
+    // The pick as the last lookup left it; a different one (a setting changed, Google's hour ran out) looks up again at once.
+    @Volatile private var lastPick: Pick? = null
 
-    // Google out of quota (HTTP 429) until then, elapsedRealtime: free stations meanwhile.
-    @Volatile private var googlePausedUntil = 0L
+    // Google out of quota (HTTP 429) for this key version until then, elapsedRealtime: free stations meanwhile.
+    @Volatile private var googlePause: Pair<Int, Long>? = null
 
     // Google refused this key version, in the driver's words: free stations until the key changes.
     @Volatile private var googleProblem: Pair<Int, String>? = null
@@ -166,10 +166,9 @@ object FuelStations {
         val fuel = carFuel(store)
         if (!fuel.hasStations) return
         val pick = pick(app, store)
-        val key = "${pick.source.name}|${pick.notice}|${store.searchRadiusMi.value}|${GooglePlacesStore.get(app).keyVersion.value}"
-        if (key != pickKey) {
+        if (pick != lastPick) {
             throttle.reset()
-            pickKey = key
+            lastPick = pick
         }
         val here = hereState.value
         if (here == null) {
@@ -181,7 +180,7 @@ object FuelStations {
         throttle.ran(now, here)
         viewState.value = viewState.value.copy(status = Status.LOOKING)
         retry?.cancel()
-        looking = scope.launch { lookUp(app, pick, here, fuel, radiusM(store)) }
+        looking = scope.launch { lookUp(app, pick, here, fuel) }
     }
 
     private fun lookUp(
@@ -189,26 +188,30 @@ object FuelStations {
         pick: Pick,
         here: GeoPoint,
         fuel: CarFuel,
-        radiusM: Double,
     ) {
         val source = pick.source
         if (source is GooglePlacesSource) GooglePlacesStore.get(app).spendLookup()
         val started = SystemClock.elapsedRealtime()
-        val outcome = runCatching { source.stationsNear(here, fuel, radiusM) }
+        val outcome = runCatching { source.stationsNear(here, fuel, pick.radiusMi * METRES_PER_MILE) }
         val ms = SystemClock.elapsedRealtime() - started
+        googleAside(outcome.exceptionOrNull(), pick.keyVersion)
+        // What the lookup changed itself (Google set aside, the month's last lookup spent) is no new pick for the next fix:
+        // before, each fallback to the free stations was looked up a second time (the Mac's 11 Nov bench).
+        val next = pick(app, VehicleStore.get(app))
+        lastPick = next
+        // The instance asked, also on a busy or failed line: the log shows which one timed out (the Mac's 11 Nov bench).
+        val from = source.detail?.let { " ($it)" }.orEmpty()
         val stations = outcome.getOrNull()
         if (stations != null) {
             busyInARow = 0
             viewState.value = View(Status.READY, stations, SystemClock.elapsedRealtime(), source.attribution, pick.notice)
-            val from = source.detail?.let { " ($it)" }.orEmpty()
             logInfo("[FUEL] ${source.name}$from: ${stations.size} stations (${stations.count { it.price != null }} priced) in $ms ms", tag = Logger.Tags.ADAPTR)
             return
         }
         val e = outcome.exceptionOrNull() ?: return
         if (e is GoogleQuota || e is GoogleKeyProblem) {
-            googleAside(app, e)
             logWarn("[FUEL] Google Places: ${e.message} after $ms ms; free stations meanwhile", tag = Logger.Tags.ADAPTR)
-            lookUp(app, pick(app, VehicleStore.get(app)), here, fuel, radiusM)
+            lookUp(app, next, here, fuel)
             return
         }
         val status =
@@ -221,11 +224,11 @@ object FuelStations {
         viewState.value = viewState.value.copy(status = status, notice = pick.notice)
         val why = (e as? SourceBusy)?.why ?: (e as? SourceUnreachable)?.why ?: e.message ?: e.javaClass.simpleName
         if (e !is SourceBusy) {
-            logWarn("[FUEL] ${source.name}: $status after $ms ms ($why)", tag = Logger.Tags.ADAPTR)
+            logWarn("[FUEL] ${source.name}$from: $status after $ms ms ($why)", tag = Logger.Tags.ADAPTR)
             return
         }
         val waitS = RetryWait.seconds(++busyInARow, e.retryAfterS)
-        logWarn("[FUEL] ${source.name}: busy ($why) after $ms ms; trying again in $waitS s", tag = Logger.Tags.ADAPTR)
+        logWarn("[FUEL] ${source.name}$from: busy ($why) after $ms ms; trying again in $waitS s", tag = Logger.Tags.ADAPTR)
         retry = scope.launch { retryAfter(app, waitS) }
     }
 
@@ -240,13 +243,15 @@ object FuelStations {
         if (!visible || here == null) return
         if (!store.nearbyStations.value || !CarGpsFeed.permitted(app)) return
         throttle.ran(SystemClock.elapsedRealtime(), here)
-        lookUp(app, pick(app, store), here, carFuel(store), radiusM(store))
+        lookUp(app, pick(app, store), here, carFuel(store))
     }
 
-    /** The source to ask, and why it isn't the one picked. */
-    private class Pick(
+    /** The source to ask and why it isn't the one picked ([notice]), with the radius and the Google key it goes by. */
+    private data class Pick(
         val source: FuelPriceSource,
-        val notice: String? = null,
+        val notice: String?,
+        val radiusMi: Int,
+        val keyVersion: Int,
     )
 
     private fun pick(
@@ -254,27 +259,34 @@ object FuelStations {
         store: VehicleStore,
     ): Pick {
         val keys = GooglePlacesStore.get(app)
-        return when (store.stationSource.value) {
-            StationSource.DEMO -> if (BuildConfig.DEBUG) Pick(demo) else Pick(overpass)
-            StationSource.GOOGLE ->
-                when {
-                    !keys.hasKey.value -> Pick(overpass, "No Google key yet: free stations, without prices")
-                    googleProblem?.first == keys.keyVersion.value -> Pick(overpass, "${googleProblem?.second} Free stations meanwhile, without prices.")
-                    SystemClock.elapsedRealtime() < googlePausedUntil -> Pick(overpass, QUOTA_NOTICE)
-                    !keys.allowsLookup() -> Pick(overpass, "Monthly lookup limit reached: free stations, without prices")
-                    else -> Pick(google(app))
-                }
-            StationSource.FREE -> Pick(overpass)
-        }
+        val version = keys.keyVersion.value
+        val paused = googlePause?.let { (v, until) -> v == version && SystemClock.elapsedRealtime() < until } == true
+        val (source, notice) =
+            when (store.stationSource.value) {
+                StationSource.DEMO -> (if (BuildConfig.DEBUG) demo else overpass) to null
+                StationSource.GOOGLE ->
+                    when {
+                        !keys.hasKey.value -> overpass to "No Google key yet: free stations, without prices"
+                        googleProblem?.first == version -> overpass to "${googleProblem?.second} Free stations meanwhile, without prices."
+                        paused -> overpass to QUOTA_NOTICE
+                        !keys.allowsLookup() -> overpass to "Monthly lookup limit reached: free stations, without prices"
+                        else -> google(app) to null
+                    }
+                StationSource.FREE -> overpass to null
+            }
+        return Pick(source, notice, store.searchRadiusMi.value, version)
     }
 
-    /** Google out of quota (an hour aside) or refusing this key (aside until it changes). */
+    /**
+     * Google out of quota (an hour aside) or refusing the key (aside until it changes), for the key version the lookup
+     * used: a key entered while it was asked is tried, not set aside with the old one. A new key ends the hour too.
+     */
     private fun googleAside(
-        app: Context,
-        e: Throwable,
+        e: Throwable?,
+        keyVersion: Int,
     ) {
-        if (e is GoogleQuota) googlePausedUntil = SystemClock.elapsedRealtime() + GOOGLE_PAUSE_MS
-        if (e is GoogleKeyProblem) googleProblem = GooglePlacesStore.get(app).keyVersion.value to e.words
+        if (e is GoogleQuota) googlePause = keyVersion to SystemClock.elapsedRealtime() + GOOGLE_PAUSE_MS
+        if (e is GoogleKeyProblem) googleProblem = keyVersion to e.words
     }
 
     private fun google(app: Context): GooglePlacesSource =

@@ -14,7 +14,7 @@ interface FuelPriceSource {
     /** What the card must show with this source's stations ("© OpenStreetMap contributors"), or null. */
     val attribution: String?
 
-    /** Which server answered the last lookup (its host only), for the log; null where there is one. */
+    /** Which server the last lookup asked (its host only), for the log; null where there is one. */
     val detail: String? get() = null
 
     /**

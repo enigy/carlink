@@ -80,7 +80,6 @@ private data class Radius(
  * The driver's Google key, parked only: enter it, test it with one lookup, or remove it (after a question: typing 39
  * characters again on the head unit is slow); this month's lookups against the cap; and what Google needs. The key is
  * shown only by its last four characters and never logged. A key can't come from a file: Android Automotive has no file
-
  * picker (its OPEN_DOCUMENT is a stub that says so, the Mac's 11 Nov bench).
  */
 @Composable

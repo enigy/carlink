@@ -63,6 +63,7 @@ class OverpassSourceTest {
                 if (asked.size == 1) throw SourceBusy("HTTP 504") else answer
             }
         assertThrows(SourceBusy::class.java) { source.stationsNear(here, diesel, 8_000.0) }
+        assertEquals("the busy line names the instance that was busy", "one.example", source.detail)
         assertEquals(3, source.stationsNear(here, diesel, 8_000.0).size)
         assertEquals(listOf("https://one.example/api/interpreter", "https://two.example/api/interpreter"), asked)
         assertEquals("the log names the host that answered", "two.example", source.detail)

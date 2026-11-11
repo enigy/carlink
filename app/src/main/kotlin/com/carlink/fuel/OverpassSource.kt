@@ -28,7 +28,7 @@ class OverpassSource(
 
     @Volatile private var host: String? = null
 
-    /** The instance that answered last, host only: the log tells when the fallback did. */
+    /** The instance asked last, host only: the log tells which one answered, was busy or failed. */
     override val detail: String? get() = host
 
     override fun stationsNear(
@@ -37,6 +37,7 @@ class OverpassSource(
         radiusM: Double,
     ): List<Station> {
         val endpoint = endpoints[next % endpoints.size]
+        host = URI(endpoint).host
         val json =
             try {
                 post(endpoint, query(here, radiusM))
@@ -44,7 +45,6 @@ class OverpassSource(
                 next = (next + 1) % endpoints.size
                 throw e
             }
-        host = URI(endpoint).host
         return parse(json, fuel).nearestFirst(here).take(KEEP)
     }
 
