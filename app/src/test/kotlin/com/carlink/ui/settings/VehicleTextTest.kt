@@ -51,6 +51,12 @@ class VehicleTextTest {
     }
 
     @Test
+    fun `the grade note says where the gasoline comes from`() {
+        assertEquals("The car says unleaded but not which grade", VehicleText.gradeNote(EngineChoice.CAR))
+        assertEquals("Which gasoline the truck takes, for the Engine type you set", VehicleText.gradeNote(EngineChoice.GASOLINE))
+    }
+
+    @Test
     fun `the engine choice is stored by its code`() {
         for (c in EngineChoice.entries) assertEquals(c, EngineChoice.of(c.code))
         assertEquals("unknown or missing: the car's", EngineChoice.CAR, EngineChoice.of("rocket"))

@@ -32,6 +32,10 @@ internal object VehicleText {
         return if (engines.isEmpty()) NOT_READ else engines.joinToString(" and ") { if (it == "cng") "CNG" else it.replaceFirstChar(Char::uppercase) }
     }
 
+    /** The Fuel grade row's note: the car reports unleaded without a grade, or the driver set gasoline in Engine type. */
+    fun gradeNote(engine: EngineChoice): String =
+        if (engine == EngineChoice.CAR) "The car says unleaded but not which grade" else "Which gasoline the truck takes, for the Engine type you set"
+
     /** The engine type row: what the iPhone gets, and where it comes from. */
     fun engine(
         choice: EngineChoice,

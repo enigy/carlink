@@ -37,4 +37,18 @@ class PermissionPromptTest {
         PermissionPrompt.answered()
         assertFalse(PermissionPrompt.isOpen)
     }
+
+    /** The Mac's 11 Nov bench: after "don't ask again" the system refuses in 56 ms with no dialog. */
+    @Test
+    fun `a refusal faster than anyone answers a dialog came without one`() {
+        val launcher = Recorder()
+        PermissionPrompt.ask(launcher, "android.car.permission.CAR_ENERGY")
+        assertTrue("refused at once: no dialog", PermissionPrompt.answered(granted = false))
+        assertFalse(PermissionPrompt.isOpen)
+        PermissionPrompt.ask(launcher, "android.car.permission.CAR_ENERGY")
+        assertFalse("granted", PermissionPrompt.answered(granted = true))
+        PermissionPrompt.ask(launcher, "android.car.permission.CAR_ENERGY")
+        Thread.sleep(600)
+        assertFalse("a person read the dialog and said no", PermissionPrompt.answered(granted = false))
+    }
 }

@@ -43,6 +43,7 @@ import com.carlink.car.VehicleData
 import com.carlink.car.VehicleReadings
 import com.carlink.car.VehicleState
 import com.carlink.fuel.CarFuel
+import com.carlink.fuel.LowFuel
 import com.carlink.ui.settings.VehicleStore
 import com.carlink.ui.settings.VehicleText
 import java.util.Locale
@@ -50,8 +51,9 @@ import java.util.Locale
 /**
  * The Fuel card, from the car alone (no network): the truck's range in the car's own distance unit, what it runs on
  * ([CarFuel]: the car's fuel types, the driver's engine override and grade), and the low-fuel warning as an amber
- * banner. Parked, it adds the tank's bar (only when the level and the tank's size are both read) and its small print;
- * moving, the range and the fuel in large type only, and unknown counts as moving ([DrivingState.parked]).
+ * banner ([LowFuel]: the car's warning, or the range at the driver's threshold). Parked, it adds the tank's bar (only
+ * when the level and the tank's size are both read) and its small print; moving, the range and the fuel in large type
+ * only, and unknown counts as moving ([DrivingState.parked]).
  *
  * Range, the level and the warning need CAR_ENERGY. The card asks for it by itself once per run, when it is opened
  * parked, never at the app's start (the buried-dialog bug of 11 Nov); its Allow works even while an earlier dialog
@@ -68,10 +70,14 @@ internal fun FuelCard(
     val parked by DrivingState.parked.collectAsState()
     val engine by store.engineChoice.collectAsState()
     val grade by store.fuelGrade.collectAsState()
+    val lowAt by store.lowFuelAt.collectAsState()
     var energyAllowed by remember { mutableStateOf(energyGranted(context)) }
+    // The last request came from the card's Allow, not from opening the card: only then does a refusal without a dialog
+    // open the app's settings.
+    var fromAllow by remember { mutableStateOf(false) }
     val askEnergy =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-            PermissionPrompt.answered()
+            if (PermissionPrompt.answered(ok) && fromAllow) PermissionPrompt.openAppSettings(context)
             energyAllowed = ok
             if (ok) VehicleData.start(context.applicationContext) // read and watch range, the level and the warning now
         }
@@ -84,17 +90,21 @@ internal fun FuelCard(
         if (!active || !parked || energyAllowed) return@LaunchedEffect
         if (FuelCardPrompt.asked) return@LaunchedEffect
         FuelCardPrompt.asked = true
+        fromAllow = false
         PermissionPrompt.askOrOpenSettings(context, askEnergy, VehicleData.ENERGY_PERMISSION)
     }
     val fuel = CarFuel.of(vehicle.fuelTypes, engine, grade)
     val imperial = vehicle.distanceImperial(Locale.getDefault())
     val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        if (vehicle.fuelLow == true) LowFuelBanner()
+        if (LowFuel.isLow(vehicle, lowAt, imperial)) LowFuelBanner()
         if (energyAllowed) {
             Range(vehicle, imperial)
         } else {
-            AllowFuel { PermissionPrompt.askOrOpenSettings(context, askEnergy, VehicleData.ENERGY_PERMISSION) }
+            AllowFuel {
+                fromAllow = true
+                PermissionPrompt.askOrOpenSettings(context, askEnergy, VehicleData.ENERGY_PERMISSION)
+            }
         }
         Text(fuel.label, style = MaterialTheme.typography.headlineMedium, color = if (fuel.kind == CarFuel.Kind.UNKNOWN) secondary else LocalContentColor.current)
         if (parked) {

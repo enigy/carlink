@@ -27,6 +27,7 @@ import com.carlink.car.VehicleReadings
 import com.carlink.car.VehicleState
 import com.carlink.car.VehicleStatusValues
 import com.carlink.fuel.CarFuel
+import com.carlink.fuel.LowFuel
 import com.carlink.logging.logWarn
 import java.util.Locale
 
@@ -51,12 +52,13 @@ internal fun VehiclePane(modifier: Modifier = Modifier) {
     var energyAllowed by remember { mutableStateOf(granted(context, VehicleData.ENERGY_PERMISSION)) }
     val askLocation =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-            PermissionPrompt.answered()
             locationAllowed = CarGpsFeed.permitted(context)
+            // Refused without a dialog ("don't ask again"): the app's settings are the one place left to allow it.
+            if (PermissionPrompt.answered(locationAllowed)) PermissionPrompt.openAppSettings(context)
         }
     val askEnergy =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-            PermissionPrompt.answered()
+            if (PermissionPrompt.answered(ok)) PermissionPrompt.openAppSettings(context)
             energyAllowed = ok
             if (ok) VehicleData.start(context.applicationContext) // read and watch range and the fuel warning now
         }
@@ -153,7 +155,9 @@ private fun FuelCardGroup(
     val card by store.fuelCard.collectAsState()
     val onLow by store.fuelOnLow.collectAsState()
     val grade by store.fuelGrade.collectAsState()
+    val lowAt by store.lowFuelAt.collectAsState()
     val fuel = CarFuel.of(readings.fuelTypes, engine, grade)
+    val unit = if (readings.distanceImperial(Locale.getDefault())) "mi" else "km"
     SettingsGroup {
         SwitchRow(
             title = "Show the Fuel card",
@@ -176,11 +180,13 @@ private fun FuelCardGroup(
                 if (on) onEnergyNeeded()
             },
         )
+        GroupDivider()
+        LowFuelAtRow(store, lowAt, unit)
         if (fuel.kind == CarFuel.Kind.GASOLINE) {
             GroupDivider()
             ChoiceSetting(
                 title = "Fuel grade",
-                subtitle = "The car says unleaded but not which grade",
+                subtitle = VehicleText.gradeNote(engine),
                 options = CarFuel.grades(readings.fuelTypes),
                 selected = fuel.grade ?: FuelGrade.REGULAR,
                 onSelect = {
@@ -192,6 +198,31 @@ private fun FuelCardGroup(
     }
 }
 
+/** Low fuel warning at: the range, in the car's [unit], at which the Fuel card warns ([LowFuel], default 25). */
+@Composable
+private fun LowFuelAtRow(
+    store: VehicleStore,
+    lowAt: Int,
+    unit: String,
+) {
+    ChoiceSetting(
+        title = "Low fuel warning at",
+        subtitle = "Range left, in the car's units. The car's own warning counts too.",
+        options = (LowFuel.CHOICES + lowAt).distinct().sorted().map { LowFuelAt(it, "$it $unit") },
+        selected = LowFuelAt(lowAt, "$lowAt $unit"),
+        onSelect = {
+            logWarn("[UI_ACTION] Low fuel warning at -> ${it.value} $unit", tag = "UI")
+            store.setLowFuelAt(it.value)
+        },
+    )
+}
+
+/** One of Low fuel warning at's ranges, with its unit for the button. */
+private data class LowFuelAt(
+    val value: Int,
+    override val label: String,
+) : Labelled
+
 /** The data points the iPhone may have, each with what Carlink reads now. */
 @Composable
 private fun SharedGroup(
@@ -202,6 +233,8 @@ private fun SharedGroup(
     onEnergyNeeded: () -> Unit,
 ) {
     val imperial = readings.imperial(Locale.getDefault())
+    // Range in the car's distance unit, as the Fuel card shows it; the temperature follows the speed unit, as the clock's does.
+    val miles = readings.distanceImperial(Locale.getDefault())
     val set: (VehicleStatusValues.Shares, Boolean) -> Unit = { next, needsEnergy ->
         logWarn("[UI_ACTION] Vehicle shares -> $next", tag = "UI")
         store.setShares(next)
@@ -210,7 +243,7 @@ private fun SharedGroup(
     SettingsGroup {
         SwitchRow(
             title = "Range",
-            subtitle = VehicleText.range(readings, imperial, energyAllowed),
+            subtitle = VehicleText.range(readings, miles, energyAllowed),
             checked = shares.range,
             onCheckedChange = { set(shares.copy(range = it), it) },
         )

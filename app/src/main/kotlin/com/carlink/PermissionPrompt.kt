@@ -22,6 +22,9 @@ import kotlinx.coroutines.flow.asStateFlow
 object PermissionPrompt {
     private val state = MutableStateFlow(false)
 
+    /** When the open request was launched (System.nanoTime), to tell an answer the system gave without a dialog. */
+    @Volatile private var askedAtNs = 0L
+
     val open: StateFlow<Boolean> = state.asStateFlow()
 
     val isOpen: Boolean get() = state.value
@@ -32,6 +35,7 @@ object PermissionPrompt {
         input: I,
     ) {
         state.value = true
+        askedAtNs = System.nanoTime()
         runCatching { launcher.launch(input) }.onFailure {
             state.value = false
             logWarn("[PERMISSION] request failed to launch: ${it.message}", tag = "MAIN")
@@ -55,6 +59,21 @@ object PermissionPrompt {
     fun answered() {
         state.value = false
     }
+
+    /**
+     * The answer to a request the driver made with an Allow button: true when it was refused without a dialog, faster
+     * than anyone answers one ([NO_DIALOG_MS]). That is Android's answer after "Don't allow & don't ask again" (the Mac's
+     * bench, 11 Nov: 56 ms), and the caller then opens Carlink's app settings ([openAppSettings]), the one place left to
+     * allow it.
+     */
+    fun answered(granted: Boolean): Boolean {
+        answered()
+        return !granted && (System.nanoTime() - askedAtNs) / NS_PER_MS < NO_DIALOG_MS
+    }
+
+    /** Faster than a person can read a dialog and answer it. */
+    private const val NO_DIALOG_MS = 500L
+    private const val NS_PER_MS = 1_000_000L
 
     /**
      * Carlink's page in the system's app settings, for a request Android would refuse because an earlier dialog

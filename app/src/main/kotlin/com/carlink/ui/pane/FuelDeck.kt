@@ -11,17 +11,23 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.carlink.car.VehicleReadings
+import com.carlink.fuel.LowFuel
 import com.carlink.logging.logInfo
 import com.carlink.ui.settings.VehicleStore
+import java.util.Locale
 
-/** The low-fuel warning is on (FUEL_LEVEL_LOW, [VehicleReadings]) and Settings › Vehicle › Show on low fuel is on. */
+/**
+ * Low fuel ([LowFuel]: the car's warning, or the range at Settings › Vehicle › Low fuel warning at) with Show on low
+ * fuel on.
+ */
 @Composable
 internal fun rememberLowFuel(): Boolean {
     val context = LocalContext.current
     val store = remember(context) { VehicleStore.get(context) }
     val onLow by store.fuelOnLow.collectAsState()
+    val at by store.lowFuelAt.collectAsState()
     val vehicle by VehicleReadings.state.collectAsState()
-    return onLow && vehicle.fuelLow == true
+    return onLow && LowFuel.isLow(vehicle, at, vehicle.distanceImperial(Locale.getDefault()))
 }
 
 /** The deck has the Fuel card: on a head unit (a car to read it from), with Show the Fuel card on or [lowFuel]. */
