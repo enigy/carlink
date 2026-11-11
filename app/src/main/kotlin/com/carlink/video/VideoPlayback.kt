@@ -88,9 +88,14 @@ class VideoPlayback(
     /** The player failed on the item (DRM it can't play, a network failure): its screen closes. */
     @Synchronized
     private fun onPlayerFailed(code: String) {
+        val wasPlaying = phonePlays
         state = state.copy(failed = code)
         showingState.value = false
-        logInfo("[VIDEO] the player failed ($code): its screen closed", tag = Logger.Tags.ADAPTR)
+        // As Drive and Close do: the phone kept playing after a FairPlay failure (the Mac's bench, 11 Nov), so its Pause
+        // is pressed, and it hears that this item can't show here (audioOnly), in case that lets it offer the iPhone.
+        if (wasPlaying) pausePhone()
+        announce(parked(), Status.AUDIO_ONLY)
+        logInfo("[VIDEO] the player failed ($code): its screen closed${if (wasPlaying) ", Pause sent to the phone" else ""}", tag = Logger.Tags.ADAPTR)
     }
 
     /** One `{"kind":"dataStream"}` record from the box. Any thread. */

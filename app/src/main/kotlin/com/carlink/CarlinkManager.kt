@@ -1226,6 +1226,7 @@ class CarlinkManager(
                 m.start()
             }
         watchCarPlayLimit()
+        borrowScreenForVideo()
         appFocusClaimer = AppFocusClaimer(context).also { it.start() }
         callNotificationHost = CallNotificationHost(context) { idx -> sendTelephony(idx) }
         callNotificationHost?.setAppVisible(appVisible)
@@ -1984,6 +1985,20 @@ class CarlinkManager(
         scope.launch {
             CarPlayLimitStore.get(context).flow.drop(1).collect {
                 driveMonitor?.let { m -> if (m.connected) setLimitedUI(m.driving) }
+            }
+        }
+    }
+
+    /**
+     * Route A: while Carlink's video screen is up the box borrows the car's main screen for it, and gives it back when
+     * the screen closes (`changeModes`, borrowID `VideoPlayback`, as LIVI does at play start and gives back at stop or
+     * close). A box without route A drops the command.
+     */
+    private fun borrowScreenForVideo() {
+        scope.launch {
+            videoPlayback.showing.drop(1).collect { up ->
+                val sent = client?.sendCommand(Ocbm.CMD_VIDEO_SCREEN, (if (up) 1 else 0).toByte()) ?: false
+                logInfo("[VIDEO] ${if (up) "borrowing" else "giving back"} the car's screen: sent=$sent", tag = Logger.Tags.ADAPTR)
             }
         }
     }

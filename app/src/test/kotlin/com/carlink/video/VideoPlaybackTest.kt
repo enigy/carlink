@@ -252,6 +252,8 @@ class VideoPlaybackTest {
         engine.fail("ERROR_CODE_DRM_SCHEME_UNSUPPORTED")
         assertFalse(playback.showing.value)
         assertEquals("ERROR_CODE_DRM_SCHEME_UNSUPPORTED", playback.state.failed)
+        assertEquals("the failure presses the phone's Pause, as Drive and Close do", 1, pauses)
+        assertEquals(true to VideoPlayback.Status.AUDIO_ONLY, announced.last())
         playback.onRecord(record(insert))
         assertNull(playback.state.failed)
     }
