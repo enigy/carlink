@@ -12,6 +12,7 @@ import com.carlink.audio.AudioTestLock
 import com.carlink.audio.CallEchoMonitor
 import com.carlink.audio.CallPaths
 import com.carlink.audio.MicProfile
+import com.carlink.audio.MicRecovery
 import com.carlink.audio.MicrophoneCaptureManager
 import com.carlink.audio.SilenceGuard
 import com.carlink.av.MediaAudioPlayer
@@ -1205,12 +1206,7 @@ class CarlinkManager(
                 // early-returns — Siri or a whole phone call silent until the box cycles the
                 // gate. Its contract forbids a synchronous stop() (that would join the calling
                 // thread), hence the scope hop.
-                mgr.onCaptureError = { why ->
-                    scope.launch {
-                        logWarn("[MIC] capture died: $why — clearing state", tag = Logger.Tags.AUDIO)
-                        stopMicrophoneCapture()
-                    }
-                }
+                mgr.onCaptureError = { why -> scope.launch { onMicCaptureDied(why) } }
             }
 
         // MediaSession lifetime is owned by MainActivity. We only attach our transport-control
@@ -3160,6 +3156,7 @@ class CarlinkManager(
         codec: Int,
     ) {
         voiceRouter?.onUplinkGate(on)
+        micGateOn = on
         if (on) {
             // A renegotiated format must restart capture: the early-return in startMicrophoneCapture
             // would otherwise keep uplinking at the old rate.
@@ -3173,7 +3170,8 @@ class CarlinkManager(
             startMicrophoneCapture(rate, channels, codec)
         } else {
             stopMicrophoneCapture()
-            carPathSilentThisCall = false
+            systemChoiceThisCall = false
+            micRestarts = 0
         }
     }
 
@@ -3381,6 +3379,7 @@ class CarlinkManager(
             when {
                 !callActive -> null to "no call yet (Siri, or the call's audio hasn't started)"
                 am == null -> null to "no AudioManager"
+                systemChoiceThisCall -> null to "this call's input went silent or failed"
                 pref.isAutomatic -> automaticInput(am, store)
                 key != null -> CallPaths.find(am, key)?.let { it to "your choice" } ?: (null to "your choice isn't listed by the car now")
                 else -> null to "system choice"
@@ -3393,8 +3392,17 @@ class CarlinkManager(
         return input
     }
 
-    /** Set for the rest of a call once Automatic's [SilenceGuard] found the car call path silent. */
-    @Volatile private var carPathSilentThisCall = false
+    /**
+     * Set for the rest of a call once its named input can't be used: Automatic's [SilenceGuard] found the car call path
+     * silent, or the capture died on it ([onMicCaptureDied]). The call then records from the system's choice.
+     */
+    @Volatile private var systemChoiceThisCall = false
+
+    /** The box's mic gate is open ([onMicGate]). */
+    @Volatile private var micGateOn = false
+
+    /** Restarts of a dead capture since the gate opened ([MicRecovery]). */
+    @Volatile private var micRestarts = 0
 
     /**
      * Automatic: the input the first-launch check chose for this car software ([checkCallPathIfNeeded]).
@@ -3405,7 +3413,6 @@ class CarlinkManager(
         am: android.media.AudioManager,
         store: CallAudioStore,
     ): Pair<android.media.AudioDeviceInfo?, String> {
-        if (carPathSilentThisCall) return null to "Automatic: the car call path went silent this call"
         val auto = store.autoPath?.takeIf { it.osBuild == android.os.Build.FINGERPRINT }
         val key =
             when {
@@ -3424,14 +3431,49 @@ class CarlinkManager(
      * (until the car's software changes and the first-launch check runs again).
      */
     private fun onCarPathSilent() {
-        if (!isMicrophoneCapturing || carPathSilentThisCall) return
+        if (!isMicrophoneCapturing || systemChoiceThisCall) return
         logWarn("[CALL_AUDIO] Automatic: the car call path is silent — switching this call to the system choice", tag = Logger.Tags.MIC)
-        carPathSilentThisCall = true
+        systemChoiceThisCall = true
         CallAudioStore.get(context).setAutoPath(
             AutoCallPath(null, android.os.Build.FINGERPRINT, "the car call path went silent during a call"),
         )
         stopMicrophoneCapture()
         startMicrophoneCapture(micRate, micChannels, micCodec)
+    }
+
+    /**
+     * The capture died ([MicrophoneCaptureManager.onCaptureError]). One GM build takes the car call path back about a
+     * second into every call and won't open it again (AudioFlinger status -38, reported 11 Nov), which used to leave the
+     * call's mic off. While the box still wants the mic, [MicRecovery] picks the way back: a named input moves this call
+     * to the system's choice, and Automatic remembers it as it does a silent path; the system's choice opens again, once.
+     * A report from a capture that was already stopped changes nothing.
+     */
+    private fun onMicCaptureDied(why: String) {
+        logWarn("[MIC] capture died: $why — clearing state", tag = Logger.Tags.AUDIO)
+        if (!isMicrophoneCapturing) return
+        val diedOn = micInput
+        stopMicrophoneCapture()
+        when (MicRecovery.after(micGateOn, diedOn != null, micRestarts)) {
+            MicRecovery.Action.NOTHING ->
+                if (micGateOn) logWarn("[MIC] capture died again — the mic stays off until the box reopens it", tag = Logger.Tags.MIC)
+            MicRecovery.Action.SYSTEM_CHOICE -> {
+                logWarn(
+                    "[CALL_AUDIO] capture died on ${diedOn?.let { AudioRouteInfo.device(it) }} — switching this call to the system choice",
+                    tag = Logger.Tags.MIC,
+                )
+                systemChoiceThisCall = true
+                val store = CallAudioStore.get(context)
+                if (store.callMic.isAutomatic) {
+                    store.setAutoPath(AutoCallPath(null, android.os.Build.FINGERPRINT, "the car call path failed during a call"))
+                }
+                startMicrophoneCapture(micRate, micChannels, micCodec)
+            }
+            MicRecovery.Action.RESTART -> {
+                micRestarts++
+                logWarn("[MIC] restarting the capture", tag = Logger.Tags.MIC)
+                startMicrophoneCapture(micRate, micChannels, micCodec)
+            }
+        }
     }
 
     /**
