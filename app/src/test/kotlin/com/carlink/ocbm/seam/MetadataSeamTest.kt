@@ -114,11 +114,24 @@ class MetadataSeamTest {
     fun `a throwing consumer does not stop the seam`() {
         var seen = 0
         val seam =
-            MetadataSeam(log) { _, _ ->
+            MetadataSeam(log, { _, _ ->
                 seen++
                 if (seen == 1) throw IllegalStateException("boom")
-            }
+            })
         seam.feed(msg(Ocbm.META_JSON, "a".toByteArray()) + msg(Ocbm.META_JSON, "b".toByteArray()))
         assertEquals(2, seen)
+    }
+
+    /** Route A's tunnel seam is this framing under its own magic: each seam reads only its own. */
+    @Test
+    fun `the tunnel seam reads TUNL, not META`() {
+        val sink = Sink()
+        val tunnel = MetadataSeam(log, sink::accept, Ocbm.TUNNEL_SEAM_MAGIC)
+        val data = byteArrayOf(5) + "bytes".toByteArray()
+        tunnel.feed(Ocbm.TUNNEL_SEAM_MAGIC + be32(1 + data.size) + byteArrayOf(Ocbm.TUNNEL_DATA) + data)
+        assertEquals(Ocbm.TUNNEL_DATA.toInt(), sink.got.single().first)
+        assertArrayEquals(data, sink.got.single().second)
+        tunnel.feed(msg(Ocbm.META_JSON, "x".toByteArray()))
+        assertEquals("a META message is no tunnel message", 1, sink.got.size)
     }
 }

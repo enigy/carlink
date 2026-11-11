@@ -122,6 +122,9 @@ import com.carlink.util.LogCallback
 import com.carlink.util.PanelGeometry
 import com.carlink.video.ExoVideoEngine
 import com.carlink.video.VideoPlayback
+import com.carlink.video.proxy.PhoneProxy
+import com.carlink.video.proxy.TunnelDataSource
+import com.carlink.video.proxy.Tunnels
 import com.enigy.carlink2.bridge.BridgeContract
 import com.enigy.carlink2.bridge.ICarlinkBridge
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -2248,8 +2251,36 @@ class CarlinkManager(
     /** The one Play pressed for the phone at connect: the car's deferred `play()`, or the resume setting. */
     private val connectPlay = ConnectPlay(resumeOnConnect = { MusicStore.get(context).resumeOnConnect })
 
+    /**
+     * The phone's offer to carry route A's video over its own network (`setProxyParameters`), for this session;
+     * its key and authorization are never logged.
+     */
+    @Volatile private var phoneProxy: PhoneProxy? = null
+
+    /** Route A's tunnels to the phone's proxy, through the box ([Tunnels]). */
+    private val tunnels = Tunnels(send = { op, id, data -> client?.sendTunnel(op, id, data) ?: false })
+
     /** Route A's player ([ExoVideoEngine]): built only when the phone queues a video, freed when it stops. */
-    val videoEngine = ExoVideoEngine(context, mayPlay = { isParked })
+    val videoEngine =
+        ExoVideoEngine(
+            context,
+            mayPlay = { isParked },
+            network = { phoneProxy?.let { TunnelDataSource.Factory(tunnels, it) } },
+        )
+
+    /** The phone offered (or withdrew) its network for route A's video. */
+    private fun onPhoneProxy(params: Map<*, *>?) {
+        val offer = PhoneProxy.from(params)
+        phoneProxy = offer
+        val what = if (offer != null) "its proxy on port ${offer.port}, so video comes over the phone's network" else "an offer that isn't usable"
+        logInfo("[VIDEO] the phone offers $what", tag = Logger.Tags.ADAPTR)
+    }
+
+    /** The session ended: its proxy offer and every tunnel with it. */
+    private fun forgetPhoneProxy(why: String) {
+        phoneProxy = null
+        tunnels.closeAll(why)
+    }
 
     /** Route A: the phone's video Playback channel, relayed by the box ([VideoPlayback]). Inert unless the box offers video. */
     val videoPlayback =
@@ -2661,6 +2692,7 @@ class CarlinkManager(
         callNotificationHost?.release()
         callNotificationHost = null
         videoPlayback.reset() // frees route A's player, if one was built
+        forgetPhoneProxy("Carlink is closing")
         if (live === this) live = null
 
         // Every mutation is written through, so this only drains a queued last delta — the history
@@ -3014,6 +3046,7 @@ class CarlinkManager(
     private fun wireClientCallbacks(c: OcbmClient) {
         c.onLanesArmed = { lanes -> onLanesArmed(lanes) }
         c.onLanesRetired = { onLanesRetired() }
+        c.onTunnel = { op, payload -> tunnels.onMessage(op, payload) }
 
         // The first per-stream key is the earliest truthful "a paired, keyed session exists"
         // signal — earlier than the first decoded frame, and unlike phone presence it proves the
@@ -3052,6 +3085,7 @@ class CarlinkManager(
                 // 2026-11-02, 11:17). Tell the screen outright.
                 callback?.onPhoneLeft()
                 videoPlayback.reset()
+                forgetPhoneProxy("the phone left")
                 setStatusText("Waiting for phone...")
             }
         }
@@ -3982,6 +4016,7 @@ class CarlinkManager(
                 logInfo("[META] requestUI${url?.let { " ($it)" } ?: ""} — bringing the app forward", tag = Logger.Tags.ADAPTR)
                 scope.launch { callback?.onHostUIPressed() }
             }
+            "setProxyParameters" -> onPhoneProxy(d["params"] as? Map<*, *>)
             // The phone's video DataStream rides POST /command as {params: {data}} with no type, about once a second
             // while a video is pending (the Mac, 10 Nov), so this is logged once, like an unhandled verb.
             null -> if (unhandledCommands.add("")) logInfo("[META] a command with no 'type' (not handled)", tag = Logger.Tags.ADAPTR)

@@ -140,3 +140,8 @@
 # The Kotlin Compose compiler plugin keeps @Composable functions.
 # AGP keeps all manifest-declared components (Activity, Service, Receiver).
 # No additional rules needed for these.
+
+# ----------------------------------------------------------------------------
+# Bouncy Castle (route A's proxy TLS, com.carlink.video.proxy): its JCE provider refers to JNDI (LDAP
+# certificate stores), which Android lacks and the TLS client never reaches.
+-dontwarn javax.naming.**

@@ -39,6 +39,14 @@ object Ocbm {
     const val CH_ALT_AUDIO: Int = 0x0022
     const val CH_METADATA: Int = 0x0023
     const val CH_ALT_VIDEO: Int = 0x0024
+
+    /**
+     * Box→host: route A's tunnel to the phone's proxy (`setProxyParameters`), framed
+     * `[u32 BE "TUNL"][u32 BE len][op][id][data]` like the metadata seam; the TUNNEL_* ops below. Host→box rides
+     * CH_INPUT as [INPUT_TUNNEL]. The box connects a tunnel only to the phone. lib.rs:38
+     */
+    const val CH_TUNNEL: Int = 0x0025
+    val TUNNEL_SEAM_MAGIC: ByteArray = byteArrayOf(0x54, 0x55, 0x4E, 0x4C) // "TUNL"
     const val CH_INPUT: Int = 0x0030
     const val CH_MIC: Int = 0x0031
     const val CH_MGMT: Int = 0x0040
@@ -56,6 +64,7 @@ object Ocbm {
             CH_ALT_AUDIO -> "ALT_AUDIO"
             CH_METADATA -> "METADATA"
             CH_ALT_VIDEO -> "ALT_VIDEO"
+            CH_TUNNEL -> "TUNNEL"
             CH_INPUT -> "INPUT"
             CH_MIC -> "MIC"
             CH_MGMT -> "MGMT"
@@ -370,6 +379,18 @@ object Ocbm {
 
     /** The JSON message's cap in an INPUT_DATASTREAM sub-frame. lib.rs:424 */
     const val MAX_INPUT_DATASTREAM: Int = 16_384
+
+    /** `[INPUT_TUNNEL][op][id u8][data]` -> the box opens, writes to or closes route A's tunnel `id`. lib.rs:433 */
+    const val INPUT_TUNNEL: Byte = 0x0B
+
+    /** The data cap in one TUNNEL_DATA sub-frame. lib.rs:436 */
+    const val MAX_INPUT_TUNNEL: Int = 16_384
+
+    // CH_TUNNEL / INPUT_TUNNEL ops. lib.rs:438
+    const val TUNNEL_OPEN: Byte = 0x01 // host->box: [port u16 BE][the proxyUrl's host, UTF-8]
+    const val TUNNEL_DATA: Byte = 0x02 // both ways: the stream's bytes
+    const val TUNNEL_CLOSE: Byte = 0x03 // host->box: close it; box->host: it closed, data = the reason
+    const val TUNNEL_OPENED: Byte = 0x04 // box->host: connected to the phone's proxy
 
     // Touch phases — lib.rs:295-297. NOTE these differ from the legacy riddleBox MultiTouchAction
     // values (UP=0/DOWN=1/MOVE=2); the two enumerations collide numerically but mean different things.

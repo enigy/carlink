@@ -28,6 +28,8 @@ import java.util.concurrent.atomic.AtomicLong
 class MetadataSeam(
     private val log: ProbeLog.Logger,
     private val onMessage: (marker: Int, payload: ByteArray) -> Unit,
+    /** The framing's magic: the metadata seam's, or route A's tunnel seam's ([Ocbm.TUNNEL_SEAM_MAGIC], the same shape). */
+    private val magic: ByteArray = Ocbm.META_SEAM_MAGIC,
 ) {
     companion object {
         /** Album art is the large case; a 16 MB ceiling is far above any real artwork or plist. */
@@ -83,7 +85,7 @@ class MetadataSeam(
             ((buf[off + 2].toInt() and 0xFF) shl 8) or (buf[off + 3].toInt() and 0xFF)
 
     private fun magicAt(off: Int): Boolean {
-        val m = Ocbm.META_SEAM_MAGIC
+        val m = magic
         return off + 4 <= end &&
             buf[off] == m[0] &&
             buf[off + 1] == m[1] &&

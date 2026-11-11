@@ -3,6 +3,7 @@ package com.carlink.video
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -10,7 +11,10 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
@@ -35,6 +39,11 @@ class ExoVideoEngine(
     private val context: Context,
     /** Whether the car is known to be parked now ([com.carlink.CarlinkManager.isParked]). */
     private val mayPlay: () -> Boolean,
+    /**
+     * Where a stream is fetched from at its load: through the phone's network once it offered its proxy
+     * ([com.carlink.video.proxy.TunnelDataSource]), or null for this unit's own.
+     */
+    private val network: () -> DataSource.Factory?,
 ) : VideoEngine {
     private val main = Handler(Looper.getMainLooper())
 
@@ -78,16 +87,24 @@ class ExoVideoEngine(
             }
         }
 
+    @OptIn(UnstableApi::class) // a media source over a data source of its own
     override fun load(
         url: String,
         startS: Double,
     ) = onMain {
         val p = playerState.value ?: build()
-        p.setMediaItem(mediaItem(url), (startS * MS_PER_S).toLong().coerceAtLeast(0))
+        val startMs = (startS * MS_PER_S).toLong().coerceAtLeast(0)
+        val viaPhone = network()
+        if (viaPhone != null) {
+            p.setMediaSource(DefaultMediaSourceFactory(viaPhone).createMediaSource(mediaItem(url)), startMs)
+        } else {
+            p.setMediaItem(mediaItem(url), startMs)
+        }
         p.playWhenReady = false
         p.prepare()
         snap = VideoEngine.Snapshot(positionS = startS)
-        logInfo("[VIDEO] loading (${if (isHls(url)) "HLS" else "by its extension"}), from $startS s", tag = Logger.Tags.ADAPTR)
+        val over = if (viaPhone != null) "over the phone's network" else "over this unit's own network"
+        logInfo("[VIDEO] loading (${if (isHls(url)) "HLS" else "by its extension"}), from $startS s, $over", tag = Logger.Tags.ADAPTR)
     }
 
     override fun setRate(rate: Double) =
