@@ -40,12 +40,29 @@ class DriveStateMonitor(
      */
     @Volatile var onDriveStateChanged: ((Boolean) -> Unit)? = null
 
-    /** Last known state. False until the car service reports otherwise, which is the safe default. */
+    /**
+     * Invoked on the main thread when [parked] changes: false on the drive starting, and on the car service being
+     * lost.
+     */
+    @Volatile var onParkedChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * Last known state. False until the car service reports otherwise, which is the safe default for
+     * `setLimitedUI`. It is not safe for anything that must not run while moving: that waits for [parked].
+     */
     @Volatile var driving: Boolean = false
         private set
 
     /** True once the car service has actually answered — [driving] is a guess until then. */
     @Volatile var connected: Boolean = false
+        private set
+
+    /**
+     * True only while the car service is connected, its listener is registered, and its last reading said no
+     * distraction optimization is required. False before the first reading, while moving, when the reading is
+     * missing, and once the service is lost. This is the gate for route A's video, which treats unknown as moving.
+     */
+    @Volatile var parked: Boolean = false
         private set
 
     private var car: Car? = null
@@ -55,6 +72,7 @@ class DriveStateMonitor(
     private val listener =
         CarUxRestrictionsManager.OnUxRestrictionsChangedListener { r ->
             publish(r.isRequiresDistractionOptimization)
+            setParked(!r.isRequiresDistractionOptimization)
         }
 
     /** Idempotent. Safe to call on any device; a no-op where there is no car service. */
@@ -81,6 +99,7 @@ class DriveStateMonitor(
         runCatching { car?.disconnect() }
         car = null
         connected = false
+        parked = false
     }
 
     private fun onCarReady(c: Car) {
@@ -98,7 +117,10 @@ class DriveStateMonitor(
             mgr.registerListener(listener)
             // Prime from the current value: registerListener does not replay, so without this a
             // session that starts while already in Drive would never be told.
-            publish(mgr.currentCarUxRestrictions?.isRequiresDistractionOptimization ?: false)
+            val current = mgr.currentCarUxRestrictions
+            publish(current?.isRequiresDistractionOptimization ?: false)
+            // A missing reading primes driving false, but it says nothing about being parked.
+            setParked(current?.isRequiresDistractionOptimization == false)
         }.onFailure { logWarn("[DRIVE] registerListener failed: ${it.message}", tag = Logger.Tags.ADAPTR) }
     }
 
@@ -106,6 +128,15 @@ class DriveStateMonitor(
         logWarn("[DRIVE] Car service disconnected", tag = Logger.Tags.ADAPTR)
         uxrManager = null
         connected = false
+        setParked(false)
+    }
+
+    /** Edge-triggered, like [publish]: [onParkedChanged] hears only a change. */
+    private fun setParked(now: Boolean) {
+        if (now == parked) return
+        parked = now
+        logInfo("[DRIVE] parked=$now", tag = Logger.Tags.ADAPTR)
+        handler.post { onParkedChanged?.invoke(now) }
     }
 
     /** Edge-triggered: the box only needs a command when the state actually changes. */

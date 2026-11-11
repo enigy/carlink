@@ -1,5 +1,6 @@
 package com.carlink.video
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,9 +41,14 @@ class VideoPlaybackTest {
     }
 
     private val sent = mutableListOf<Pair<Int, JSONObject>>()
+    private val texts = mutableListOf<String>()
     private val engine = FakeEngine()
-    private var moving = false
-    private val playback = VideoPlayback({ stream, json -> sent.add(stream to JSONObject(json)) }, engine, { moving })
+    private var parked = true
+    private val playback =
+        VideoPlayback({ stream, json ->
+            texts += json
+            sent.add(stream to JSONObject(json))
+        }, engine, { parked })
 
     private fun record(
         message: String,
@@ -90,6 +96,36 @@ class VideoPlaybackTest {
     }
 
     @Test
+    fun `answers keep whole reals as reals, so the box sends the phone plist reals`() {
+        playback.onRecord(record(insert))
+        engine.now = VideoEngine.Snapshot(ready = true, rate = 1.0, positionS = 20.0, durationS = 90.0, bufferedS = 50.0)
+        playback.onRecord(record("""{"type":"playbackInfo","kind":"request","messageID":9}"""))
+        val text = texts.last()
+        for (real in listOf(""""rate":1.0""", """"position":20.0""", """"duration":90.0""", """"start":20.0""", """"duration":30.0""")) {
+            assertTrue("$real in $text", text.contains(real))
+        }
+        assertTrue("an integer stays an integer: $text", text.contains(""""messageID":9,""") || text.endsWith(""""messageID":9}"""))
+        val list = JSONArray(listOf(1, 2.0, true, "q\"s"))
+        val mixed = JSONObject().put("a", list).put("b", JSONObject.NULL).put("c", JSONObject())
+        assertEquals("""{"a":[1,2.0,true,"q\"s"],"b":null,"c":{}}""", VideoPlayback.jsonText(mixed))
+        assertEquals("null", VideoPlayback.jsonText(Double.NaN))
+        assertEquals("12345678901", VideoPlayback.jsonText(12_345_678_901L))
+    }
+
+    @Test
+    fun `a CMTime start, as Safari sends it, is value over timescale`() {
+        playback.onRecord(record(insert.replace("12.5", """{"flags":1,"value":125,"timescale":10,"epoch":0}""")))
+        assertEquals(12.5, playback.state.item?.startS ?: -1.0, 0.0)
+        assertEquals("load 12.5", engine.calls.last())
+        assertEquals(1.5, VideoPlayback.seconds(JSONObject("""{"flags":3,"value":1500000000,"timescale":1000000000}""")) ?: -1.0, 0.0)
+        assertNull("not valid", VideoPlayback.seconds(JSONObject("""{"flags":0,"value":125,"timescale":10}""")))
+        assertNull("indefinite", VideoPlayback.seconds(JSONObject("""{"flags":17,"value":0,"timescale":1}""")))
+        assertNull("no timescale", VideoPlayback.seconds(JSONObject("""{"flags":1,"value":125,"timescale":0}""")))
+        assertEquals(3.0, VideoPlayback.seconds(3) ?: -1.0, 0.0)
+        assertNull(VideoPlayback.seconds(null))
+    }
+
+    @Test
     fun `before the player is ready, playbackInfo says not ready at the item's start`() {
         playback.onRecord(record(insert))
         playback.onRecord(record("""{"type":"playbackInfo","kind":"request","messageID":9}"""))
@@ -100,20 +136,25 @@ class VideoPlaybackTest {
     }
 
     @Test
-    fun `video plays parked only`() {
+    fun `video plays only while the car is known to be parked`() {
         playback.onRecord(record(insert))
-        moving = true
+        parked = false // moving, or no car service reading yet
         playback.onRecord(rate(1.0))
         assertEquals("rate 0.0", engine.calls.last())
         assertFalse(playback.showing.value)
         assertFalse(playback.showRequested())
-        moving = false
+        parked = true
         playback.onRecord(rate(1.0))
         assertTrue(playback.showing.value)
-        moving = true
-        playback.onDriving(true)
+        parked = false
+        playback.onParked(false)
         assertEquals("rate 0.0", engine.calls.last())
-        assertFalse("the drive closes the screen", playback.showing.value)
+        assertFalse("losing parked closes the screen", playback.showing.value)
+        engine.calls.clear()
+        parked = true
+        playback.onParked(true)
+        assertTrue("becoming parked plays nothing by itself", engine.calls.isEmpty())
+        assertFalse(playback.showing.value)
     }
 
     @Test
@@ -127,6 +168,25 @@ class VideoPlaybackTest {
         assertEquals("stop", engine.calls.last())
         assertNull(playback.state.item)
         assertEquals("stop", sent.single().second.getString("type"))
+    }
+
+    @Test
+    fun `removePlayQueueItem drops the queued item and is answered, but not another item`() {
+        playback.onRecord(record(insert))
+        playback.onRecord(rate(1.0))
+        sent.clear()
+        playback.onRecord(record("""{"type":"removePlayQueueItem","kind":"request","messageID":11,"item":{"uuid":"item-2"}}"""))
+        assertEquals("another item's uuid: the queued one stays", "item-1", playback.state.item?.uuid)
+        assertTrue(playback.showing.value)
+        playback.onRecord(record("""{"type":"removePlayQueueItem","messageID":12,"item":{"uuid":"item-1"}}"""))
+        assertNull(playback.state.item)
+        assertEquals("stop", engine.calls.last())
+        assertFalse(playback.showing.value)
+        assertEquals(listOf(11, 12), sent.map { it.second.getInt("messageID") })
+        assertEquals("removePlayQueueItem", sent.last().second.getString("type"))
+        playback.onRecord(record(insert))
+        playback.onRecord(record("""{"type":"removePlayQueueItem"}"""))
+        assertNull("no uuid: the queued item goes", playback.state.item)
     }
 
     @Test

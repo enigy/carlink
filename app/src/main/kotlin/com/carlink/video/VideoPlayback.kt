@@ -14,21 +14,22 @@ import org.json.JSONObject
  * and the answers go back with [com.carlink.ocbm.OcbmClient.sendDataStream] (OCBM `receiver::playback`).
  *
  * The phone's messages, as JSON: `insertPlayQueueItem` (an `item` with its `uuid`, `Start-Position` and
- * `Content-Location`, the HLS address), `setProperty`, `setRate`, `seek` (to `time`), `stop`, and `playbackInfo`
- * (about once a second while a video is up). Each marked `kind: request` is answered: `kind: response` with the
- * request's `type`, `messageID`, and its `controlMessage` and `property` when present. A `playbackInfo` answer
- * carries the player's state in `value`. Those are protocol facts from LIVI's receiver, which plays this channel.
+ * `Content-Location`, the HLS address), `setProperty`, `setRate`, `seek` (to `time`), `stop`, `removePlayQueueItem`,
+ * and `playbackInfo` (about once a second while a video is up). Each marked `kind: request` is answered: `kind:
+ * response` with the request's `type`, `messageID`, and its `controlMessage` and `property` when present. A
+ * `playbackInfo` answer carries the player's state in `value`. Those are protocol facts from LIVI's receiver, which
+ * plays this channel. A time is seconds, or a CMTime (Safari's `Start-Position`, the Mac's 10 Nov bench).
  *
- * The [engine] plays the item; the screen ([VideoOverlay]) shows while [showing]. Video is parked only: while
- * [driving], a play request leaves it paused, and the drive starting pauses it and closes the screen. Logs name
- * the address's host only.
+ * The [engine] plays the item; the screen ([VideoOverlay]) shows while [showing]. Video is parked only, and parked
+ * must be known: unless [parked] says so, a play request leaves it paused, and losing it pauses the video and
+ * closes the screen. Logs name the address's host only.
  */
 class VideoPlayback(
     /** Sends one JSON answer on the phone's stream; false when it was dropped. Any thread. */
     private val send: (stream: Int, json: String) -> Boolean,
     private val engine: VideoEngine,
-    /** Whether the car is moving now. */
-    private val driving: () -> Boolean,
+    /** Whether the car is known to be parked now: false when it is moving or its state isn't known. */
+    private val parked: () -> Boolean,
 ) {
     /** The item the phone queued: its `uuid`, where to start, and its address (kept, never logged past the host). */
     data class Item(
@@ -81,12 +82,14 @@ class VideoPlayback(
                 item?.url?.let { engine.load(it, item.startS) }
             }
             "setRate" -> playAt(message.optDouble("rate", 0.0))
-            "seek" -> message.optDouble("time", Double.NaN).takeUnless { it.isNaN() }?.let { engine.seek(it) }
-            "stop" -> {
-                engine.stop()
-                showingState.value = false
-                logInfo("[VIDEO] the phone stopped the video", tag = Logger.Tags.ADAPTR)
-            }
+            "seek" -> seconds(message.opt("time"))?.let { engine.seek(it) }
+            "stop" -> drop("the phone stopped the video")
+            "removePlayQueueItem" ->
+                if (state.item == null) {
+                    drop("the phone removed the queued item")
+                } else {
+                    logInfo("[VIDEO] the phone removed an item that isn't the queued one: it stays", tag = Logger.Tags.ADAPTR)
+                }
             "playbackInfo", "setProperty" -> Unit
             else -> logInfo("[VIDEO] the phone sent '$type' (not handled)", tag = Logger.Tags.ADAPTR)
         }
@@ -98,19 +101,26 @@ class VideoPlayback(
         message: JSONObject,
     ) {
         val answer = answer(message, state, engine.snapshot()) ?: return
-        val sent = send(stream, answer.toString())
+        val sent = send(stream, jsonText(answer))
         if (!sent || message.optString("type") != "playbackInfo") {
             logInfo("[VIDEO] answered ${message.optString("type")} on stream $stream: sent=$sent", tag = Logger.Tags.ADAPTR)
         }
+    }
+
+    /** Stop the player and close the screen: the queue is empty. */
+    private fun drop(why: String) {
+        engine.stop()
+        showingState.value = false
+        logInfo("[VIDEO] $why", tag = Logger.Tags.ADAPTR)
     }
 
     private fun playAt(rate: Double) {
         askedRate = rate
         when {
             rate <= 0.0 -> engine.setRate(0.0)
-            driving() -> {
+            !parked() -> {
                 engine.setRate(0.0)
-                logInfo("[VIDEO] the phone asks to play, but the car is moving: video plays parked only", tag = Logger.Tags.ADAPTR)
+                logInfo("[VIDEO] the phone asks to play, but the car isn't known to be parked: video plays parked only", tag = Logger.Tags.ADAPTR)
                 return
             }
             else -> {
@@ -121,22 +131,29 @@ class VideoPlayback(
         logInfo("[VIDEO] the phone asks for rate $rate", tag = Logger.Tags.ADAPTR)
     }
 
-    /** The car started or stopped moving: moving pauses the video and closes its screen. */
-    fun onDriving(moving: Boolean) {
-        if (!moving || !showingState.value) return
+    /**
+     * Whether the car is known to be parked changed: losing it (moving, or the car's state no longer known) pauses
+     * the video and closes its screen. Becoming parked plays nothing by itself.
+     */
+    @Synchronized // with onRecord: a play request decided just before this sees its screen closed here
+    fun onParked(nowParked: Boolean) {
+        if (nowParked) return
         engine.setRate(0.0)
+        if (!showingState.value) return
         showingState.value = false
-        logInfo("[VIDEO] the car is moving: the video paused and its screen closed", tag = Logger.Tags.ADAPTR)
+        logInfo("[VIDEO] the car isn't known to be parked: the video paused and its screen closed", tag = Logger.Tags.ADAPTR)
     }
 
     /** iOS asked for the car's video screen (`requestUI` with `videoplayback:`). True when there is one to show. */
+    @Synchronized
     fun showRequested(): Boolean {
-        val shown = state.item != null && !driving()
+        val parkedNow = parked()
+        val shown = state.item != null && parkedNow
         if (shown) showingState.value = true
         val why =
             when {
                 shown -> "shown"
-                driving() -> "not while moving"
+                !parkedNow -> "not unless parked"
                 else -> "nothing is queued"
             }
         logInfo("[VIDEO] iOS asks for the video screen: $why", tag = Logger.Tags.ADAPTR)
@@ -144,6 +161,7 @@ class VideoPlayback(
     }
 
     /** The screen's Close: pause and close; the phone sees the rate drop to 0 at its next poll. */
+    @Synchronized
     fun close() {
         engine.setRate(0.0)
         showingState.value = false
@@ -163,6 +181,10 @@ class VideoPlayback(
         /** The phone's Playback channel, by its `clientTypeUUID` (CarPlaySDK's UrlFling). */
         const val PLAYBACK_CLIENT = "A6B27562-B43A-4F2D-B75F-82391E250194"
 
+        /** CMTime's flags: valid, and the ones that make it not a number (+infinity, -infinity, indefinite). */
+        private const val CMTIME_VALID = 0x1L
+        private const val CMTIME_NOT_NUMERIC = 0x1CL
+
         /** [state] after the phone's [message]. */
         fun apply(
             state: State,
@@ -171,21 +193,49 @@ class VideoPlayback(
             when (message.optString("type")) {
                 "insertPlayQueueItem" -> {
                     val item = message.optJSONObject("item")
-                    val start = item?.optDouble("Start-Position", 0.0)?.takeUnless { it.isNaN() } ?: 0.0
+                    val start = seconds(item?.opt("Start-Position")) ?: 0.0
                     State(Item(item?.optString("uuid")?.ifEmpty { null }, start, item?.optString("Content-Location")?.ifEmpty { null }), start)
                 }
-                "seek" -> state.copy(positionS = message.optDouble("time", state.positionS).takeUnless { it.isNaN() } ?: state.positionS)
+                "seek" -> state.copy(positionS = seconds(message.opt("time")) ?: state.positionS)
                 "stop" -> State()
+                "removePlayQueueItem" -> if (removes(message, state)) State() else state
                 else -> state
             }
 
-        /** The answer to [message] when it is a request, else null. */
+        /** Whether `removePlayQueueItem` [message] takes the queued item: it names that item's uuid, or none. */
+        private fun removes(
+            message: JSONObject,
+            state: State,
+        ): Boolean {
+            val uuid = message.optJSONObject("item")?.optString("uuid")?.ifEmpty { null } ?: message.optString("uuid").ifEmpty { null }
+            return uuid == null || uuid == state.item?.uuid
+        }
+
+        /**
+         * A time in seconds: a number, or a CMTime dictionary (CoreMedia's `value` over `timescale`, only when its
+         * `flags` say valid and numeric). Null for anything else.
+         */
+        fun seconds(time: Any?): Double? =
+            when (time) {
+                is Number -> time.toDouble()
+                is String -> time.toDoubleOrNull()
+                is JSONObject -> {
+                    val flags = time.optLong("flags")
+                    val scale = time.optLong("timescale")
+                    val numeric = (flags and CMTIME_VALID) != 0L && (flags and CMTIME_NOT_NUMERIC) == 0L
+                    if (numeric && scale > 0 && time.has("value")) time.optLong("value") / scale.toDouble() else null
+                }
+                else -> null
+            }?.takeIf { it.isFinite() }
+
+        /** The answer to [message] when it is a request (or carries a `messageID` and no `kind`), else null. */
         fun answer(
             message: JSONObject,
             state: State,
             playing: VideoEngine.Snapshot,
         ): JSONObject? {
-            if (message.optString("kind") != "request") return null
+            val kind = message.optString("kind")
+            if (kind != "request" && !(kind.isEmpty() && message.has("messageID"))) return null
             val answer = JSONObject().put("kind", "response")
             for (key in listOf("type", "controlMessage", "property", "messageID")) {
                 message.opt(key)?.let { answer.put(key, it) }
@@ -222,6 +272,23 @@ class VideoPlayback(
                 JSONArray().put(JSONObject().put("start", startS).put("duration", durationS))
             } else {
                 JSONArray()
+            }
+
+        /**
+         * [value] as JSON text, a whole real written with its point (`1.0`): the box makes a number with a point a
+         * plist real and one without an integer, and `JSONObject.toString()` writes 1.0 as `1`, which reached the
+         * phone as an integer (the Mac's 10 Nov bench). A real that isn't finite is `null`, which the box leaves out.
+         */
+        fun jsonText(value: Any?): String =
+            when (value) {
+                null, JSONObject.NULL -> "null"
+                is JSONObject ->
+                    value.keys().asSequence().joinToString(",", "{", "}") { key -> JSONObject.quote(key) + ":" + jsonText(value.opt(key)) }
+                is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { jsonText(value.opt(it)) }
+                is Double -> if (value.isFinite()) value.toString() else "null"
+                is Float -> jsonText(value.toDouble())
+                is Number, is Boolean -> value.toString()
+                else -> JSONObject.quote(value.toString())
             }
 
         /** An address's host, for the log: never more of it. */

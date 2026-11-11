@@ -27,9 +27,14 @@ import kotlinx.coroutines.flow.asStateFlow
  * Its sound goes to the media stream without asking for audio focus: Carlink's CarPlay audio keeps its own
  * focus handling, and the phone stops its own audio when it sends the video here. Errors are logged by code,
  * never with the address.
+ *
+ * [mayPlay] is asked again on the main thread as the player starts: a play request decided on another thread
+ * can reach the player after the car stopped being known to be parked, and then it pauses instead.
  */
 class ExoVideoEngine(
     private val context: Context,
+    /** Whether the car is known to be parked now ([com.carlink.CarlinkManager.isParked]). */
+    private val mayPlay: () -> Boolean,
 ) : VideoEngine {
     private val main = Handler(Looper.getMainLooper())
 
@@ -85,7 +90,7 @@ class ExoVideoEngine(
     override fun setRate(rate: Double) =
         onMain {
             val p = playerState.value ?: return@onMain
-            if (rate <= 0.0) {
+            if (rate <= 0.0 || !mayPlay()) {
                 p.pause()
             } else {
                 p.setPlaybackSpeed(rate.toFloat())

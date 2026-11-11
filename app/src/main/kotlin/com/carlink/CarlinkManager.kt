@@ -811,6 +811,13 @@ class CarlinkManager(
     /** The truck is being driven, as AAOS says (UX restrictions). False off automotive. */
     val isDriving: Boolean get() = driveMonitor?.driving == true
 
+    /**
+     * The truck is known to be parked: AAOS's car service is connected and its last reading needs no distraction
+     * optimization. False off automotive, before the car service answers, and once it's lost. Route A's video plays
+     * only while this is true, so not knowing counts as moving ([DriveStateMonitor.parked]).
+     */
+    val isParked: Boolean get() = driveMonitor?.parked == true
+
     /** NAVIGATION app-focus claim, edge-driven from route guidance. Null off automotive. */
     private var appFocusClaimer: AppFocusClaimer? = null
 
@@ -1211,8 +1218,8 @@ class CarlinkManager(
                 m.onDriveStateChanged = { driving ->
                     DrivingState.set(driving)
                     setLimitedUI(driving)
-                    videoPlayback.onDriving(driving)
                 }
+                m.onParkedChanged = { parked -> videoPlayback.onParked(parked) }
                 m.start()
             }
         watchCarPlayLimit()
@@ -2227,14 +2234,14 @@ class CarlinkManager(
     private val connectPlay = ConnectPlay(resumeOnConnect = { MusicStore.get(context).resumeOnConnect })
 
     /** Route A's player ([ExoVideoEngine]): built only when the phone queues a video, freed when it stops. */
-    val videoEngine = ExoVideoEngine(context)
+    val videoEngine = ExoVideoEngine(context, mayPlay = { isParked })
 
     /** Route A: the phone's video Playback channel, relayed by the box ([VideoPlayback]). Inert unless the box offers video. */
     val videoPlayback =
         VideoPlayback(
             send = { stream, json -> client?.sendDataStream(stream, json) ?: false },
             engine = videoEngine,
-            driving = { isDriving },
+            parked = { isParked },
         )
     private var connectPlayJob: Job? = null
 
