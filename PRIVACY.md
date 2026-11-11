@@ -27,7 +27,7 @@ Carlink keeps a few things on the head unit so it works the next time you drive.
 | Album art | So covers show again quickly | In the app's cache; the system or Clear cache removes it |
 | Logs | To diagnose problems, and only if you tap Save Logs or turn on Record drive logs (off by default) | In Downloads/Carlink on the head unit; drive logs are deleted after 7 days. Logs hide phone names, Bluetooth addresses, callers and places. They leave the head unit only if you copy them off. |
 
-Carlink does not keep audio, contacts, call history, messages or your routes. The microphone, calls, maps and navigation pass through to and from your iPhone as you use them, and are not stored.
+Carlink does not keep audio, contacts, call history, messages or your routes. The microphone, calls, maps and navigation pass through to and from your iPhone as you use them, and are not stored. The car's position, and the vehicle data you share in Settings › Vehicle, go to your iPhone the same way, through the adapter, and are not stored either.
 
 ## Permissions
 
@@ -35,7 +35,9 @@ Carlink does not keep audio, contacts, call history, messages or your routes. Th
 | --- | --- |
 | Microphone | Siri and phone calls: your voice goes to your iPhone through the adapter while you talk. Nothing is recorded or kept. |
 | Vehicle speed | Holding back features while the vehicle moves (Limit features while driving), and the turn alert. Read on the head unit only. |
-| Outside temperature and display units | Showing the temperature in the side pane, in the car's own units |
+| Outside temperature and display units | Showing the temperature in the side pane, in the car's own units; and, if you share it in Settings › Vehicle, giving it to your iPhone |
+| Location | Car GPS for the iPhone (Settings › Vehicle, on by default): the head unit's GPS goes to your iPhone through the adapter, to help its own. Read only while Carlink runs, never stored, sent nowhere else. |
+| Vehicle energy and information | Only what you share in Settings › Vehicle (off by default): the fuel type, range and low-fuel warning go to your iPhone, which may show them in CarPlay. Never stored. |
 | Internet | Lyrics lookups and adapter downloads, as above |
 | Notifications | Incoming calls, and setting up the USB Bridge |
 | Car templates and surfaces | Turn-by-turn directions on the cluster and HUD |
