@@ -2,6 +2,9 @@ package com.carlink.video
 
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -11,17 +14,21 @@ import org.json.JSONObject
  * and the answers go back with [com.carlink.ocbm.OcbmClient.sendDataStream] (OCBM `receiver::playback`).
  *
  * The phone's messages, as JSON: `insertPlayQueueItem` (an `item` with its `uuid`, `Start-Position` and
- * `Content-Location`, the HLS address), `setRate`, `seek` (to `time`), `stop`, and `playbackInfo`. Each marked
- * `kind: request` is answered: `kind: response` with the request's `type`, `messageID`, and its `controlMessage` and
- * `property` when present. A `playbackInfo` answer carries the playback state in `value`. Those are protocol facts
- * from LIVI's receiver, which plays this channel.
+ * `Content-Location`, the HLS address), `setProperty`, `setRate`, `seek` (to `time`), `stop`, and `playbackInfo`
+ * (about once a second while a video is up). Each marked `kind: request` is answered: `kind: response` with the
+ * request's `type`, `messageID`, and its `controlMessage` and `property` when present. A `playbackInfo` answer
+ * carries the player's state in `value`. Those are protocol facts from LIVI's receiver, which plays this channel.
  *
- * Nothing plays yet: the state says so (not ready, rate 0), so the phone sees a car that took the item but hasn't
- * started it. The player is the next step. Logs name the address's host only.
+ * The [engine] plays the item; the screen ([VideoOverlay]) shows while [showing]. Video is parked only: while
+ * [driving], a play request leaves it paused, and the drive starting pauses it and closes the screen. Logs name
+ * the address's host only.
  */
 class VideoPlayback(
     /** Sends one JSON answer on the phone's stream; false when it was dropped. Any thread. */
     private val send: (stream: Int, json: String) -> Boolean,
+    private val engine: VideoEngine,
+    /** Whether the car is moving now. */
+    private val driving: () -> Boolean,
 ) {
     /** The item the phone queued: its `uuid`, where to start, and its address (kept, never logged past the host). */
     data class Item(
@@ -30,7 +37,7 @@ class VideoPlayback(
         val url: String?,
     )
 
-    /** What the car reports: the queued item and the position. Nothing plays, so the rate is always 0. */
+    /** The queued item and the position the phone last set. */
     data class State(
         val item: Item? = null,
         val positionS: Double = 0.0,
@@ -40,10 +47,15 @@ class VideoPlayback(
     var state = State()
         private set
 
-    /** The rate the phone last asked for, for the log: the player that honours it is the next step. */
+    /** The rate the phone last asked for. */
     @Volatile
     var askedRate = 0.0
         private set
+
+    private val showingState = MutableStateFlow(false)
+
+    /** Whether the video screen is up ([VideoOverlay]). */
+    val showing: StateFlow<Boolean> = showingState.asStateFlow()
 
     /** One `{"kind":"dataStream"}` record from the box. Any thread. */
     @Synchronized
@@ -56,28 +68,95 @@ class VideoPlayback(
             return
         }
         state = apply(state, message)
+        act(message)
+        reply(stream, message)
+    }
+
+    /** Carry out the phone's [message] on the player and the screen. */
+    private fun act(message: JSONObject) {
         when (val type = message.optString("type")) {
             "insertPlayQueueItem" -> {
                 val item = state.item
-                logInfo("[VIDEO] the phone queued an item: ${hostOf(item?.url) ?: "no address"}, from ${item?.startS} s (nothing plays yet)", tag = Logger.Tags.ADAPTR)
+                logInfo("[VIDEO] the phone queued an item: ${hostOf(item?.url) ?: "no address"}, from ${item?.startS} s", tag = Logger.Tags.ADAPTR)
+                item?.url?.let { engine.load(it, item.startS) }
             }
-            "setRate" -> {
-                askedRate = message.optDouble("rate", 0.0)
-                logInfo("[VIDEO] the phone asks for rate $askedRate (nothing plays yet)", tag = Logger.Tags.ADAPTR)
+            "setRate" -> playAt(message.optDouble("rate", 0.0))
+            "seek" -> message.optDouble("time", Double.NaN).takeUnless { it.isNaN() }?.let { engine.seek(it) }
+            "stop" -> {
+                engine.stop()
+                showingState.value = false
+                logInfo("[VIDEO] the phone stopped the video", tag = Logger.Tags.ADAPTR)
             }
-            "seek", "stop", "playbackInfo" -> Unit
+            "playbackInfo", "setProperty" -> Unit
             else -> logInfo("[VIDEO] the phone sent '$type' (not handled)", tag = Logger.Tags.ADAPTR)
         }
-        val answer = answer(message, state) ?: return
-        val sent = send(stream, answer.toString())
-        logInfo("[VIDEO] answered ${message.optString("type")} on stream $stream: sent=$sent", tag = Logger.Tags.ADAPTR)
     }
 
-    /** Forget the queue: the session ended. */
+    /** Answer [message] on [stream] when it is a request; a poll's answer is logged only when it fails. */
+    private fun reply(
+        stream: Int,
+        message: JSONObject,
+    ) {
+        val answer = answer(message, state, engine.snapshot()) ?: return
+        val sent = send(stream, answer.toString())
+        if (!sent || message.optString("type") != "playbackInfo") {
+            logInfo("[VIDEO] answered ${message.optString("type")} on stream $stream: sent=$sent", tag = Logger.Tags.ADAPTR)
+        }
+    }
+
+    private fun playAt(rate: Double) {
+        askedRate = rate
+        when {
+            rate <= 0.0 -> engine.setRate(0.0)
+            driving() -> {
+                engine.setRate(0.0)
+                logInfo("[VIDEO] the phone asks to play, but the car is moving: video plays parked only", tag = Logger.Tags.ADAPTR)
+                return
+            }
+            else -> {
+                engine.setRate(rate)
+                showingState.value = true
+            }
+        }
+        logInfo("[VIDEO] the phone asks for rate $rate", tag = Logger.Tags.ADAPTR)
+    }
+
+    /** The car started or stopped moving: moving pauses the video and closes its screen. */
+    fun onDriving(moving: Boolean) {
+        if (!moving || !showingState.value) return
+        engine.setRate(0.0)
+        showingState.value = false
+        logInfo("[VIDEO] the car is moving: the video paused and its screen closed", tag = Logger.Tags.ADAPTR)
+    }
+
+    /** iOS asked for the car's video screen (`requestUI` with `videoplayback:`). True when there is one to show. */
+    fun showRequested(): Boolean {
+        val shown = state.item != null && !driving()
+        if (shown) showingState.value = true
+        val why =
+            when {
+                shown -> "shown"
+                driving() -> "not while moving"
+                else -> "nothing is queued"
+            }
+        logInfo("[VIDEO] iOS asks for the video screen: $why", tag = Logger.Tags.ADAPTR)
+        return shown
+    }
+
+    /** The screen's Close: pause and close; the phone sees the rate drop to 0 at its next poll. */
+    fun close() {
+        engine.setRate(0.0)
+        showingState.value = false
+        logInfo("[VIDEO] closed on the car's screen", tag = Logger.Tags.ADAPTR)
+    }
+
+    /** Forget the queue and free the player: the session ended. */
     @Synchronized
     fun reset() {
+        engine.stop()
         state = State()
         askedRate = 0.0
+        showingState.value = false
     }
 
     companion object {
@@ -104,29 +183,46 @@ class VideoPlayback(
         fun answer(
             message: JSONObject,
             state: State,
+            playing: VideoEngine.Snapshot,
         ): JSONObject? {
             if (message.optString("kind") != "request") return null
             val answer = JSONObject().put("kind", "response")
             for (key in listOf("type", "controlMessage", "property", "messageID")) {
                 message.opt(key)?.let { answer.put(key, it) }
             }
-            if (message.optString("type") == "playbackInfo") answer.put("value", info(state))
+            if (message.optString("type") == "playbackInfo") answer.put("value", info(state, playing))
             return answer
         }
 
-        /** `playbackInfo`'s value: where the car stands. Nothing is loaded or playing, so not ready, at rate 0. */
-        fun info(state: State): JSONObject =
-            JSONObject()
-                .put("duration", 0.0)
-                .put("position", state.positionS)
-                .put("rate", 0.0)
-                .put("readyToPlay", false)
-                .put("playbackBufferEmpty", true)
-                .put("playbackBufferFull", false)
-                .put("playbackLikelyToKeepUp", false)
-                .put("loadedTimeRanges", JSONArray())
-                .put("seekableTimeRanges", JSONArray())
+        /** `playbackInfo`'s value: the player's state, with the queued item's uuid. */
+        fun info(
+            state: State,
+            playing: VideoEngine.Snapshot,
+        ): JSONObject {
+            val position = if (playing.ready || playing.positionS > 0.0) playing.positionS else state.positionS
+            return JSONObject()
+                .put("duration", playing.durationS)
+                .put("position", position)
+                .put("rate", playing.rate)
+                .put("readyToPlay", playing.ready)
+                .put("playbackBufferEmpty", !playing.ready)
+                .put("playbackBufferFull", playing.durationS > 0.0 && playing.bufferedS >= playing.durationS)
+                .put("playbackLikelyToKeepUp", playing.ready && !playing.buffering)
+                .put("loadedTimeRanges", range(position, playing.bufferedS - position))
+                .put("seekableTimeRanges", range(0.0, playing.durationS))
                 .also { o -> state.item?.uuid?.let { o.put("uuid", it) } }
+        }
+
+        /** A one-range list `[{start, duration}]`, or an empty one when [durationS] isn't positive. */
+        private fun range(
+            startS: Double,
+            durationS: Double,
+        ): JSONArray =
+            if (durationS > 0.0) {
+                JSONArray().put(JSONObject().put("start", startS).put("duration", durationS))
+            } else {
+                JSONArray()
+            }
 
         /** An address's host, for the log: never more of it. */
         fun hostOf(url: String?): String? = url?.let { runCatching { java.net.URI(it).host }.getOrNull() }

@@ -302,11 +302,14 @@ dependencies {
     // APIs which Media3 auto-registers under the hood for backwards compatibility, so the
     // GMCarMediaService → ClusterService → cluster pipeline keeps working.
     // media3-common provides Player / SimpleBasePlayer / MediaItem / MediaMetadata.
-    // media3-exoplayer is intentionally NOT included: this app does not decode/play audio
-    // locally — the connected phone plays over USB; we only mirror metadata + forward commands.
+    // The phone's CarPlay audio still plays through the adapter; ExoPlayer is only route A's player
+    // (com.carlink.video): AirPlay video the phone offers inside the CarPlay session, parked only,
+    // usually an HLS stream. Apache-2.0, the same Media3 release; added on Scott's OK, 11 Nov.
     val media3Version = "1.10.1"
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
 
     // FAT32 on the USB stick a stock adapter shares, for its conversion (Apache-2.0). Only the file
     // system is used: the stick is reached through the bridge (convert/BulkOnlyStorage), not libaums' own

@@ -120,6 +120,7 @@ import com.carlink.usb.UsbPermissionWait
 import com.carlink.util.DisplayProfile
 import com.carlink.util.LogCallback
 import com.carlink.util.PanelGeometry
+import com.carlink.video.ExoVideoEngine
 import com.carlink.video.VideoPlayback
 import com.enigy.carlink2.bridge.BridgeContract
 import com.enigy.carlink2.bridge.ICarlinkBridge
@@ -256,6 +257,9 @@ class CarlinkManager(
 
         /** The box daemon's log (ocbmd stdout/stderr, tools/run_ocbmd.sh); tmpfs, so RAM-only. */
         private const val BOX_LOG_PATH = "/tmp/box.log"
+
+        /** The `requestUI` URL with which iOS asks for the car's video screen (route A, the Mac's 10 Nov bench). */
+        private const val VIDEO_PLAYBACK_URL = "videoplayback:"
 
         /** How much of the box's reject line goes into the [LANES] refusal log line. */
         private const val LANE_REFUSAL_LOG_CHARS = 160
@@ -1207,6 +1211,7 @@ class CarlinkManager(
                 m.onDriveStateChanged = { driving ->
                     DrivingState.set(driving)
                     setLimitedUI(driving)
+                    videoPlayback.onDriving(driving)
                 }
                 m.start()
             }
@@ -2221,8 +2226,16 @@ class CarlinkManager(
     /** The one Play pressed for the phone at connect: the car's deferred `play()`, or the resume setting. */
     private val connectPlay = ConnectPlay(resumeOnConnect = { MusicStore.get(context).resumeOnConnect })
 
+    /** Route A's player ([ExoVideoEngine]): built only when the phone queues a video, freed when it stops. */
+    val videoEngine = ExoVideoEngine(context)
+
     /** Route A: the phone's video Playback channel, relayed by the box ([VideoPlayback]). Inert unless the box offers video. */
-    private val videoPlayback = VideoPlayback { stream, json -> client?.sendDataStream(stream, json) ?: false }
+    val videoPlayback =
+        VideoPlayback(
+            send = { stream, json -> client?.sendDataStream(stream, json) ?: false },
+            engine = videoEngine,
+            driving = { isDriving },
+        )
     private var connectPlayJob: Job? = null
 
     /**
@@ -2623,6 +2636,7 @@ class CarlinkManager(
         appFocusClaimer = null
         callNotificationHost?.release()
         callNotificationHost = null
+        videoPlayback.reset() // frees route A's player, if one was built
         if (live === this) live = null
 
         // Every mutation is written through, so this only drains a queued last delta — the history
@@ -3934,6 +3948,11 @@ class CarlinkManager(
         when (val type = d["type"] as? String) {
             "requestUI" -> {
                 val url = (d["params"] as? Map<*, *>)?.get("url") as? String
+                // Route A: iOS asks for the car's video screen, not the app's own UI.
+                if (url == VIDEO_PLAYBACK_URL) {
+                    videoPlayback.showRequested()
+                    return
+                }
                 logInfo("[META] requestUI${url?.let { " ($it)" } ?: ""} — bringing the app forward", tag = Logger.Tags.ADAPTR)
                 scope.launch { callback?.onHostUIPressed() }
             }

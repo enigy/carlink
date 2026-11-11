@@ -79,6 +79,7 @@ import com.carlink.util.DisplayProfile
 import com.carlink.util.FilesLauncher
 import com.carlink.util.LogCallback
 import com.carlink.util.SigningCerts
+import com.carlink.video.VideoOverlay
 import com.carlink.voice.VoiceKeys
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -1201,6 +1202,8 @@ fun CarlinkApp(
             },
             bridge = bridge,
         )
+        // Route A: the phone's video over CarPlay while parked; Settings still opens over it.
+        VideoOverlay(carlinkManager.videoPlayback, carlinkManager.videoEngine)
         SettingsOverlay(
             visible = showSettings,
             carlinkManager = carlinkManager,
