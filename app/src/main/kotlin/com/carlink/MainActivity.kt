@@ -42,6 +42,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import com.carlink.car.CarGpsFeed
 import com.carlink.car.VehicleData
 import com.carlink.cluster.ClusterBindingState
 import com.carlink.cluster.ClusterNavigation
@@ -71,6 +72,7 @@ import com.carlink.ui.settings.DisplayModeStore
 import com.carlink.ui.settings.LayoutConfig
 import com.carlink.ui.settings.LayoutStore
 import com.carlink.ui.settings.SessionSettings
+import com.carlink.ui.settings.VehicleStore
 import com.carlink.ui.theme.CarlinkTheme
 import com.carlink.usb.CarlinkBridge
 import com.carlink.usb.UsbPermissionPrompt
@@ -204,6 +206,15 @@ class MainActivity : ComponentActivity() {
         ) { isGranted ->
             logInfo("Vehicle speed permission ${if (isGranted) "granted" else "denied"}", tag = "MAIN")
             VehicleData.start(applicationContext)
+            requestLocationPermission()
+        }
+
+    // Settings › Vehicle › Car GPS for the iPhone, on by default: asked after the speed, and only while the setting is on.
+    private val locationPermissionLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions(),
+        ) { granted ->
+            logInfo("Location permission for Car GPS: $granted", tag = "MAIN")
         }
 
     /**
@@ -818,13 +829,24 @@ class MainActivity : ComponentActivity() {
      * needs no prompt. Off automotive there is no car to ask.
      */
     private fun requestSpeedPermission() {
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) return
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
+            requestLocationPermission()
+            return
+        }
         if (ContextCompat.checkSelfPermission(this, VehicleData.SPEED_PERMISSION) == PackageManager.PERMISSION_GRANTED) {
             VehicleData.start(applicationContext)
+            requestLocationPermission()
         } else {
             logInfo("Requesting vehicle speed permission", tag = "MAIN")
             speedPermissionLauncher.launch(VehicleData.SPEED_PERMISSION)
         }
+    }
+
+    /** Car GPS's permission ([locationPermissionLauncher]), when the setting is on and it isn't granted. */
+    private fun requestLocationPermission() {
+        if (!VehicleStore.get(this).carGps.value || CarGpsFeed.permitted(this)) return
+        logInfo("Requesting the location permission for Car GPS", tag = "MAIN")
+        locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
     }
 
     /**

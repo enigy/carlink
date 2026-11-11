@@ -362,6 +362,21 @@ object Ocbm {
     /** `[INPUT_TELEPHONY][buttonIndex u8]` -> uid-5 telephony HID (report then release). lib.rs:200 */
     const val INPUT_TELEPHONY: Byte = 0x08
 
+    /**
+     * `[INPUT_LOCATION][one NMEA sentence, ASCII, no CR LF]` -> the head unit's GPS for the phone (Settings › Vehicle,
+     * [com.carlink.car.CarGpsFeed]). The box forwards it as iAP2 LocationInformation when the phone asked for that
+     * sentence type, and drops it otherwise. lib.rs:420
+     */
+    const val INPUT_LOCATION: Byte = 0x09
+
+    /**
+     * `[INPUT_VEHICLE_STATUS][id u8][value]…` -> the car's status for the phone (Settings › Vehicle,
+     * [com.carlink.car.VehicleStatusFeed]): Apple's 0xA101 parameter ids, u16/i16 big-endian, a bool one byte. The box
+     * sends what the phone's StartVehicleStatusUpdates asked for, as VehicleStatusUpdate. 0x0A and 0x0B are taken on
+     * airplay-video. lib.rs:426
+     */
+    const val INPUT_VEHICLE_STATUS: Byte = 0x0C
+
     // Touch phases — lib.rs:295-297. NOTE these differ from the legacy riddleBox MultiTouchAction
     // values (UP=0/DOWN=1/MOVE=2); the two enumerations collide numerically but mean different things.
     const val TOUCH_DOWN: Byte = 0x00

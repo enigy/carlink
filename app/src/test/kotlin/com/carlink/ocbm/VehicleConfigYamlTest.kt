@@ -109,6 +109,21 @@ metadata:
     }
 
     @Test
+    fun `the vehicle keys are top-level, and left out unless Settings › Vehicle sets them`() {
+        val doc =
+            VehicleConfigYaml.render(
+                VehicleConfigSpec(location = listOf("GPGGA", "GPRMC", "PASCD"), vehicleStatus = listOf("range", "rangeWarning"), engineTypes = listOf("diesel")),
+            )
+        assertTrue(doc, doc.contains("\nlocation: [GPGGA, GPRMC, PASCD]\n"))
+        assertTrue(doc, doc.contains("\nvehicleStatus: [range, rangeWarning]\n"))
+        assertTrue(doc, doc.endsWith("\niapConfig:\n  vehicleInfo:\n    engineTypes: [diesel]\n"))
+        val plain = VehicleConfigYaml.render(VehicleConfigSpec())
+        assertFalse(plain.contains("location:") || plain.contains("vehicleStatus:") || plain.contains("iapConfig:"))
+        val bent = runCatching { VehicleConfigSpec(vehicleStatus = listOf("range]\nname: x")) }.exceptionOrNull()
+        assertTrue("a name that would bend the YAML is refused", bent is IllegalArgumentException)
+    }
+
+    @Test
     fun `the default document renders byte for byte`() {
         assertEquals(expected, VehicleConfigYaml.render(VehicleConfigSpec()))
     }

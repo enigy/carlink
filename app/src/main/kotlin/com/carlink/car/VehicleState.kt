@@ -28,13 +28,18 @@ object VehicleReadings {
 /**
  * The truck's readings ([VehicleData]): null where none has come or the car refused. [displayMps] is
  * the speed the speedometer shows, which may read a little above [speedMps]; [speedUnit] is the car's
- * own speed unit (VehicleUnit: [MPH] or [KPH]).
+ * own speed unit (VehicleUnit: [MPH] or [KPH]). [rangeM] (RANGE_REMAINING, metres) and [fuelLow]
+ * (FUEL_LEVEL_LOW) need CAR_ENERGY, [fuelTypes] (INFO_FUEL_TYPE, Android's FuelType values) CAR_INFO:
+ * what Settings › Vehicle can share with the phone ([VehicleStatusValues]).
  */
 data class VehicleState(
     val speedMps: Float? = null,
     val displayMps: Float? = null,
     val outsideC: Float? = null,
     val speedUnit: Int? = null,
+    val rangeM: Float? = null,
+    val fuelLow: Boolean? = null,
+    val fuelTypes: List<Int>? = null,
 ) {
     /** Miles and °F, or kilometres and °C: the truck's own speed unit, else the locale's. */
     fun imperial(locale: Locale): Boolean =

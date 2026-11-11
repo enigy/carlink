@@ -40,6 +40,14 @@
     <uses-permission android:name="android.car.permission.CAR_SPEED" />
     <uses-permission android:name="android.car.permission.CAR_EXTERIOR_ENVIRONMENT" />
     <uses-permission android:name="android.car.permission.READ_CAR_DISPLAY_UNITS" />
+    <!-- Settings › Vehicle (car/VehicleData.kt): range and the low-fuel warning need CAR_ENERGY (dangerous, asked for
+         when the driver shares either), the fuel type CAR_INFO (normal). Both granted to an app on the truck. -->
+    <uses-permission android:name="android.car.permission.CAR_ENERGY" />
+    <uses-permission android:name="android.car.permission.CAR_INFO" />
+    <!-- Settings › Vehicle › Car GPS for the iPhone (car/CarGpsFeed.kt), on by default: the head unit's GPS and its
+         NMEA go to the iPhone through the adapter, in the foreground only. Asked for at start-up while it's on. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Optional Features -->
     <uses-feature

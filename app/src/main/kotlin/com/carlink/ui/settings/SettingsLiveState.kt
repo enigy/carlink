@@ -3,6 +3,7 @@ package com.carlink.ui.settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Navigation
@@ -36,6 +37,7 @@ enum class SettingsCategory(
 
     /** Listed only while other apps' access is on (bridge API 6; Adapter and about › USB bridge). */
     BRIDGE("Bridge Configuration", Icons.Default.Usb),
+    VEHICLE("Vehicle", Icons.Default.DirectionsCar),
     TROUBLESHOOT("Troubleshoot", Icons.Default.Build),
     ADAPTER("Adapter and about", Icons.Default.Memory),
 }
@@ -82,6 +84,12 @@ internal class SettingsLiveState(
     /** AAOS says the truck is moving: another iPhone's profile, copy and reset wait until parked. */
     var driving by mutableStateOf(false)
 
+    /**
+     * The truck is known to be parked ([CarlinkManager.isParked]): the adapter and bridge updates and Copy logs wait
+     * for it, so a car whose state isn't known counts as moving.
+     */
+    var parked by mutableStateOf(false)
+
     val connectedPhone: ConnectedPhone? get() = SettingsModel.connectedPhone(phone, devices)
 }
 
@@ -126,6 +134,7 @@ internal fun rememberSettingsLiveState(
             live.noPhoneBonded = carlinkManager.noPhoneBonded
             live.canForget = carlinkManager.canForget
             live.driving = carlinkManager.isDriving
+            live.parked = carlinkManager.isParked
             val install = carlinkManager.oneFileInstall.install.value
             live.box =
                 BoxSnapshot(
