@@ -261,8 +261,20 @@ class CarlinkManager(
 
         private const val BYTE_MASK = 0xFF
 
-        /** The other daemons' logs Save Logs also pulls (ocbmd's LOG_SRC table), with the file label each gets. */
-        private val BOX_DAEMON_LOGS = listOf("/tmp/iap2d.log" to "iap2d", "/tmp/carplayd.log" to "carplayd", "/tmp/supervisor.log" to "supervisor")
+        /**
+         * The other daemons' logs Save Logs also pulls (ocbmd's LOG_SRC table), with the file label each gets. A wired
+         * session writes the first three; a wireless one writes carplayd_wl.log (its carplayd, the mic uplink with it)
+         * and wl.log (the Bluetooth side). The other kind's are absent and fail at once, as on a user's 2.23 trail
+         * (10 Nov), where all three wired names failed on a wireless session and the uplink lines were missing.
+         */
+        private val BOX_DAEMON_LOGS =
+            listOf(
+                "/tmp/iap2d.log" to "iap2d",
+                "/tmp/carplayd.log" to "carplayd",
+                "/tmp/supervisor.log" to "supervisor",
+                "/tmp/carplayd_wl.log" to "carplayd_wl",
+                "/tmp/wl.log" to "wl",
+            )
 
         // Wake lock: safety timeout per acquire, and how often the refresh job renews it.
         // Refresh at half the timeout so a missed tick still leaves a full margin.
