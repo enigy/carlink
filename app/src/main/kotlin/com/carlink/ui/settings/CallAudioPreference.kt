@@ -17,13 +17,14 @@ interface Labelled {
  * - [AUTOMATIC] (default): the best path this car offers, found without the driver. A silent check
  *   at first launch (and after a car software update) records a second from the car's call input;
  *   if it carries sound, calls use it, otherwise the system's choice. Each call is guarded: a car
- *   call path that goes silent mid-call falls back for the rest of the call and is remembered.
+ *   call path that goes silent or fails mid-call falls back for the rest of the call and is remembered.
  * - [SYSTEM]: name no input. VOICE_COMMUNICATION, and the OS/HAL pick the device and processing
  *   (Carlink's "Automatic" before 2026-10-20). On some GM builds that already lands on the car's
  *   Voice_Uplink path; on others it is the built-in mic with an echo canceller that barely works.
  * - A device path (`device:<TYPE>:<address>`): pinned to one input the car lists, such as GM's
  *   Voice_Uplink bus ("Car call path"). The driver chose it, so it is used on every call with no
- *   guard; only if the input has disappeared does the call fall back to the system's choice.
+ *   silence guard; only if the input has disappeared, or its capture fails mid-call, does the call
+ *   fall back to the system's choice.
  */
 data class CallMicConfig(
     val code: String,
