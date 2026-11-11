@@ -1728,10 +1728,11 @@ class CarlinkManager(
                 viewAreaAnimMs = if (split != null) SplitViewArea.TRANSITION_MS else null,
                 metadataTier = if (askLanes) "extended" else "proven",
                 metadataSkip = if (askLanes) VehicleConfigSpec.LANES_ONLY_SKIP else emptyList(),
-                // Settings › Vehicle: the truck's GPS (with the location permission), and the data points the driver shares.
+                // Settings › Vehicle: the truck's GPS (with the location permission), the data points the driver shares, and
+                // always the engine type, the car's own unless the driver picked one.
                 location = if (vehicle.carGps.value && CarGpsFeed.permitted(context)) CarGpsFeed.DECLARED else emptyList(),
                 vehicleStatus = VehicleStatusValues.declared(shares),
-                engineTypes = if (shares.fuelType) VehicleStatusValues.engines(VehicleReadings.state.value.fuelTypes) else emptyList(),
+                engineTypes = VehicleStatusValues.declaredEngines(vehicle.engineChoice.value.engines, VehicleReadings.state.value.fuelTypes),
             )
         logInfo("[VEHICLE] declared: location=${spec.location} vehicleStatus=${spec.vehicleStatus} engineTypes=${spec.engineTypes}", tag = Logger.Tags.ADAPTR)
         dockOnRight = spec.rightHandDrive

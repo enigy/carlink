@@ -3,6 +3,7 @@ package com.carlink.ui.settings
 import com.carlink.car.VehicleState
 import com.carlink.car.VehicleStatusValues.Shares
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Settings › Vehicle's words. */
@@ -24,6 +25,23 @@ class VehicleTextTest {
     @Test
     fun `the category line says the GPS and how many points are shared`() {
         assertEquals("Car GPS on · nothing else shared", VehicleText.summary(true, Shares()))
-        assertEquals("Car GPS off · 2 shared", VehicleText.summary(false, Shares(range = true, fuelType = true)))
+        assertEquals("Car GPS off · 2 shared", VehicleText.summary(false, Shares(range = true, lowFuel = true)))
+    }
+
+    @Test
+    fun `the engine type row says what the iPhone gets and where it comes from`() {
+        val diesel = VehicleState(fuelTypes = listOf(3))
+        assertEquals("Diesel, from the car", VehicleText.engine(EngineChoice.CAR, diesel))
+        assertEquals("Your choice (the car reports Diesel)", VehicleText.engine(EngineChoice.GASOLINE, diesel))
+        assertEquals("Your choice (the car reports none yet)", VehicleText.engine(EngineChoice.ELECTRIC, VehicleState()))
+        assertTrue(VehicleText.engine(EngineChoice.CAR, VehicleState()).contains("Gasoline, the adapter's default"))
+    }
+
+    @Test
+    fun `the engine choice is stored by its code`() {
+        for (c in EngineChoice.entries) assertEquals(c, EngineChoice.of(c.code))
+        assertEquals("unknown or missing: the car's", EngineChoice.CAR, EngineChoice.of("rocket"))
+        assertEquals(EngineChoice.CAR, EngineChoice.of(null))
+        assertEquals(listOf("gasoline", "electric"), EngineChoice.PLUG_IN_HYBRID.engines)
     }
 }

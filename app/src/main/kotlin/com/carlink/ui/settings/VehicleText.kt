@@ -30,6 +30,19 @@ internal object VehicleText {
         return if (engines.isEmpty()) NOT_READ else engines.joinToString(" and ") { if (it == "cng") "CNG" else it.replaceFirstChar(Char::uppercase) }
     }
 
+    /** The engine type row: what the iPhone gets, and where it comes from. */
+    fun engine(
+        choice: EngineChoice,
+        state: VehicleState,
+    ): String {
+        val car = fuelType(state)
+        return when {
+            choice != EngineChoice.CAR -> "Your choice (the car reports ${if (car == NOT_READ) "none yet" else car})"
+            car == NOT_READ -> "Not read from the car yet: the iPhone hears Gasoline, the adapter's default"
+            else -> "$car, from the car"
+        }
+    }
+
     fun range(
         state: VehicleState,
         imperial: Boolean,
@@ -60,7 +73,7 @@ internal object VehicleText {
         gps: Boolean,
         shares: VehicleStatusValues.Shares,
     ): String {
-        val n = listOf(shares.fuelType, shares.range, shares.lowFuel, shares.outsideTemperature).count { it }
+        val n = listOf(shares.range, shares.lowFuel, shares.outsideTemperature).count { it }
         val shared = if (n == 0) "nothing else shared" else "$n shared"
         return (if (gps) "Car GPS on" else "Car GPS off") + " · " + shared
     }

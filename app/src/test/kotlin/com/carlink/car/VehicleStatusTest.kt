@@ -33,9 +33,18 @@ class VehicleStatusTest {
     @Test
     fun `what is declared follows the shares`() {
         assertEquals(emptyList<String>(), VehicleStatusValues.declared(Shares()))
-        val everything = Shares(fuelType = true, range = true, lowFuel = true, outsideTemperature = true)
+        val everything = Shares(range = true, lowFuel = true, outsideTemperature = true)
         assertEquals(listOf("range", "outsideTemperature", "rangeWarning"), VehicleStatusValues.declared(everything))
         assertEquals(setOf(VehicleStatusValues.RANGE, VehicleStatusValues.RANGE_WARNING), Shares(range = true, lowFuel = true).ids)
+    }
+
+    /** Scott, 11 Nov: always the car's real engine type when it reports one, with a manual override. */
+    @Test
+    fun `the engine type always goes - the driver's pick, else the car's, else none`() {
+        assertEquals("the truck reports diesel", listOf("diesel"), VehicleStatusValues.declaredEngines(emptyList(), listOf(3)))
+        assertEquals("the driver's pick wins", listOf("gasoline", "electric"), VehicleStatusValues.declaredEngines(listOf("gasoline", "electric"), listOf(3)))
+        assertEquals("neither: the adapter's default stands", emptyList<String>(), VehicleStatusValues.declaredEngines(emptyList(), null))
+        assertEquals("a type Apple has no name for", emptyList<String>(), VehicleStatusValues.declaredEngines(emptyList(), listOf(7)))
     }
 
     private val sent = mutableListOf<List<Byte>>()

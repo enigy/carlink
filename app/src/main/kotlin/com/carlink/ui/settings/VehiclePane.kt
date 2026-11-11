@@ -45,6 +45,7 @@ internal fun VehiclePane(modifier: Modifier = Modifier) {
     val store = remember { VehicleStore.get(context) }
     val gps by store.carGps.collectAsState()
     val shares by store.shares.collectAsState()
+    val engine by store.engineChoice.collectAsState()
     val readings by VehicleReadings.state.collectAsState()
     var locationAllowed by remember { mutableStateOf(CarGpsFeed.permitted(context)) }
     var energyAllowed by remember { mutableStateOf(granted(context, VehicleData.ENERGY_PERMISSION)) }
@@ -71,6 +72,7 @@ internal fun VehiclePane(modifier: Modifier = Modifier) {
     Column(modifier = modifier.widthIn(max = VEHICLE_PANE_MAX_WIDTH), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         PaneHeader(title = "Vehicle", subtitle = "What the truck gives the iPhone. Changes apply the next time the iPhone connects.")
         GpsGroup(store, gps, locationAllowed, onAsk = { ask(context, askLocation, LOCATION_PERMISSIONS) })
+        EngineGroup(store, engine, readings)
         SectionLabel("Shared with the iPhone")
         SharedGroup(
             store = store,
@@ -125,6 +127,27 @@ private fun GpsGroup(
     }
 }
 
+/** The engine type the iPhone always gets: the car's own, or the driver's pick for a car that reports none or the wrong one. */
+@Composable
+private fun EngineGroup(
+    store: VehicleStore,
+    engine: EngineChoice,
+    readings: VehicleState,
+) {
+    SettingsGroup {
+        ChoiceSetting(
+            title = "Engine type",
+            subtitle = VehicleText.engine(engine, readings),
+            options = EngineChoice.entries,
+            selected = engine,
+            onSelect = {
+                logWarn("[UI_ACTION] Engine type -> ${it.code}", tag = "UI")
+                store.setEngineChoice(it)
+            },
+        )
+    }
+}
+
 /** The data points the iPhone may have, each with what Carlink reads now. */
 @Composable
 private fun SharedGroup(
@@ -141,13 +164,6 @@ private fun SharedGroup(
         if (needsEnergy) onEnergyNeeded()
     }
     SettingsGroup {
-        SwitchRow(
-            title = "Fuel type",
-            subtitle = VehicleText.fuelType(readings),
-            checked = shares.fuelType,
-            onCheckedChange = { set(shares.copy(fuelType = it), false) },
-        )
-        GroupDivider()
         SwitchRow(
             title = "Range",
             subtitle = VehicleText.range(readings, imperial, energyAllowed),

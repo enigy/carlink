@@ -27,9 +27,8 @@ object VehicleStatusValues {
     private const val BYTE = 0xFF
     private const val BITS = 8
 
-    /** Which of the car's data points the driver shares with the phone. */
+    /** Which of the car's data points the driver shares with the phone. The engine type always goes ([declaredEngines]). */
     data class Shares(
-        val fuelType: Boolean = false,
         val range: Boolean = false,
         val lowFuel: Boolean = false,
         val outsideTemperature: Boolean = false,
@@ -57,6 +56,16 @@ object VehicleStatusValues {
      * without repeats; one Apple has no name for (LPG, hydrogen) is left out.
      */
     fun engines(fuelTypes: List<Int>?): List<String> = fuelTypes.orEmpty().mapNotNull(::engineOf).distinct()
+
+    /**
+     * The engine types the adapter declares (`iapConfig.vehicleInfo.engineTypes`), always: the driver's [chosen] ones from
+     * Settings › Vehicle, else the ones the car reports. Empty when there are neither, and the adapter's own default,
+     * gasoline, stands.
+     */
+    fun declaredEngines(
+        chosen: List<String>,
+        fuelTypes: List<Int>?,
+    ): List<String> = chosen.ifEmpty { engines(fuelTypes) }
 
     /** FuelType (android.car.FuelType) -> Apple's engine name, or null. */
     fun engineOf(fuelType: Int): String? =
