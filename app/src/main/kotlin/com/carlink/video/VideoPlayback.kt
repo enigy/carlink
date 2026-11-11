@@ -76,6 +76,13 @@ class VideoPlayback(
     var askedRate = 0.0
         private set
 
+    /**
+     * Set by a player failure until the phone drops the item, or parking changes: the phone was told video may not play
+     * here ([onPlayerFailed]) and hears that it may again then.
+     */
+    @Volatile
+    private var refused = false
+
     private val showingState = MutableStateFlow(false)
 
     /** Whether the video screen is up ([VideoOverlay]). */
@@ -91,11 +98,18 @@ class VideoPlayback(
         val wasPlaying = phonePlays
         state = state.copy(failed = code)
         showingState.value = false
-        // As Drive and Close do: the phone kept playing after a FairPlay failure (the Mac's bench, 11 Nov), so its Pause
-        // is pressed, and it hears that this item can't show here (audioOnly), in case that lets it offer the iPhone.
+        // The Mac's 11 Nov bench: after a FairPlay failure the phone ignored Pause and setVideoPlaybackAllowed(true,
+        // audioOnly) and stayed "playing", asking for playbackInfo once a second. No source gives this channel a failure
+        // report yet, so the phone now hears what a drive makes it hear, video not allowed here: the word it has
+        // followed. Video is allowed again once the phone drops the item, or at the next parking change.
         if (wasPlaying) pausePhone()
-        announce(parked(), Status.AUDIO_ONLY)
-        logInfo("[VIDEO] the player failed ($code): its screen closed${if (wasPlaying) ", Pause sent to the phone" else ""}", tag = Logger.Tags.ADAPTR)
+        refused = true
+        announce(false, statusOf(state, false))
+        logInfo(
+            "[VIDEO] the player failed ($code): its screen closed, the phone told video may not play here" +
+                if (wasPlaying) ", Pause sent" else "",
+            tag = Logger.Tags.ADAPTR,
+        )
     }
 
     /** One `{"kind":"dataStream"}` record from the box. Any thread. */
@@ -119,6 +133,7 @@ class VideoPlayback(
             "insertPlayQueueItem" -> {
                 val item = state.item
                 askedRate = 0.0 // a new item waits for its own setRate
+                refused = false // its play start tells the phone video may play
                 logInfo("[VIDEO] the phone queued an item: ${hostOf(item?.url) ?: "no address"}, from ${item?.startS} s", tag = Logger.Tags.ADAPTR)
                 item?.url?.let { engine.load(it, item.startS) }
             }
@@ -149,12 +164,18 @@ class VideoPlayback(
         }
     }
 
-    /** Stop the player and close the screen: the queue is empty. */
+    /** Stop the player and close the screen: the queue is empty. After a failure the phone hears video may play again. */
     private fun drop(why: String) {
         engine.stop()
         askedRate = 0.0
         showingState.value = false
         logInfo("[VIDEO] $why", tag = Logger.Tags.ADAPTR)
+        if (refused) {
+            refused = false
+            val nowParked = parked()
+            announce(nowParked, statusOf(state, nowParked))
+            logInfo("[VIDEO] the failed item is gone: the phone told video may ${if (nowParked) "" else "not "}play", tag = Logger.Tags.ADAPTR)
+        }
     }
 
     /** Whether the phone thinks its video plays: it asked for a rate and hasn't asked for 0 since. */
@@ -165,6 +186,11 @@ class VideoPlayback(
         askedRate = rate
         when {
             rate <= 0.0 -> engine.setRate(0.0)
+            state.failed != null -> {
+                engine.setRate(0.0)
+                logInfo("[VIDEO] the phone asks to play the item the player failed on (${state.failed}): it stays closed", tag = Logger.Tags.ADAPTR)
+                return
+            }
             !parked() -> {
                 engine.setRate(0.0)
                 if (starting) announce(false, statusOf(state, false))
@@ -200,6 +226,7 @@ class VideoPlayback(
                 logInfo("[VIDEO] Pause sent to the phone, so its player follows", tag = Logger.Tags.ADAPTR)
             }
         }
+        refused = false
         announce(nowParked, statusOf(state, nowParked))
     }
 
@@ -235,6 +262,7 @@ class VideoPlayback(
         engine.stop()
         state = State()
         askedRate = 0.0
+        refused = false
         showingState.value = false
     }
 

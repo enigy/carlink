@@ -253,9 +253,27 @@ class VideoPlaybackTest {
         assertFalse(playback.showing.value)
         assertEquals("ERROR_CODE_DRM_SCHEME_UNSUPPORTED", playback.state.failed)
         assertEquals("the failure presses the phone's Pause, as Drive and Close do", 1, pauses)
-        assertEquals(true to VideoPlayback.Status.AUDIO_ONLY, announced.last())
+        assertEquals("the phone hears what a drive makes it hear", false to VideoPlayback.Status.AUDIO_ONLY, announced.last())
         playback.onRecord(record(insert))
         assertNull(playback.state.failed)
+    }
+
+    /** The Mac's 11 Nov bench: the phone kept "playing" a FairPlay item the player failed on. */
+    @Test
+    fun `after a failure the item stays closed, and dropping it allows video again`() {
+        playback.onRecord(record(insert))
+        playback.onRecord(rate(1.0))
+        engine.fail("ERROR_CODE_DRM_SCHEME_UNSUPPORTED")
+        playback.onRecord(rate(0.0))
+        playback.onRecord(rate(1.0))
+        assertFalse("a play request for the failed item doesn't reopen its screen", playback.showing.value)
+        assertEquals(false to VideoPlayback.Status.AUDIO_ONLY, announced.last())
+        announced.clear()
+        playback.onRecord(record("""{"type":"stop","kind":"request","messageID":9}"""))
+        assertEquals("the phone dropped it: video may play again", listOf(true to VideoPlayback.Status.IDLE), announced)
+        announced.clear()
+        playback.onRecord(record("""{"type":"stop","kind":"request","messageID":10}"""))
+        assertTrue("said once", announced.isEmpty())
     }
 
     @Test
