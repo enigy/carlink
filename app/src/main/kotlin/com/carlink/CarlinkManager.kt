@@ -120,6 +120,7 @@ import com.carlink.usb.UsbPermissionWait
 import com.carlink.util.DisplayProfile
 import com.carlink.util.LogCallback
 import com.carlink.util.PanelGeometry
+import com.carlink.video.VideoPlayback
 import com.enigy.carlink2.bridge.BridgeContract
 import com.enigy.carlink2.bridge.ICarlinkBridge
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -2219,6 +2220,9 @@ class CarlinkManager(
 
     /** The one Play pressed for the phone at connect: the car's deferred `play()`, or the resume setting. */
     private val connectPlay = ConnectPlay(resumeOnConnect = { MusicStore.get(context).resumeOnConnect })
+
+    /** Route A: the phone's video Playback channel, relayed by the box ([VideoPlayback]). Inert unless the box offers video. */
+    private val videoPlayback = VideoPlayback { stream, json -> client?.sendDataStream(stream, json) ?: false }
     private var connectPlayJob: Job? = null
 
     /**
@@ -3009,6 +3013,7 @@ class CarlinkManager(
                 // above changes nothing and the screen kept the last frame over this text (bench
                 // 2026-11-02, 11:17). Tell the screen outright.
                 callback?.onPhoneLeft()
+                videoPlayback.reset()
                 setStatusText("Waiting for phone...")
             }
         }
@@ -3888,6 +3893,8 @@ class CarlinkManager(
                     // phone is now the navigator; a native maps app mid-route is told it lost it.
                     // Carlink: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
                     "routeGuidance", "maneuver", "laneGuidance" -> onNavigationJson(obj)
+                    // Route A: a message on one of the phone's shared DataStreams (OCBM receiver::playback).
+                    "dataStream" -> videoPlayback.onRecord(obj)
                     else -> Unit
                 }
             }

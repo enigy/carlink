@@ -362,6 +362,15 @@ object Ocbm {
     /** `[INPUT_TELEPHONY][buttonIndex u8]` -> uid-5 telephony HID (report then release). lib.rs:200 */
     const val INPUT_TELEPHONY: Byte = 0x08
 
+    /**
+     * `[INPUT_DATASTREAM][stream u32 LE][JSON message]` -> the box sends the message on that shared DataStream
+     * (route A: the phone's video Playback channel; receiver::playback). lib.rs:420
+     */
+    const val INPUT_DATASTREAM: Byte = 0x0A
+
+    /** The JSON message's cap in an INPUT_DATASTREAM sub-frame. lib.rs:424 */
+    const val MAX_INPUT_DATASTREAM: Int = 16_384
+
     // Touch phases — lib.rs:295-297. NOTE these differ from the legacy riddleBox MultiTouchAction
     // values (UP=0/DOWN=1/MOVE=2); the two enumerations collide numerically but mean different things.
     const val TOUCH_DOWN: Byte = 0x00

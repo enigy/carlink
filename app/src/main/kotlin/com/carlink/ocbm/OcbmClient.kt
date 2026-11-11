@@ -763,6 +763,31 @@ class OcbmClient(
      */
     fun sendTelephony(index: Byte): Boolean = enqueue(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_TELEPHONY, index), "telephony $index")
 
+    /**
+     * `[INPUT_DATASTREAM][stream u32 LE][JSON]` on CH_INPUT -> the box sends the message to the phone on that shared
+     * DataStream (route A's answers, [com.carlink.video.VideoPlayback]). False = dropped: not subscribed, the queue
+     * full, or the JSON over [Ocbm.MAX_INPUT_DATASTREAM].
+     */
+    fun sendDataStream(
+        stream: Int,
+        json: String,
+    ): Boolean {
+        val body = json.toByteArray(Charsets.UTF_8)
+        if (body.size > Ocbm.MAX_INPUT_DATASTREAM) {
+            noteInputDrop("data stream $stream (${body.size} B, over ${Ocbm.MAX_INPUT_DATASTREAM})")
+            return false
+        }
+        val p =
+            ByteBuffer
+                .allocate(1 + 4 + body.size)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .put(Ocbm.INPUT_DATASTREAM)
+                .putInt(stream)
+                .put(body)
+                .array()
+        return enqueue(Ocbm.CH_INPUT, p, "data stream $stream")
+    }
+
     private val lastKeyframeReqNs =
         java.util.concurrent.atomic
             .AtomicLong(0)
