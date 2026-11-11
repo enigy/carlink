@@ -28,6 +28,7 @@ class GooglePlacesStore private constructor(
 ) {
     private val prefs: SharedPreferences = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val hasKeyState = MutableStateFlow(prefs.contains(KEY_BLOB))
+    private val keyVersionState = MutableStateFlow(0)
     private val budgetState =
         MutableStateFlow(
             MonthlyBudget(
@@ -39,6 +40,9 @@ class GooglePlacesStore private constructor(
 
     /** Whether a key is set. */
     val hasKey: StateFlow<Boolean> = hasKeyState.asStateFlow()
+
+    /** Bumped at each key entered or removed: what Google said about the old key no longer holds. */
+    val keyVersion: StateFlow<Int> = keyVersionState.asStateFlow()
 
     /** This month's lookups and the cap. */
     val budget: StateFlow<MonthlyBudget> = budgetState.asStateFlow()
@@ -56,6 +60,7 @@ class GooglePlacesStore private constructor(
             .putString(KEY_TAIL, key.takeLast(TAIL))
             .apply()
         hasKeyState.value = true
+        keyVersionState.value += 1
     }
 
     fun clearKey() {
@@ -65,6 +70,7 @@ class GooglePlacesStore private constructor(
             .remove(KEY_TAIL)
             .apply()
         hasKeyState.value = false
+        keyVersionState.value += 1
     }
 
     /** Room for one more lookup this month. */

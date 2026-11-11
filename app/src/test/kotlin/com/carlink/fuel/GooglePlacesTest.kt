@@ -82,7 +82,7 @@ class GooglePlacesTest {
         assertEquals("AIzaMadeUpKey", sent["X-Goog-Api-Key"])
         assertEquals(GooglePlaces.FIELD_MASK, sent["X-Goog-FieldMask"])
         assertEquals("com.example", sent["X-Android-Package"])
-        assertTrue(GooglePlacesSource.failure(HttpAnswer(429, "")) is SourceBusy)
+        assertTrue("a 429 is the key's quota, not a busy server", GooglePlacesSource.failure(HttpAnswer(429, "")) is GoogleQuota)
         assertTrue(GooglePlacesSource.failure(HttpAnswer(503, "")) is SourceBusy)
         assertTrue(GooglePlacesSource.failure(HttpAnswer(403, "")) is GoogleKeyProblem)
         assertThrows(GoogleKeyProblem::class.java) { GooglePlacesSource(key = { null }) { _, _ -> HttpAnswer(200, answer) }.stationsNear(here, diesel, 8_000.0) }

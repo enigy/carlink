@@ -58,6 +58,12 @@ internal object VehicleText {
         return if (imperial) "${(m / METRES_PER_MILE).roundToInt()} mi" else "${(m / METRES_PER_KM).roundToInt()} km"
     }
 
+    /** A search radius in the car's unit: "5 mi", or "8 km". */
+    fun radius(
+        miles: Int,
+        imperial: Boolean,
+    ): String = if (imperial) "$miles mi" else "${(miles * METRES_PER_MILE / METRES_PER_KM).roundToInt()} km"
+
     /** The range as the Fuel card shows it large: its whole number and unit, (312, "mi"); null until it is read. */
     fun rangeFigure(
         state: VehicleState,

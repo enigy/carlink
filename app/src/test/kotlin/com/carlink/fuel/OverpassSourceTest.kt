@@ -65,6 +65,7 @@ class OverpassSourceTest {
         assertThrows(SourceBusy::class.java) { source.stationsNear(here, diesel, 8_000.0) }
         assertEquals(3, source.stationsNear(here, diesel, 8_000.0).size)
         assertEquals(listOf("https://one.example/api/interpreter", "https://two.example/api/interpreter"), asked)
+        assertEquals("the log names the host that answered", "two.example", source.detail)
     }
 
     @Test
@@ -74,7 +75,8 @@ class OverpassSourceTest {
         assertEquals(240L, RetryWait.seconds(4, null))
         assertEquals("capped at 5 min", 300L, RetryWait.seconds(9, null))
         assertEquals("its own Retry-After when longer", 90L, RetryWait.seconds(1, 90))
-        assertEquals(300L, RetryWait.seconds(1, 3_600))
+        assertEquals("an hour's Retry-After is kept", 3_600L, RetryWait.seconds(1, 3_600))
+        assertEquals("up to an hour", 3_600L, RetryWait.seconds(1, 86_400))
     }
 
     @Test

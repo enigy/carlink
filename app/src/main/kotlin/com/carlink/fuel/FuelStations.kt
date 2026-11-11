@@ -26,7 +26,8 @@ import java.io.IOException
 /**
  * The Fuel card's stations: looked up from the source Settings › Vehicle › Price source picks, when [LookupThrottle] says
  * so, and kept in memory only. Google Places needs the driver's key and room in the month's lookups ([GooglePlacesStore]);
- * without either the card shows the free stations and says why ([View.notice]). A failed lookup keeps the last list with
+ * without either, and for an hour after Google says the key's quota is used up ([GoogleQuota]) or for as long as it refuses
+ * the key ([GoogleKeyProblem]), the card shows the free stations and says why ([View.notice]). A failed lookup keeps the last list with
  * its age. A busy service ([SourceBusy]) is tried again while the card is up, 30 s later and doubling to 5 min, or after
  * its own Retry-After. Logs carry counts, timings, HTTP statuses and sizes, never a position, a station's name or
  * address, or the key: a list of stations near home says where the driver lives.
@@ -36,8 +37,7 @@ object FuelStations {
 
     /**
      * What the card shows: the [status], the last [stations] and when they came ([fetchedAt], elapsedRealtime), the
-     * source's [attribution], why the free stations stand in for Google's ([notice]), and Google's refusal in the
-     * driver's words ([problem]).
+     * source's [attribution], and why the free stations stand in for Google's ([notice]).
      */
     data class View(
         val status: Status = Status.OFF,
@@ -45,10 +45,11 @@ object FuelStations {
         val fetchedAt: Long? = null,
         val attribution: String? = null,
         val notice: String? = null,
-        val problem: String? = null,
     )
 
     private const val MS_PER_S = 1_000L
+    private const val GOOGLE_PAUSE_MS = 60 * 60_000L
+    private const val QUOTA_NOTICE = "Google says this key's quota is used up for now. Free stations for an hour, without prices."
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val throttle = LookupThrottle()
@@ -63,7 +64,14 @@ object FuelStations {
 
     @Volatile private var looking: Job? = null
 
-    @Volatile private var sourceName: String? = null
+    // What the last lookup asked: its source, why (a notice), the radius and the key; a change looks up again at once.
+    @Volatile private var pickKey: String? = null
+
+    // Google out of quota (HTTP 429) until then, elapsedRealtime: free stations meanwhile.
+    @Volatile private var googlePausedUntil = 0L
+
+    // Google refused this key version, in the driver's words: free stations until the key changes.
+    @Volatile private var googleProblem: Pair<Int, String>? = null
 
     @Volatile private var retry: Job? = null
 
@@ -96,6 +104,8 @@ object FuelStations {
             return
         }
         if (visible) FuelLocation.start(app) { onPosition(app, it) } else FuelLocation.stop()
+        // A retry left waiting while the card was hidden doesn't come back by itself: ask again as it returns.
+        if (visible && viewState.value.status == Status.BUSY) throttle.reset()
         lookUpIfDue(app, lowFuelRose = false)
     }
 
@@ -128,6 +138,8 @@ object FuelStations {
                 "It works: ${stations.size} stations nearby, ${stations.count { it.price != null }} with a ${fuel.label.lowercase()} price."
             } catch (e: GoogleKeyProblem) {
                 e.words
+            } catch (e: GoogleQuota) {
+                "Google says this key's quota is used up for now (${e.why}). Raise the quota in Google Cloud, or wait."
             } catch (e: SourceBusy) {
                 "Google is busy (${e.why}). Try again in a minute."
             } catch (_: SourceUnreachable) {
@@ -154,9 +166,10 @@ object FuelStations {
         val fuel = carFuel(store)
         if (!fuel.hasStations) return
         val pick = pick(app, store)
-        if (pick.source.name != sourceName) {
+        val key = "${pick.source.name}|${pick.notice}|${store.searchRadiusMi.value}|${GooglePlacesStore.get(app).keyVersion.value}"
+        if (key != pickKey) {
             throttle.reset()
-            sourceName = pick.source.name
+            pickKey = key
         }
         val here = hereState.value
         if (here == null) {
@@ -187,19 +200,25 @@ object FuelStations {
         if (stations != null) {
             busyInARow = 0
             viewState.value = View(Status.READY, stations, SystemClock.elapsedRealtime(), source.attribution, pick.notice)
-            logInfo("[FUEL] ${source.name}: ${stations.size} stations (${stations.count { it.price != null }} priced) in $ms ms", tag = Logger.Tags.ADAPTR)
+            val from = source.detail?.let { " ($it)" }.orEmpty()
+            logInfo("[FUEL] ${source.name}$from: ${stations.size} stations (${stations.count { it.price != null }} priced) in $ms ms", tag = Logger.Tags.ADAPTR)
             return
         }
         val e = outcome.exceptionOrNull() ?: return
+        if (e is GoogleQuota || e is GoogleKeyProblem) {
+            googleAside(app, e)
+            logWarn("[FUEL] Google Places: ${e.message} after $ms ms; free stations meanwhile", tag = Logger.Tags.ADAPTR)
+            lookUp(app, pick(app, VehicleStore.get(app)), here, fuel, radiusM)
+            return
+        }
         val status =
             when (e) {
                 is SourceBusy -> Status.BUSY
                 is SourceUnreachable -> Status.OFFLINE
-                // A bad answer (IOException, JSONException), Google refusing the key, or a bug in reading it: the card
-                // says it couldn't, and the app goes on.
+                // A bad answer (IOException, JSONException), or a bug in reading it: the card says it couldn't, the app goes on.
                 else -> Status.FAILED
             }
-        viewState.value = viewState.value.copy(status = status, notice = pick.notice, problem = (e as? GoogleKeyProblem)?.words)
+        viewState.value = viewState.value.copy(status = status, notice = pick.notice)
         val why = (e as? SourceBusy)?.why ?: (e as? SourceUnreachable)?.why ?: e.message ?: e.javaClass.simpleName
         if (e !is SourceBusy) {
             logWarn("[FUEL] ${source.name}: $status after $ms ms ($why)", tag = Logger.Tags.ADAPTR)
@@ -240,11 +259,22 @@ object FuelStations {
             StationSource.GOOGLE ->
                 when {
                     !keys.hasKey.value -> Pick(overpass, "No Google key yet: free stations, without prices")
+                    googleProblem?.first == keys.keyVersion.value -> Pick(overpass, "${googleProblem?.second} Free stations meanwhile, without prices.")
+                    SystemClock.elapsedRealtime() < googlePausedUntil -> Pick(overpass, QUOTA_NOTICE)
                     !keys.allowsLookup() -> Pick(overpass, "Monthly lookup limit reached: free stations, without prices")
                     else -> Pick(google(app))
                 }
             StationSource.FREE -> Pick(overpass)
         }
+    }
+
+    /** Google out of quota (an hour aside) or refusing this key (aside until it changes). */
+    private fun googleAside(
+        app: Context,
+        e: Throwable,
+    ) {
+        if (e is GoogleQuota) googlePausedUntil = SystemClock.elapsedRealtime() + GOOGLE_PAUSE_MS
+        if (e is GoogleKeyProblem) googleProblem = GooglePlacesStore.get(app).keyVersion.value to e.words
     }
 
     private fun google(app: Context): GooglePlacesSource =
@@ -262,17 +292,21 @@ private fun radiusM(store: VehicleStore) = store.searchRadiusMi.value * METRES_P
 
 private const val METRES_PER_MILE = 1609.344
 
-/** How long to wait before asking a busy service again: 30 s, doubling to 5 min, and never less than its Retry-After. */
+/**
+ * How long to wait before asking a busy service again: 30 s, doubling to 5 min, and never less than its own Retry-After
+ * (up to an hour).
+ */
 object RetryWait {
     private const val FIRST_S = 30L
     private const val MAX_S = 300L
     private const val MAX_DOUBLINGS = 4
+    private const val MAX_RETRY_AFTER_S = 3_600L
 
     fun seconds(
         busyInARow: Int,
         retryAfterS: Long?,
     ): Long {
         val backoff = (FIRST_S shl (busyInARow - 1).coerceIn(0, MAX_DOUBLINGS)).coerceAtMost(MAX_S)
-        return maxOf(backoff, retryAfterS ?: 0L).coerceAtMost(MAX_S)
+        return maxOf(backoff, (retryAfterS ?: 0L).coerceAtMost(MAX_RETRY_AFTER_S))
     }
 }

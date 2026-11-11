@@ -5,8 +5,9 @@ import android.content.pm.PackageManager
 import java.security.MessageDigest
 
 /**
- * The Fuel card's prices: Google Places with the driver's own key ([GooglePlaces], [GooglePlacesStore]). Busy for 429
- * and 5xx ([SourceBusy]); any other refusal is the driver's to fix ([GoogleKeyProblem], in plain words). Each request
+ * The Fuel card's prices: Google Places with the driver's own key ([GooglePlaces], [GooglePlacesStore]). Busy for 5xx
+ * ([SourceBusy]); out of quota for 429 ([GoogleQuota]: usually the key's own daily cap, which won't clear in minutes); any
+ * other refusal is the driver's to fix ([GoogleKeyProblem], in plain words). Each request
  * also names the app (package and signing certificate), so a key the driver restricted to Carlink works too.
  */
 class GooglePlacesSource(
@@ -41,9 +42,11 @@ class GooglePlacesSource(
     companion object {
         private const val READ_TIMEOUT_MS = 30_000
         private const val HTTP_OK = 200
+        private const val HTTP_TOO_MANY_REQUESTS = 429
 
-        /** A refusal: busy for 429 and 5xx ([httpFailure]), else Google's reason in the driver's words. */
+        /** A refusal: out of quota for 429, busy for 5xx ([httpFailure]), else Google's reason in the driver's words. */
         fun failure(answer: HttpAnswer): Exception {
+            if (answer.code == HTTP_TOO_MANY_REQUESTS) return GoogleQuota("HTTP ${answer.code}")
             val http = httpFailure(answer.code, answer.retryAfter)
             return if (http is SourceBusy) http else GoogleKeyProblem(GooglePlaces.problem(answer.code, answer.body))
         }

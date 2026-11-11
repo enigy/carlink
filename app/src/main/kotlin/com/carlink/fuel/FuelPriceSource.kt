@@ -14,6 +14,9 @@ interface FuelPriceSource {
     /** What the card must show with this source's stations ("© OpenStreetMap contributors"), or null. */
     val attribution: String?
 
+    /** Which server answered the last lookup (its host only), for the log; null where there is one. */
+    val detail: String? get() = null
+
     /**
      * Stations within [radiusM] of [here] that sell [fuel], nearest first with the ones known to sell it ahead. Blocking:
      * call it off the main thread. Throws [IOException] when the source can't be reached.

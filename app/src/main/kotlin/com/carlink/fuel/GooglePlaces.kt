@@ -108,3 +108,11 @@ object GooglePlaces {
 class GoogleKeyProblem(
     val words: String,
 ) : IOException(words)
+
+/**
+ * Google answered HTTP 429: this key's quota is used up for now, usually the daily cap the driver set in Cloud Console,
+ * which won't clear in minutes. The card stops asking Google for an hour and shows the free stations.
+ */
+class GoogleQuota(
+    val why: String,
+) : IOException(why)

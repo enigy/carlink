@@ -2,6 +2,7 @@ package com.carlink.fuel
 
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URLEncoder
 import java.util.Locale
 
@@ -25,6 +26,11 @@ class OverpassSource(
 
     @Volatile private var next = 0
 
+    @Volatile private var host: String? = null
+
+    /** The instance that answered last, host only: the log tells when the fallback did. */
+    override val detail: String? get() = host
+
     override fun stationsNear(
         here: GeoPoint,
         fuel: CarFuel,
@@ -38,6 +44,7 @@ class OverpassSource(
                 next = (next + 1) % endpoints.size
                 throw e
             }
+        host = URI(endpoint).host
         return parse(json, fuel).nearestFirst(here).take(KEEP)
     }
 

@@ -1,10 +1,5 @@
 package com.carlink.ui.settings
 
-import android.content.ActivityNotFoundException
-import android.content.Context
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -24,6 +19,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.carlink.BuildConfig
 import com.carlink.car.DrivingState
@@ -59,8 +56,8 @@ internal fun PriceSourceGroup(
         GroupDivider()
         ChoiceSetting(
             title = "Search radius",
-            options = VehicleStore.RADII_MI.map { Radius(it, radiusLabel(it, imperial)) },
-            selected = Radius(radiusMi, radiusLabel(radiusMi, imperial)),
+            options = VehicleStore.RADII_MI.map { Radius(it, VehicleText.radius(it, imperial)) },
+            selected = Radius(radiusMi, VehicleText.radius(radiusMi, imperial)),
             onSelect = {
                 logWarn("[UI_ACTION] Search radius -> ${it.miles} mi", tag = "UI")
                 store.setSearchRadiusMi(it.miles)
@@ -79,16 +76,12 @@ private data class Radius(
     override val label: String,
 ) : Labelled
 
-/** A radius in the car's unit: "5 mi", or "8 km". */
-private fun radiusLabel(
-    miles: Int,
-    imperial: Boolean,
-): String = if (imperial) "$miles mi" else "${Math.round(miles * KM_PER_MILE)} km"
-
 /**
- * The driver's Google key, parked only: enter it (typing 39 characters on the head unit is slow, so it can come from a
- * text file on a USB stick too), test it with one lookup, or remove it; this month's lookups against the cap; and what
- * Google needs. The key is shown only by its last four characters and never logged.
+ * The driver's Google key, parked only: enter it, test it with one lookup, or remove it (after a question: typing 39
+ * characters again on the head unit is slow); this month's lookups against the cap; and what Google needs. The key is
+ * shown only by its last four characters and never logged. A key can't come from a file: Android Automotive has no file
+
+ * picker (its OPEN_DOCUMENT is a stub that says so, the Mac's 11 Nov bench).
  */
 @Composable
 private fun GoogleKeyRows() {
@@ -99,25 +92,10 @@ private fun GoogleKeyRows() {
     val parked by DrivingState.parked.collectAsState()
     var entering by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<String?>(null) }
-    val importer =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            uri?.let { result = importKey(context, keys, it) }
-        }
-    KeyRow(keys.keyTail.takeIf { hasKey }, parked, onEnter = { entering = true }) {
-        result =
-            try {
-                importer.launch(arrayOf("text/plain"))
-                null
-            } catch (_: ActivityNotFoundException) {
-                "This head unit has no file picker. Enter the key instead."
-            }
-    }
+    var removing by remember { mutableStateOf(false) }
+    KeyRow(keys.keyTail.takeIf { hasKey }, parked) { entering = true }
     GroupDivider()
-    TestRow(hasKey, parked, result, onResult = { result = it }) {
-        logWarn("[UI_ACTION] Google key removed", tag = "UI")
-        keys.clearKey()
-        result = null
-    }
+    TestRow(hasKey, parked, result, onResult = { result = it }) { removing = true }
     GroupDivider()
     LookupCapRow(keys, budget)
     Text(
@@ -139,15 +117,30 @@ private fun GoogleKeyRows() {
             onDismiss = { entering = false },
         )
     }
+    if (removing) {
+        AlertDialog(
+            onDismissRequest = { removing = false },
+            title = { Text("Remove the Google key?") },
+            text = { Text("The Fuel card goes back to free stations, without prices, until you enter a key again.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    logWarn("[UI_ACTION] Google key removed", tag = "UI")
+                    keys.clearKey()
+                    removing = false
+                    result = null
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { removing = false }) { Text("Keep it") } },
+        )
+    }
 }
 
-/** The key's row: set (its last four characters) or not, and the two ways in, parked only. */
+/** The key's row: set (its last four characters) or not, and Enter, parked only. */
 @Composable
 private fun KeyRow(
     tail: String?,
     parked: Boolean,
     onEnter: () -> Unit,
-    onFile: () -> Unit,
 ) {
     val subtitle =
         when {
@@ -156,10 +149,7 @@ private fun KeyRow(
             else -> "Not set. Park to enter one."
         }
     SettingRow(title = "Google API key", subtitle = subtitle) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            RowAction("Enter", enabled = parked, onClick = onEnter)
-            RowAction("From a file", enabled = parked, onClick = onFile)
-        }
+        RowAction("Enter", enabled = parked, onClick = onEnter)
     }
 }
 
@@ -174,7 +164,7 @@ private fun TestRow(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    SettingRow(title = "Test the key", subtitle = result ?: "One lookup where the car is; it counts toward this month's") {
+    SettingRow(title = "Test the key", subtitle = result ?: "One lookup where the car is. It counts toward this month's lookups.") {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             RowAction("Test", enabled = parked && hasKey, onClick = {
                 onResult("Asking Google…")
@@ -194,7 +184,7 @@ private fun LookupCapRow(
     val used = budget.used(GooglePlacesStore.thisMonth())
     ChoiceSetting(
         title = "Monthly lookup limit",
-        subtitle = "$used lookups this month. At the limit the card shows free stations, without prices.",
+        subtitle = "$used ${if (used == 1) "lookup" else "lookups"} this month. At the limit the card shows free stations, without prices.",
         options = (MonthlyBudget.CAPS + budget.cap).distinct().sorted().map { Cap(it) },
         selected = Cap(budget.cap),
         onSelect = {
@@ -210,13 +200,17 @@ private data class Cap(
     override val label: String get() = "%,d".format(value)
 }
 
-/** The key typed in: one line, trimmed. */
+/**
+ * The key typed in: one line, trimmed. A password field, which keyboards don't learn from, hidden unless the driver asks
+ * to see it (the Mac's 11 Nov bench).
+ */
 @Composable
 private fun KeyDialog(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
+    var shown by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Google API key") },
@@ -226,7 +220,9 @@ private fun KeyDialog(
                 onValueChange = { text = it.trim() },
                 singleLine = true,
                 label = { Text("Key") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = { TextButton(onClick = { shown = !shown }) { Text(if (shown) "Hide" else "Show") } },
             )
         },
         confirmButton = { TextButton(onClick = { onSave(text) }, enabled = text.length >= MIN_KEY) { Text("Save") } },
@@ -234,30 +230,4 @@ private fun KeyDialog(
     )
 }
 
-/** A key from a text file the driver picked (a USB stick): its first non-blank line. The result in words. */
-private fun importKey(
-    context: Context,
-    keys: GooglePlacesStore,
-    uri: Uri,
-): String {
-    val line = runCatching { firstLine(context, uri) }.getOrNull()
-    if (line == null || line.length !in MIN_KEY..MAX_KEY || line.any { it.isWhitespace() }) {
-        return "That file doesn't start with a key: put the key alone on its first line."
-    }
-    keys.setKey(line)
-    logWarn("[UI_ACTION] Google key read from a file (${line.length} characters)", tag = "UI")
-    return "Key saved, ending ${line.takeLast(4)}. Test it."
-}
-
-/** The file's first non-blank line, trimmed. */
-private fun firstLine(
-    context: Context,
-    uri: Uri,
-): String? {
-    val reader = context.contentResolver.openInputStream(uri)?.bufferedReader() ?: return null
-    return reader.use { r -> r.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() } }
-}
-
-private const val KM_PER_MILE = 1.609344
 private const val MIN_KEY = 20
-private const val MAX_KEY = 200

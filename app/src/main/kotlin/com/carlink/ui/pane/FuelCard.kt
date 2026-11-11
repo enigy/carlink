@@ -50,6 +50,7 @@ import com.carlink.car.VehicleReadings
 import com.carlink.car.VehicleState
 import com.carlink.fuel.CarFuel
 import com.carlink.fuel.FuelStations
+import com.carlink.fuel.GooglePlacesStore
 import com.carlink.fuel.LowFuel
 import com.carlink.fuel.Station
 import com.carlink.fuel.StationList
@@ -87,6 +88,8 @@ internal fun FuelCard(
     val lowAt by store.lowFuelAt.collectAsState()
     val nearby by store.nearbyStations.collectAsState()
     val source by store.stationSource.collectAsState()
+    val radiusMi by store.searchRadiusMi.collectAsState()
+    val googleKey by remember(context) { GooglePlacesStore.get(context) }.keyVersion.collectAsState()
     // Read and watch range, the level and the warning as soon as they are allowed.
     val energy = rememberCardPermission(arrayOf(VehicleData.ENERGY_PERMISSION)) { VehicleData.start(context.applicationContext) }
     val location = rememberCardPermission(LOCATION_PERMISSIONS)
@@ -98,14 +101,14 @@ internal fun FuelCard(
     }
     val imperial = vehicle.distanceImperial(Locale.getDefault())
     val low = LowFuel.isLow(vehicle, lowAt, imperial)
-    FollowStations(active, listOf(nearby, location.allowed, source), low)
+    FollowStations(active, listOf(nearby, location.allowed, source, radiusMi, googleKey), low)
     val fuel = CarFuel.of(vehicle.fuelTypes, engine, grade)
     var picked by remember { mutableStateOf<StationRow?>(null) }
     LaunchedEffect(parked) { if (!parked) picked = null } // the sheet is a parked view
     Box(modifier = modifier) {
         val scroll = if (parked) Modifier.verticalScroll(rememberScrollState()) else Modifier
         Column(modifier = Modifier.fillMaxSize().then(scroll), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            val look = FuelLook(parked, low, imperial)
+            val look = FuelLook(parked, low, imperial, radiusMi)
             CarData(vehicle, fuel, look, energy)
             if (fuel.hasStations) {
                 Stations(vehicle, look, onAllowLocation = { location.ask(fromButton = true) }) { row ->
@@ -163,7 +166,8 @@ private fun Stations(
 
 /**
  * Tells [FuelStations] when the card is up, a setting it hangs on changed ([settings]: Nearby stations, the location
- * permission, the source, so a source picked while the card is up looks up at once), or low fuel came on.
+ * permission, the source, the radius and the Google key, so a change made while the card is up looks up at once), or low
+ * fuel came on.
  */
 @Composable
 private fun FollowStations(
@@ -177,11 +181,15 @@ private fun FollowStations(
     DisposableEffect(Unit) { onDispose { FuelStations.onCard(context, visible = false) } }
 }
 
-/** How the card lays out now: [parked] (else moving: the big layout), the fuel [low], distances in miles ([imperial]). */
+/**
+ * How the card lays out now: [parked] (else moving: the big layout), the fuel [low], distances in miles ([imperial]), and
+ * the search radius ([radiusMi]) its words name.
+ */
 internal data class FuelLook(
     val parked: Boolean,
     val low: Boolean,
     val imperial: Boolean,
+    val radiusMi: Int,
 )
 
 /** A runtime permission the card asks for: whether it is granted now, and the ask. */

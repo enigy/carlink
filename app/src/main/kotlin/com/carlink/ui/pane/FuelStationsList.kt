@@ -27,6 +27,7 @@ import com.carlink.fuel.FuelStations
 import com.carlink.fuel.Station
 import com.carlink.fuel.StationRow
 import com.carlink.fuel.StationText
+import com.carlink.ui.settings.VehicleText
 
 /**
  * The Fuel card's stations ([FuelStations]): what the lookup is doing in words, the [rows], and the source's attribution
@@ -51,7 +52,7 @@ internal fun StationsSection(
             // The source's attribution (ODbL for OpenStreetMap) heads its stations, in view without scrolling, in both layouts.
             if (rows.isNotEmpty()) view.attribution?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = secondary) }
             rows.forEach { StationRowView(it, imperial, big, onTap) }
-            note(view, rows.isEmpty(), imperial)?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = secondary) }
+            note(view, rows.isEmpty(), look)?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = secondary) }
             // Why the free stations stand in for Google's (no key, the month's limit): small print, parked only.
             if (!big) view.notice?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = secondary) }
         }
@@ -62,16 +63,16 @@ internal fun StationsSection(
 private fun note(
     view: FuelStations.View,
     empty: Boolean,
-    imperial: Boolean,
+    look: FuelLook,
 ): String? {
     val age = view.fetchedAt?.let { "${(SystemClock.elapsedRealtime() - it) / MS_PER_MIN} min ago" }
     return when (view.status) {
         FuelStations.Status.NO_POSITION -> "Waiting for the car's position"
         FuelStations.Status.LOOKING -> "Finding stations nearby".takeIf { empty }
-        FuelStations.Status.READY -> "No stations within ${if (imperial) "5 mi" else "8 km"}".takeIf { empty }
+        FuelStations.Status.READY -> "No stations within ${VehicleText.radius(look.radiusMi, look.imperial)}".takeIf { empty }
         FuelStations.Status.OFFLINE -> aged("No internet", "No internet", empty, age)
         FuelStations.Status.BUSY -> aged("The station service is busy, trying again soon", "The station service is busy", empty, age)
-        FuelStations.Status.FAILED -> view.problem?.let { "Google: $it" } ?: aged("Couldn't get the stations", "Couldn't update", empty, age)
+        FuelStations.Status.FAILED -> aged("Couldn't get the stations", "Couldn't update", empty, age)
         FuelStations.Status.OFF, FuelStations.Status.NEEDS_LOCATION -> null
     }
 }
