@@ -72,4 +72,24 @@ object RefreshGate {
         looking: Boolean,
         waiting: Boolean,
     ): Boolean = !looking && !waiting && now >= restUntil
+
+    /**
+     * Tell [set] the time from [clock] now, and again each time [sleep] has waited out what is left until [restUntil].
+     * The clock is read first, never taken from an earlier tick: a rest that starts later than the last tick still
+     * ends at its own [restUntil].
+     */
+    suspend fun tick(
+        restUntil: Long,
+        clock: () -> Long,
+        sleep: suspend (Long) -> Unit,
+        set: (Long) -> Unit,
+    ) {
+        var now = clock()
+        set(now)
+        while (now < restUntil) {
+            sleep(restUntil - now)
+            now = clock()
+            set(now)
+        }
+    }
 }

@@ -1,5 +1,7 @@
 package com.carlink.fuel
 
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -62,5 +64,29 @@ class LookupThrottleTest {
         t.reset()
         assertFalse("hidden after a reset", t.due(2_000, start, visible = false))
         assertTrue(t.due(2_000, start, visible = true))
+    }
+
+    @Test
+    fun `two refreshes in a row each come back at their own rest`() {
+        // Mac bench 12 Nov: the second refresh's button came back 38 s late, its wait counted from the earlier tick.
+        var clock = 0L
+        val sleeps = mutableListOf<Long>()
+        val ticks = mutableListOf<Long>()
+        val sleep: suspend (Long) -> Unit = {
+            sleeps += it
+            clock += it
+        }
+        runBlocking { RefreshGate.tick(60_000, { clock }, sleep) { ticks += it } }
+        assertEquals(listOf(60_000L), sleeps)
+        assertEquals(60_000L, ticks.last())
+        clock = 98_000 // the button sat ready 38 s, then a tap: its rest ends a minute on
+        sleeps.clear()
+        runBlocking { RefreshGate.tick(158_000, { clock }, sleep) { ticks += it } }
+        assertEquals("from the clock now, not the last tick", listOf(60_000L), sleeps)
+        assertEquals(158_000L, ticks.last())
+        sleeps.clear()
+        runBlocking { RefreshGate.tick(100_000, { clock }, sleep) { ticks += it } }
+        assertEquals("a rest already over waits for nothing", emptyList<Long>(), sleeps)
+        assertEquals(158_000L, ticks.last())
     }
 }

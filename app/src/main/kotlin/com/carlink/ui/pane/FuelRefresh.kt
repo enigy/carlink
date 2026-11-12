@@ -29,15 +29,13 @@ internal fun RefreshButton(
     view: FuelStations.View,
     onRefresh: () -> Unit,
 ) {
-    // The clock the rest is told by, ticking only until the minute is up.
+    // The clock the rest is told by, ticking only until the minute is up. produceState keeps its last value when its
+    // key changes, so the tick reads the clock first (Mac bench 12 Nov: a second refresh came back up to 38 s late).
     val now by produceState(SystemClock.elapsedRealtime(), view.restUntil) {
-        while (value < view.restUntil) {
-            delay(view.restUntil - value)
-            value = SystemClock.elapsedRealtime()
-        }
+        RefreshGate.tick(view.restUntil, SystemClock::elapsedRealtime, { delay(it) }) { value = it }
     }
     val looking = view.status == FuelStations.Status.LOOKING
-    val enabled = RefreshGate.allows(now, view.restUntil, looking, waiting = view.status == FuelStations.Status.BUSY)
+    val enabled = RefreshGate.allows(now, view.restUntil, looking, waiting = view.retrying)
     IconButton(onClick = onRefresh, enabled = enabled, modifier = Modifier.size(80.dp)) {
         if (looking) {
             CircularProgressIndicator(modifier = Modifier.size(36.dp), strokeWidth = 4.dp, color = LocalContentColor.current)

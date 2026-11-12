@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -37,8 +38,8 @@ object FuelStations {
 
     /**
      * What the card shows: the [status], the last [stations] and when they came ([fetchedAt], elapsedRealtime), the
-     * source's [attribution], why the free stations stand in for Google's ([notice]), and when the card's refresh may ask
-     * again ([restUntil], elapsedRealtime: [RefreshGate]).
+     * source's [attribution], why the free stations stand in for Google's ([notice]), when the card's refresh may ask
+     * again ([restUntil], elapsedRealtime: [RefreshGate]), and whether a busy service's own retry waits ([retrying]).
      */
     data class View(
         val status: Status = Status.OFF,
@@ -47,6 +48,7 @@ object FuelStations {
         val attribution: String? = null,
         val notice: String? = null,
         val restUntil: Long = 0L,
+        val retrying: Boolean = false,
     )
 
     private const val MS_PER_S = 1_000L
@@ -121,7 +123,7 @@ object FuelStations {
      */
     fun refresh(context: Context) {
         val now = SystemClock.elapsedRealtime()
-        if (!RefreshGate.allows(now, viewState.value.restUntil, looking?.isActive == true, retry?.isActive == true)) return
+        if (!RefreshGate.allows(now, viewState.value.restUntil, looking?.isActive == true, viewState.value.retrying)) return
         lookUpIfDue(context.applicationContext, lowFuelRose = false, asked = true)
     }
 
@@ -257,7 +259,22 @@ object FuelStations {
         }
         val waitS = RetryWait.seconds(++busyInARow, e.retryAfterS)
         logWarn("[FUEL] ${source.name}$from: busy ($why) after $ms ms; trying again in $waitS s", tag = Logger.Tags.ADAPTR)
-        retry = scope.launch { retryAfter(app, waitS) }
+        startRetry(app, waitS)
+    }
+
+    /**
+     * Ask a busy service again after [waitS] ([retryAfter]), with the view's [View.retrying] set while it waits: one source
+     * for "a retry waits", the card's button and [refresh] alike (Mac bench 12 Nov: a retry dropped while the card was
+     * hidden left the status BUSY with nothing pending, and the button greyed).
+     */
+    private fun startRetry(
+        app: Context,
+        waitS: Long,
+    ) {
+        val job = scope.launch { retryAfter(app, waitS) }
+        retry = job
+        viewState.update { it.copy(retrying = true) }
+        job.invokeOnCompletion { if (retry === job) viewState.update { it.copy(retrying = false) } }
     }
 
     /**
