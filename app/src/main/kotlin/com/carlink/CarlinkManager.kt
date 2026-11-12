@@ -121,6 +121,11 @@ import com.carlink.usb.UsbPermissionWait
 import com.carlink.util.DisplayProfile
 import com.carlink.util.LogCallback
 import com.carlink.util.PanelGeometry
+import com.carlink.video.ExoVideoEngine
+import com.carlink.video.VideoPlayback
+import com.carlink.video.proxy.PhoneProxy
+import com.carlink.video.proxy.TunnelDataSource
+import com.carlink.video.proxy.Tunnels
 import com.enigy.carlink2.bridge.BridgeContract
 import com.enigy.carlink2.bridge.ICarlinkBridge
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -257,13 +262,28 @@ class CarlinkManager(
         /** The box daemon's log (ocbmd stdout/stderr, tools/run_ocbmd.sh); tmpfs, so RAM-only. */
         private const val BOX_LOG_PATH = "/tmp/box.log"
 
+        /** The `requestUI` URL with which iOS asks for the car's video screen (route A, the Mac's 10 Nov bench). */
+        private const val VIDEO_PLAYBACK_URL = "videoplayback:"
+
         /** How much of the box's reject line goes into the [LANES] refusal log line. */
         private const val LANE_REFUSAL_LOG_CHARS = 160
 
         private const val BYTE_MASK = 0xFF
 
-        /** The other daemons' logs Save Logs also pulls (ocbmd's LOG_SRC table), with the file label each gets. */
-        private val BOX_DAEMON_LOGS = listOf("/tmp/iap2d.log" to "iap2d", "/tmp/carplayd.log" to "carplayd", "/tmp/supervisor.log" to "supervisor")
+        /**
+         * The other daemons' logs Save Logs also pulls (ocbmd's LOG_SRC table), with the file label each gets. A wired
+         * session writes the first three; a wireless one writes carplayd_wl.log (its carplayd, the mic uplink with it)
+         * and wl.log (the Bluetooth side). The other kind's are absent and fail at once, as on a user's 2.23 trail
+         * (10 Nov), where all three wired names failed on a wireless session and the uplink lines were missing.
+         */
+        private val BOX_DAEMON_LOGS =
+            listOf(
+                "/tmp/iap2d.log" to "iap2d",
+                "/tmp/carplayd.log" to "carplayd",
+                "/tmp/supervisor.log" to "supervisor",
+                "/tmp/carplayd_wl.log" to "carplayd_wl",
+                "/tmp/wl.log" to "wl",
+            )
 
         // Wake lock: safety timeout per acquire, and how often the refresh job renews it.
         // Refresh at half the timeout so a missed tick still leaves a full margin.
@@ -576,6 +596,9 @@ class CarlinkManager(
     private val currentState = AtomicReference(State.DISCONNECTED)
     val state: State get() = currentState.get()
 
+    /** The status line last shown ([setStatusText]), for a screen that attaches to a live session (MainScreen seeds from it). */
+    val statusText: String get() = lastStatusText
+
     private var callback: Callback? = null
 
     // ---- OCBM session -----------------------------------------------------------------------
@@ -791,6 +814,13 @@ class CarlinkManager(
 
     /** The truck is being driven, as AAOS says (UX restrictions). False off automotive. */
     val isDriving: Boolean get() = driveMonitor?.driving == true
+
+    /**
+     * The truck is known to be parked: AAOS's car service is connected and its last reading needs no distraction
+     * optimization. False off automotive, before the car service answers, and once it's lost. Route A's video plays
+     * only while this is true, so not knowing counts as moving ([DriveStateMonitor.parked]).
+     */
+    val isParked: Boolean get() = driveMonitor?.parked == true
 
     /** NAVIGATION app-focus claim, edge-driven from route guidance. Null off automotive. */
     private var appFocusClaimer: AppFocusClaimer? = null
@@ -1143,6 +1173,9 @@ class CarlinkManager(
                     }
 
                     this@CarlinkManager.callback = finalCallback
+                    // A new screen over a live session (a rebuilt activity adopted this manager) heard nothing
+                    // since it was seeded; bring it up to date rather than wait for the next change.
+                    replayTo(finalCallback)
                     this@CarlinkManager.videoSurface = finalSurface
 
                     // A new Surface is a new epoch: retire the old one first so its codec is
@@ -1190,9 +1223,11 @@ class CarlinkManager(
                     DrivingState.set(driving)
                     setLimitedUI(driving)
                 }
+                m.onParkedChanged = { parked -> videoPlayback.onParked(parked) }
                 m.start()
             }
         watchCarPlayLimit()
+        borrowScreenForVideo()
         appFocusClaimer = AppFocusClaimer(context).also { it.start() }
         callNotificationHost = CallNotificationHost(context) { idx -> sendTelephony(idx) }
         callNotificationHost?.setAppVisible(appVisible)
@@ -1951,6 +1986,20 @@ class CarlinkManager(
     }
 
     /**
+     * Route A: while Carlink's video screen is up the box borrows the car's main screen for it, and gives it back when
+     * the screen closes (`changeModes`, borrowID `VideoPlayback`, as LIVI does at play start and gives back at stop or
+     * close). A box without route A drops the command.
+     */
+    private fun borrowScreenForVideo() {
+        scope.launch {
+            videoPlayback.showing.drop(1).collect { up ->
+                val sent = client?.sendCommand(Ocbm.CMD_VIDEO_SCREEN, (if (up) 1 else 0).toByte()) ?: false
+                logInfo("[VIDEO] ${if (up) "borrowing" else "giving back"} the car's screen: sent=$sent", tag = Logger.Tags.ADAPTR)
+            }
+        }
+    }
+
+    /**
      * Restrict the CarPlay UI as if the vehicle were in Drive, or release it.
      *
      * The box turns this into `/command setLimitedUI {limitedUI: <bool>}`
@@ -1970,6 +2019,21 @@ class CarlinkManager(
         val c = client ?: return
         scope.launch(Dispatchers.IO) {
             c.sendCommand(if (limited) Ocbm.CMD_LIMITED_UI_ON else Ocbm.CMD_LIMITED_UI_OFF)
+        }
+    }
+
+    /**
+     * Route A: tell the phone, through the box, whether its video may play now and the play queue's [status]
+     * (`setVideoPlaybackAllowed`, as LIVI sends it). [VideoPlayback] decides when. A box without route A drops it.
+     */
+    private fun sendVideoAllowed(
+        allowed: Boolean,
+        status: VideoPlayback.Status,
+    ) {
+        val c = client ?: return
+        scope.launch(Dispatchers.IO) {
+            val sent = c.sendCommand(Ocbm.CMD_VIDEO_ALLOWED, (if (allowed) 1 else 0).toByte(), status.wire)
+            logInfo("[VIDEO] the phone is told video ${if (allowed) "may play" else "may not play"} ($status): sent=$sent", tag = Logger.Tags.ADAPTR)
         }
     }
 
@@ -2197,6 +2261,47 @@ class CarlinkManager(
 
     /** The one Play pressed for the phone at connect: the car's deferred `play()`, or the resume setting. */
     private val connectPlay = ConnectPlay(resumeOnConnect = { MusicStore.get(context).resumeOnConnect })
+
+    /**
+     * The phone's offer to carry route A's video over its own network (`setProxyParameters`), for this session;
+     * its key and authorization are never logged.
+     */
+    @Volatile private var phoneProxy: PhoneProxy? = null
+
+    /** Route A's tunnels to the phone's proxy, through the box ([Tunnels]). */
+    private val tunnels = Tunnels(send = { op, id, data -> client?.sendTunnel(op, id, data) ?: false })
+
+    /** Route A's player ([ExoVideoEngine]): built only when the phone queues a video, freed when it stops. */
+    val videoEngine =
+        ExoVideoEngine(
+            context,
+            mayPlay = { isParked },
+            network = { phoneProxy?.let { TunnelDataSource.Factory(tunnels, it) } },
+        )
+
+    /** The phone offered (or withdrew) its network for route A's video. */
+    private fun onPhoneProxy(params: Map<*, *>?) {
+        val offer = PhoneProxy.from(params)
+        phoneProxy = offer
+        val what = if (offer != null) "its proxy on port ${offer.port}, so video comes over the phone's network" else "an offer that isn't usable"
+        logInfo("[VIDEO] the phone offers $what", tag = Logger.Tags.ADAPTR)
+    }
+
+    /** The session ended: its proxy offer and every tunnel with it. */
+    private fun forgetPhoneProxy(why: String) {
+        phoneProxy = null
+        tunnels.closeAll(why)
+    }
+
+    /** Route A: the phone's video Playback channel, relayed by the box ([VideoPlayback]). Inert unless the box offers video. */
+    val videoPlayback =
+        VideoPlayback(
+            send = { stream, json -> client?.sendDataStream(stream, json) ?: false },
+            engine = videoEngine,
+            parked = { isParked },
+            announce = { allowed, status -> sendVideoAllowed(allowed, status) },
+            pausePhone = { sendMediaButton(Ocbm.MEDIA_BTN_PAUSE) },
+        )
     private var connectPlayJob: Job? = null
 
     /**
@@ -2597,6 +2702,8 @@ class CarlinkManager(
         appFocusClaimer = null
         callNotificationHost?.release()
         callNotificationHost = null
+        videoPlayback.reset() // frees route A's player, if one was built
+        forgetPhoneProxy("Carlink is closing")
         if (live === this) live = null
 
         // Every mutation is written through, so this only drains a queued last delta — the history
@@ -2950,6 +3057,7 @@ class CarlinkManager(
     private fun wireClientCallbacks(c: OcbmClient) {
         c.onLanesArmed = { lanes -> onLanesArmed(lanes) }
         c.onLanesRetired = { onLanesRetired() }
+        c.onTunnel = { op, payload -> tunnels.onMessage(op, payload) }
 
         // The first per-stream key is the earliest truthful "a paired, keyed session exists"
         // signal — earlier than the first decoded frame, and unlike phone presence it proves the
@@ -2987,6 +3095,8 @@ class CarlinkManager(
                 // above changes nothing and the screen kept the last frame over this text (bench
                 // 2026-11-02, 11:17). Tell the screen outright.
                 callback?.onPhoneLeft()
+                videoPlayback.reset()
+                forgetPhoneProxy("the phone left")
                 setStatusText("Waiting for phone...")
             }
         }
@@ -3053,6 +3163,8 @@ class CarlinkManager(
         // Initial sync. A session that comes up while already in Drive gets no edge from
         // the monitor, so push the current value once the box can actually receive it.
         driveMonitor?.let { if (it.connected) setLimitedUI(it.driving) }
+        // Route A's video: the phone hears whether it may play from the session's start, not knowing being no.
+        videoPlayback.onParked(isParked)
     }
 
     private fun onLanesArmed(lanes: OcbmAvLanes) {
@@ -3912,6 +4024,8 @@ class CarlinkManager(
                     // phone is now the navigator; a native maps app mid-route is told it lost it.
                     // Carlink: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
                     "routeGuidance", "maneuver", "laneGuidance" -> onNavigationJson(obj)
+                    // Route A: a message on one of the phone's shared DataStreams (OCBM receiver::playback).
+                    "dataStream" -> videoPlayback.onRecord(obj)
                     else -> Unit
                 }
             }
@@ -3951,10 +4065,18 @@ class CarlinkManager(
         when (val type = d["type"] as? String) {
             "requestUI" -> {
                 val url = (d["params"] as? Map<*, *>)?.get("url") as? String
+                // Route A: iOS asks for the car's video screen, not the app's own UI.
+                if (url == VIDEO_PLAYBACK_URL) {
+                    videoPlayback.showRequested()
+                    return
+                }
                 logInfo("[META] requestUI${url?.let { " ($it)" } ?: ""} — bringing the app forward", tag = Logger.Tags.ADAPTR)
                 scope.launch { callback?.onHostUIPressed() }
             }
-            null -> logWarn("[META] META_CMD has no string 'type'", tag = Logger.Tags.ADAPTR)
+            "setProxyParameters" -> onPhoneProxy(d["params"] as? Map<*, *>)
+            // The phone's video DataStream rides POST /command as {params: {data}} with no type, about once a second
+            // while a video is pending (the Mac, 10 Nov), so this is logged once, like an unhandled verb.
+            null -> if (unhandledCommands.add("")) logInfo("[META] a command with no 'type' (not handled)", tag = Logger.Tags.ADAPTR)
             else -> if (unhandledCommands.add(type)) logInfo("[META] command '$type' (not handled)", tag = Logger.Tags.ADAPTR)
         }
     }
@@ -4242,6 +4364,13 @@ class CarlinkManager(
     }
 
     @Volatile private var lastStatusText = ""
+
+    /** Bring a newly attached [Callback] up to date: the state, the status line, a pairing code awaiting an answer. */
+    private fun replayTo(cb: Callback) {
+        cb.onStateChanged(state)
+        lastStatusText.takeIf { it.isNotEmpty() }?.let(cb::onStatusTextChanged)
+        pairingCode?.let(cb::onPairingCodeChanged)
+    }
 
     private fun setStatusText(text: String) {
         // Timestamped in the trail so a drive log shows how long each connecting step really lasts.

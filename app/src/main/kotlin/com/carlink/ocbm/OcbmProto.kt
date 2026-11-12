@@ -39,6 +39,14 @@ object Ocbm {
     const val CH_ALT_AUDIO: Int = 0x0022
     const val CH_METADATA: Int = 0x0023
     const val CH_ALT_VIDEO: Int = 0x0024
+
+    /**
+     * Box→host: route A's tunnel to the phone's proxy (`setProxyParameters`), framed
+     * `[u32 BE "TUNL"][u32 BE len][op][id][data]` like the metadata seam; the TUNNEL_* ops below. Host→box rides
+     * CH_INPUT as [INPUT_TUNNEL]. The box connects a tunnel only to the phone. lib.rs:38
+     */
+    const val CH_TUNNEL: Int = 0x0025
+    val TUNNEL_SEAM_MAGIC: ByteArray = byteArrayOf(0x54, 0x55, 0x4E, 0x4C) // "TUNL"
     const val CH_INPUT: Int = 0x0030
     const val CH_MIC: Int = 0x0031
     const val CH_MGMT: Int = 0x0040
@@ -56,6 +64,7 @@ object Ocbm {
             CH_ALT_AUDIO -> "ALT_AUDIO"
             CH_METADATA -> "METADATA"
             CH_ALT_VIDEO -> "ALT_VIDEO"
+            CH_TUNNEL -> "TUNNEL"
             CH_INPUT -> "INPUT"
             CH_MIC -> "MIC"
             CH_MGMT -> "MGMT"
@@ -362,6 +371,27 @@ object Ocbm {
     /** `[INPUT_TELEPHONY][buttonIndex u8]` -> uid-5 telephony HID (report then release). lib.rs:200 */
     const val INPUT_TELEPHONY: Byte = 0x08
 
+    /**
+     * `[INPUT_DATASTREAM][stream u32 LE][JSON message]` -> the box sends the message on that shared DataStream
+     * (route A: the phone's video Playback channel; receiver::playback). lib.rs:420
+     */
+    const val INPUT_DATASTREAM: Byte = 0x0A
+
+    /** The JSON message's cap in an INPUT_DATASTREAM sub-frame. lib.rs:424 */
+    const val MAX_INPUT_DATASTREAM: Int = 16_384
+
+    /** `[INPUT_TUNNEL][op][id u8][data]` -> the box opens, writes to or closes route A's tunnel `id`. lib.rs:433 */
+    const val INPUT_TUNNEL: Byte = 0x0B
+
+    /** The data cap in one TUNNEL_DATA sub-frame. lib.rs:436 */
+    const val MAX_INPUT_TUNNEL: Int = 16_384
+
+    // CH_TUNNEL / INPUT_TUNNEL ops. lib.rs:438
+    const val TUNNEL_OPEN: Byte = 0x01 // host->box: [port u16 BE][the proxyUrl's host, UTF-8]
+    const val TUNNEL_DATA: Byte = 0x02 // both ways: the stream's bytes
+    const val TUNNEL_CLOSE: Byte = 0x03 // host->box: close it; box->host: it closed, data = the reason
+    const val TUNNEL_OPENED: Byte = 0x04 // box->host: connected to the phone's proxy
+
     // Touch phases — lib.rs:295-297. NOTE these differ from the legacy riddleBox MultiTouchAction
     // values (UP=0/DOWN=1/MOVE=2); the two enumerations collide numerically but mean different things.
     const val TOUCH_DOWN: Byte = 0x00
@@ -459,6 +489,26 @@ object Ocbm {
      */
     const val CMD_REQUEST_UI_URL: Byte = 0x12
     const val REQUEST_UI_URL_MAX: Int = 255
+
+    /**
+     * `[INPUT_COMMAND][CMD_VIDEO_ALLOWED][allowed 0|1][VIDEO_STATUS_*]` -> `setVideoPlaybackAllowed{
+     * videoPlaybackAllowed, playbackStatus}` to the phone: route A's video may play only while the car is known
+     * to be parked, and the phone hears it at the session's start, at play start and at each change, as LIVI
+     * sends it. Kept for RECORD when it comes early; a box without route A drops it. Box commit on airplay-video
+     * (2026-11-11). lib.rs:524
+     */
+    const val CMD_VIDEO_ALLOWED: Byte = 0x13
+
+    /**
+     * `[INPUT_COMMAND][CMD_VIDEO_SCREEN][borrow 0|1]` -> the box borrows the main screen for the phone's video, or gives
+     * it back (`changeModes`, borrowID `VideoPlayback`, as LIVI does), while Carlink's video screen is up. lib.rs:545
+     */
+    const val CMD_VIDEO_SCREEN: Byte = 0x14
+
+    /** playbackStatus, LIVI's words: nothing queued (`idle`), a queued video allowed to show (`video`), one that may not (`audioOnly`). lib.rs:526 */
+    const val VIDEO_STATUS_IDLE: Byte = 0
+    const val VIDEO_STATUS_VIDEO: Byte = 1
+    const val VIDEO_STATUS_AUDIO_ONLY: Byte = 2
 
     const val APPEARANCE_STREAM_MAIN: Byte = 0x00 // lib.rs:275
     const val APPEARANCE_STREAM_ALT: Byte = 0x01 // lib.rs:276

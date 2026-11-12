@@ -132,6 +132,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // Each Bouncy Castle jar carries the same OSGi manifest for Java 9+; Android uses none of them.
+            excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
     }
 
@@ -302,11 +304,22 @@ dependencies {
     // APIs which Media3 auto-registers under the hood for backwards compatibility, so the
     // GMCarMediaService → ClusterService → cluster pipeline keeps working.
     // media3-common provides Player / SimpleBasePlayer / MediaItem / MediaMetadata.
-    // media3-exoplayer is intentionally NOT included: this app does not decode/play audio
-    // locally — the connected phone plays over USB; we only mirror metadata + forward commands.
+    // The phone's CarPlay audio still plays through the adapter; ExoPlayer is only route A's player
+    // (com.carlink.video): AirPlay video the phone offers inside the CarPlay session, parked only,
+    // usually an HLS stream. Apache-2.0, the same Media3 release; added on Scott's OK, 11 Nov.
     val media3Version = "1.10.1"
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
+
+    // Route A's video over the phone's network: the phone's proxy (setProxyParameters) speaks TLS 1.3 with a
+    // pre-shared key, which Android's own TLS lacks (com.carlink.video.proxy). Bouncy Castle's TLS, MIT-style
+    // licence; added on Scott's OK, 11 Nov.
+    val bouncyCastleVersion = "1.80"
+    implementation("org.bouncycastle:bcprov-jdk18on:$bouncyCastleVersion")
+    implementation("org.bouncycastle:bctls-jdk18on:$bouncyCastleVersion")
+    implementation("org.bouncycastle:bcutil-jdk18on:$bouncyCastleVersion")
 
     // FAT32 on the USB stick a stock adapter shares, for its conversion (Apache-2.0). Only the file
     // system is used: the stick is reached through the bridge (convert/BulkOnlyStorage), not libaums' own

@@ -29,6 +29,14 @@ pub const CH_MEDIA_AUDIO: u16 = 0x0021; // box->host A/V: media audio, same forw
 pub const CH_ALT_AUDIO: u16 = 0x0022; // box->host A/V: voice-sink streams (telephony/speechRecognition/alert/default), same seam framing as media
 pub const CH_METADATA: u16 = 0x0023; // box->host: session metadata (Metadata window). Seam :9004, framing [u32 BE "META"][u32 BE len][marker][payload] (v2, audit Fix #17); META_* markers below
 pub const CH_ALT_VIDEO: u16 = 0x0024; // box->host: the ALT / navigation (instrument-cluster) screen stream. Same seq+SEAM_MAGIC forward-encrypted framing as CH_VIDEO; the host decodes it on a DEDICATED decoder. Box seam :9005.
+// box->host: route A's tunnel to the phone's proxy (setProxyParameters), so the video the phone hands off is
+// fetched over the phone's own network. Box seam :9006, framing [u32 BE "TUNL"][u32 BE len][op][id][data],
+// len = 2 + data (the metadata seam's shape, op in the marker's place); TUNNEL_* ops below. The bytes are the
+// host's TLS stream to the phone: ocbmd read-gates the seam on its own queue and never drops a frame. Host->box
+// rides CH_INPUT as INPUT_TUNNEL. A tunnel reaches only the phone (receiver::tunnel), never the box's network:
+// the retired CH_IP below was a general relay; this is not.
+pub const CH_TUNNEL: u16 = 0x0025;
+pub const TUNNEL_SEAM_MAGIC: [u8; 4] = *b"TUNL";
 
 // CH_METADATA seam markers (wire values; producers declare their own local consts — iap2d does not
 // link this crate). Payloads are PLAINTEXT (the box decrypts the control connection; the host is
@@ -417,6 +425,20 @@ pub const INPUT_NAV: u8 = 0x05; // [INPUT_NAV][nav u8] -> box taps the D-Pad HID
 pub const INPUT_TELEPHONY: u8 = 0x08; // [INPUT_TELEPHONY][buttonIndex u8] -> box sends the 1-byte HID
                                       // Telephony report (index) then a release (0). 1=Answer(HookSwitch)
                                       // 2=Flash 3=End(Drop) 4=Mute 5..14=DTMF 0..9 15=* 16=# 17=Delete.
+pub const INPUT_DATASTREAM: u8 = 0x0A; // [INPUT_DATASTREAM][stream u32 LE][JSON message] -> box sends the
+                                       // message on that shared DataStream (route A: the phone's video Playback
+                                       // channel; receiver::playback). 0x09 is INPUT_LOCATION on livi-research.
+/// The JSON message's cap in an `INPUT_DATASTREAM` sub-frame. The other sub-frames stay at carplayd's 64 B.
+pub const MAX_INPUT_DATASTREAM: usize = 16_384; // 16 KiB
+pub const INPUT_TUNNEL: u8 = 0x0B; // [INPUT_TUNNEL][op][id u8][data] -> carplayd opens, writes to or closes route A's
+                                   // tunnel `id` to the phone's proxy (CH_TUNNEL). TUNNEL_DATA carries up to
+                                   // MAX_INPUT_TUNNEL bytes; like INPUT_DATASTREAM it is allowed past 64 B.
+pub const MAX_INPUT_TUNNEL: usize = 16_384; // 16 KiB of data per TUNNEL_DATA sub-frame
+// CH_TUNNEL / INPUT_TUNNEL ops.
+pub const TUNNEL_OPEN: u8 = 0x01; // host->box: data = [port u16 BE][the proxyUrl's host, UTF-8]; the box answers OPENED or CLOSE
+pub const TUNNEL_DATA: u8 = 0x02; // both ways: the stream's bytes
+pub const TUNNEL_CLOSE: u8 = 0x03; // host->box: close it; box->host: it closed, data = the reason (UTF-8, may be empty)
+pub const TUNNEL_OPENED: u8 = 0x04; // box->host: connected to the phone's proxy
 pub const INPUT_KNOB: u8 = 0x07; // [INPUT_KNOB][flags u8][nudge_x i8][nudge_y i8][rotation i8] -> box sends
                                  // one report on the Knob HID (uid 4): flags bit0 Select/bit1 Home/bit2 Back,
                                  // signed X/Y nudge (±127 = a 4-way arrow), signed relative rotation (±1/detent).
@@ -510,6 +532,21 @@ pub const CMD_VIEW_AREA: u8 = 0x11;
 // `showUI{uuid: DISPLAY_UUID, url}` — same command id, different body.
 pub const CMD_REQUEST_UI_URL: u8 = 0x12;
 pub const REQUEST_UI_URL_MAX: usize = 255;
+// Route A (2026-11-11; the phone's AirPlay video inside CarPlay, behind the AirPlay video probe's `video` switch):
+// whether video may play now, as the host decides it (the car known to be parked), and the play queue's status.
+// `[INPUT_COMMAND][CMD_VIDEO_ALLOWED][allowed 0|1][VIDEO_STATUS_*]` -> `setVideoPlaybackAllowed{videoPlaybackAllowed,
+// playbackStatus}` to the phone in a session that negotiated videoPlayback, as LIVI sends it: at RECORD (status
+// idle), at play start and as parking changes. Before RECORD the word is kept for RECORD's; until the host has said,
+// nothing goes out (receiver `playback::host_allows`). A missing status byte is idle.
+pub const CMD_VIDEO_ALLOWED: u8 = 0x13;
+// Route A: borrow the main screen for the phone's video while Carlink shows it, or give it back, as LIVI does
+// (borrowID "VideoPlayback"). `[INPUT_COMMAND][CMD_VIDEO_SCREEN][borrow 0|1]` -> a `changeModes` Borrow or Unborrow
+// of resourceID 1 (receiver `events::send_video_borrow`), with the probe's `video` switch on.
+pub const CMD_VIDEO_SCREEN: u8 = 0x14;
+// playbackStatus (LIVI's words): nothing queued, a queued video allowed to show, one queued that may not show.
+pub const VIDEO_STATUS_IDLE: u8 = 0; // "idle"
+pub const VIDEO_STATUS_VIDEO: u8 = 1; // "video"
+pub const VIDEO_STATUS_AUDIO_ONLY: u8 = 2; // "audioOnly"
 pub const APPEARANCE_STREAM_MAIN: u8 = 0x00;
 pub const APPEARANCE_STREAM_ALT: u8 = 0x01;
 pub const APPEARANCE_MODE_LIGHT: u8 = 0x00;
@@ -1044,6 +1081,30 @@ mod tests {
     }
 
     #[test]
+    fn route_as_tunnel_takes_fresh_numbers() {
+        // Never a retired number: CH_IP (0x0010) was a general relay, and an older client would read it so.
+        for retired in [0x0001u16, 0x0010, 0x0012, 0x00FF, 0x0FFF, 0x0041] {
+            assert_ne!(CH_TUNNEL, retired);
+        }
+        let channels = [
+            CH_CTRL, CH_CONSOLE, CH_FILE, CH_VIDEO, CH_MEDIA_AUDIO, CH_ALT_AUDIO, CH_METADATA, CH_ALT_VIDEO, CH_MGMT,
+            CH_INPUT, CH_MIC, CH_LOG,
+        ];
+        assert!(!channels.contains(&CH_TUNNEL));
+        // 0x09 is INPUT_LOCATION on livi-research.
+        let inputs = [
+            INPUT_TOUCH, INPUT_KEYFRAME, INPUT_MEDIA_BTN, INPUT_COMMAND, INPUT_NAV, INPUT_KEYFRAME_ALT, INPUT_KNOB,
+            INPUT_TELEPHONY, 0x09, INPUT_DATASTREAM,
+        ];
+        assert!(!inputs.contains(&INPUT_TUNNEL));
+        let ops = [TUNNEL_OPEN, TUNNEL_DATA, TUNNEL_CLOSE, TUNNEL_OPENED];
+        for (i, a) in ops.iter().enumerate() {
+            assert!(ops[i + 1..].iter().all(|b| b != a), "duplicate TUNNEL_* op {a:#04x}");
+        }
+        assert_eq!(&TUNNEL_SEAM_MAGIC, b"TUNL");
+    }
+
+    #[test]
     fn ch_log_and_ct_log_ctl_do_not_collide() {
         assert_eq!(CH_LOG, 0x0042);
         for ch in [CH_CTRL, CH_CONSOLE, CH_MGMT, CH_FILE] {
@@ -1064,7 +1125,7 @@ mod tests {
             CMD_REQUEST_UI, CMD_REQUEST_SIRI, CMD_SIRI_DOWN, CMD_SIRI_UP, CMD_NAV_START, CMD_NAV_STOP,
             CMD_NAV_CARD, CMD_LIMITED_UI_ON, CMD_LIMITED_UI_OFF, CMD_NAV_APP, CMD_NAV_APPEARANCE,
             CMD_NAV_ZOOM_IN, CMD_NAV_ZOOM_OUT, CMD_UI_APPEARANCE, CMD_MAP_APPEARANCE, CMD_NIGHT_MODE,
-            CMD_VIEW_AREA, CMD_REQUEST_UI_URL,
+            CMD_VIEW_AREA, CMD_REQUEST_UI_URL, CMD_VIDEO_ALLOWED, CMD_VIDEO_SCREEN,
         ];
         let mut sorted = ids.to_vec();
         sorted.sort_unstable();
@@ -1072,6 +1133,8 @@ mod tests {
         assert_eq!(sorted.len(), ids.len(), "duplicate CMD_* id");
         assert_eq!(CMD_VIEW_AREA, 0x11);
         assert_eq!(CMD_REQUEST_UI_URL, 0x12);
+        assert_eq!(CMD_VIDEO_ALLOWED, 0x13);
+        assert_eq!(CMD_VIDEO_SCREEN, 0x14);
     }
 
     #[test]

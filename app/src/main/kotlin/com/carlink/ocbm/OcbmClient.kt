@@ -1,5 +1,6 @@
 package com.carlink.ocbm
 
+import com.carlink.ocbm.seam.MetadataSeam
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -264,6 +265,12 @@ class OcbmClient(
     /** CH_METADATA messages: `(marker, payload)`. Fires on the read thread — hand off, do not block. */
     var onMetadata: ((marker: Int, payload: ByteArray) -> Unit)? = null
 
+    /** CH_TUNNEL messages: `(op, [id][data])`, route A's tunnels to the phone's proxy. Read thread — hand off only. */
+    @Volatile var onTunnel: ((op: Int, payload: ByteArray) -> Unit)? = null
+
+    /** CH_TUNNEL's framing, the metadata seam's shape with its own magic; lives as long as this client. */
+    private val tunnelSeam = MetadataSeam(log, { op, payload -> onTunnel?.invoke(op, payload) }, Ocbm.TUNNEL_SEAM_MAGIC)
+
     /**
      * The first video key of a generation arrived: a paired, keyed session now exists.
      *
@@ -412,7 +419,7 @@ class OcbmClient(
             Ocbm.CH_VIDEO -> lanes?.feedVideo(f.payload) ?: dropAv(f)
             Ocbm.CH_MEDIA_AUDIO -> lanes?.feedMedia(f.payload) ?: dropAv(f)
             Ocbm.CH_ALT_AUDIO -> lanes?.feedVoice(f.payload) ?: dropAv(f)
-            Ocbm.CH_METADATA -> lanes?.feedMetadata(f.payload) ?: dropAv(f)
+            Ocbm.CH_METADATA, Ocbm.CH_TUNNEL -> feedSeam(f)
             // No cluster display is advertised (altVideoStreams: []), so the box never encodes this.
             // Counted rather than decoded, so a surprise stream is visible instead of a log flood.
             Ocbm.CH_ALT_VIDEO -> altVideoFrames++
@@ -420,6 +427,11 @@ class OcbmClient(
             Ocbm.CH_LOG -> onBoxLog?.invoke(BoxLogEntries.parse(f.payload))
             else -> dropAv(f)
         }
+    }
+
+    /** The two plaintext seams: the metadata one (per A/V generation) and route A's tunnel (as long as this client). */
+    private fun feedSeam(f: OcbmFrame) {
+        if (f.channel == Ocbm.CH_TUNNEL) tunnelSeam.feed(f.payload) else lanes?.feedMetadata(f.payload) ?: dropAv(f)
     }
 
     // ---- stall diagnosis ------------------------------------------------------------------------
@@ -762,6 +774,53 @@ class OcbmClient(
      * false = dropped (not subscribed or queue full).
      */
     fun sendTelephony(index: Byte): Boolean = enqueue(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_TELEPHONY, index), "telephony $index")
+
+    /**
+     * `[INPUT_DATASTREAM][stream u32 LE][JSON]` on CH_INPUT -> the box sends the message to the phone on that shared
+     * DataStream (route A's answers, [com.carlink.video.VideoPlayback]). False = dropped: not subscribed, the queue
+     * full, or the JSON over [Ocbm.MAX_INPUT_DATASTREAM].
+     */
+    fun sendDataStream(
+        stream: Int,
+        json: String,
+    ): Boolean {
+        val body = json.toByteArray(Charsets.UTF_8)
+        if (body.size > Ocbm.MAX_INPUT_DATASTREAM) {
+            noteInputDrop("data stream $stream (${body.size} B, over ${Ocbm.MAX_INPUT_DATASTREAM})")
+            return false
+        }
+        val p =
+            ByteBuffer
+                .allocate(1 + 4 + body.size)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .put(Ocbm.INPUT_DATASTREAM)
+                .putInt(stream)
+                .put(body)
+                .array()
+        return enqueue(Ocbm.CH_INPUT, p, "data stream $stream")
+    }
+
+    /**
+     * `[INPUT_TUNNEL][op][id][data]` on CH_INPUT: open, write to or close route A's tunnel [id] to the phone's proxy
+     * ([com.carlink.video.proxy.Tunnels]). False = dropped: not subscribed, the queue full, or the data over
+     * [Ocbm.MAX_INPUT_TUNNEL].
+     */
+    fun sendTunnel(
+        op: Byte,
+        id: Int,
+        data: ByteArray,
+    ): Boolean {
+        if (data.size > Ocbm.MAX_INPUT_TUNNEL) {
+            noteInputDrop("tunnel $id (${data.size} B, over ${Ocbm.MAX_INPUT_TUNNEL})")
+            return false
+        }
+        val p = ByteArray(3 + data.size)
+        p[0] = Ocbm.INPUT_TUNNEL
+        p[1] = op
+        p[2] = id.toByte()
+        data.copyInto(p, 3)
+        return enqueue(Ocbm.CH_INPUT, p, "tunnel $id")
+    }
 
     private val lastKeyframeReqNs =
         java.util.concurrent.atomic

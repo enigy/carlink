@@ -125,6 +125,14 @@ private class SessionUiState {
     /** The wireless pairing code awaiting Pair / Cancel (CT_PAIRING_CODE), or null. */
     var pairingCode by mutableStateOf<String?>(null)
 
+    /** Start from where [manager] stands: its state, status line and any pairing code awaiting an answer. */
+    fun seededFrom(manager: CarlinkManager): SessionUiState =
+        apply {
+            connectionState = manager.state
+            manager.statusText.takeIf { it.isNotEmpty() }?.let { statusText = it }
+            pairingCode = manager.pairingCode
+        }
+
     /**
      * carlink_native hid its loading overlay (and forwarded touch) from the FIRST VIDEO FRAME, which
      * was its STREAMING edge. OCBM stamps STREAMING on the first media metadata instead, so the same
@@ -157,7 +165,9 @@ fun MainScreen(
     onStateChanged: (CarlinkManager.State) -> Unit = {},
     bridge: BridgeSetup = BridgeSetup(),
 ) {
-    val ui = remember(carlinkManager) { SessionUiState() }
+    // Seeded from the manager: after a rebuild the activity adopts a live session (com.carlink.SessionKeeper), and its
+    // new screen must not show it as disconnected until the manager's next change.
+    val ui = remember(carlinkManager) { SessionUiState().seededFrom(carlinkManager) }
     val surfaceState = rememberVideoSurfaceState()
     val scope = rememberCoroutineScope()
     var showResetConfirm by remember(carlinkManager) { mutableStateOf(false) }
@@ -352,10 +362,12 @@ private fun SessionEffects(
 
     // One-shot start per manager, DECOUPLED from the surface/size effect above: a surface swap or
     // late layout pass mid-connect must not cancel start(), and surface/size churn can't cancel
-    // this effect because it is keyed only on the manager.
+    // this effect because it is keyed only on the manager. Only from DISCONNECTED: a manager the
+    // activity adopted after a rebuild is already live, and start() restarts a live client, which
+    // ended the very session the rebuild kept (the Mac's 10 Nov bench, 2/2).
     LaunchedEffect(carlinkManager) {
         snapshotFlow { ui.initializedForStart }.first { it }
-        carlinkManager.start()
+        carlinkManager.startIfDisconnected("the screen is up")
     }
 }
 
