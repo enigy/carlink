@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -31,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carlink.car.VehicleReadings
+import com.carlink.ui.settings.VehicleText
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -40,7 +42,9 @@ import java.util.Locale
  * The idle card: the time, in the head unit's 12- or 24-hour style, and the date, ticking on the
  * second; and along the bottom, once the truck reports them ([VehicleReadings]), its speed and the
  * outside temperature side by side (owner, 10-27: prototype B, "Dashboard strip", in place of a
- * separate Vehicle card). A reading the car does not give is left out, and the strip with both.
+ * separate Vehicle card). A reading the car does not give is left out, and the strip with both. Under the
+ * date, the distance to empty once the car gives its range, in its own distance unit like the Fuel card's
+ * ([ToEmpty], owner, 12 Nov: the backgrounds canvas's F2).
  */
 @Composable
 internal fun ClockCard(modifier: Modifier = Modifier) {
@@ -64,8 +68,23 @@ internal fun ClockCard(modifier: Modifier = Modifier) {
         ) {
             Text(now.format(timeFormat), style = MaterialTheme.typography.displayLarge.copy(fontSize = 112.sp, lineHeight = 120.sp))
             Text(now.format(DATE_FORMAT), style = MaterialTheme.typography.titleLarge, color = secondary)
+            VehicleText.rangeFigure(vehicle, vehicle.distanceImperial(Locale.getDefault()))?.let { (range, unit) -> ToEmpty(range, unit) }
         }
         VehicleStrip(speed = vehicle.speed(imperial), speedUnit = if (imperial) "mph" else "km/h", outside = vehicle.outside(imperial))
+    }
+}
+
+/** "238 mi to empty" under the date, a pump beside it. */
+@Composable
+private fun ToEmpty(
+    range: Int,
+    unit: String,
+) {
+    val words = MaterialTheme.typography.headlineMedium.copy(fontSize = 30.sp, lineHeight = 36.sp)
+    Row(modifier = Modifier.padding(top = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(Icons.Default.LocalGasStation, contentDescription = null, modifier = Modifier.size(30.dp))
+        Text("$range $unit", style = words.copy(fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum"))
+        Text("to empty", style = words, color = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA))
     }
 }
 
