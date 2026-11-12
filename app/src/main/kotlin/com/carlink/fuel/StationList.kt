@@ -57,11 +57,11 @@ object StationList {
 
 /** The words in a station row: its name, distance, price and its age. */
 object StationText {
-    /** "Shell on Hwy 123": the name, then its street when the source has one and the name doesn't already say it. */
-    fun title(station: Station): String {
-        val street = station.street?.takeUnless { station.name.contains(it, ignoreCase = true) }
-        return if (street != null) "${station.name} on $street" else station.name
-    }
+    /** The station's street, when the source has one and the name doesn't already say it. */
+    fun street(station: Station): String? = station.street?.takeUnless { station.name.contains(it, ignoreCase = true) }
+
+    /** "Shell on Hwy 123": the name, then its [street]. */
+    fun title(station: Station): String = street(station)?.let { "${station.name} on $it" } ?: station.name
 
     private const val METRES_PER_MILE = 1609.344
     private const val METRES_PER_KM = 1000.0

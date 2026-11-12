@@ -3,6 +3,7 @@ package com.carlink.fuel
 import com.carlink.ui.settings.FuelGrade
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Locale
@@ -66,6 +67,8 @@ class StationListTest {
         assertEquals("Shell on Hwy 123", StationText.title(shell))
         assertEquals("no street, the name alone", "Shell", StationText.title(shell.copy(street = null)))
         assertEquals("the name says it already", "Main St Gas", StationText.title(Station("y", "Main St Gas", null, here, street = "main st")))
+        assertEquals("moving, the street beside the distance", "Hwy 123", StationText.street(shell))
+        assertNull(StationText.street(Station("y", "Main St Gas", null, here, street = "main st")))
         assertEquals("0.6 mi", StationText.distance(1_000.0, imperial = true).replace(',', '.'))
         assertEquals("12 mi", StationText.distance(19_312.0, imperial = true))
         assertEquals("19 km", StationText.distance(19_312.0, imperial = false))

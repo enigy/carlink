@@ -20,9 +20,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -68,18 +69,29 @@ internal fun StationsSection(
     }
 }
 
-/** All or Starred ([StationStars.Tab]), under the tank's gauge (asked 12 Nov), tall enough to tap at a glance. */
+/**
+ * All or Starred ([StationStars.Tab]), under the tank's gauge (asked 12 Nov), tall enough to tap at a glance. The bar under
+ * the selected tab spans the whole tab, not just its word, and the other tab's word is dimmed (owner, 12 Nov).
+ */
 @Composable
 internal fun FuelTabs(
     tab: StationStars.Tab,
     big: Boolean,
     onTab: (StationStars.Tab) -> Unit,
 ) {
-    PrimaryTabRow(selectedTabIndex = tab.ordinal, containerColor = Color.Transparent) {
+    val ink = LocalContentColor.current
+    SecondaryTabRow(
+        selectedTabIndex = tab.ordinal,
+        containerColor = Color.Transparent,
+        contentColor = ink,
+        indicator = { TabRowDefaults.SecondaryIndicator(Modifier.tabIndicatorOffset(tab.ordinal, matchContentSize = false), height = 4.dp, color = ink) },
+    ) {
         StationStars.Tab.entries.forEach { t ->
             Tab(
                 selected = t == tab,
                 onClick = { onTab(t) },
+                selectedContentColor = ink,
+                unselectedContentColor = ink.copy(alpha = SECONDARY_ALPHA),
                 modifier = Modifier.heightIn(min = if (big) 72.dp else 64.dp),
                 text = { Text(t.label, style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge) },
             )
@@ -151,9 +163,14 @@ private fun StationRowView(
         Column(modifier = Modifier.weight(1f)) {
             // Moving: both lines large, no small print (the Mac's 11 Nov bench).
             val type = MaterialTheme.typography
-            Text(StationText.title(row.station), style = if (big) type.headlineMedium else type.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val words = listOfNotNull(row.distanceM?.let { StationText.distance(it, imperial) }, tags(row), "out of reach".takeIf { row.outOfReach })
-            if (words.isNotEmpty()) Text(words.joinToString(" · "), style = if (big) type.titleLarge else type.titleMedium, color = secondary)
+            // Moving, the name alone and its street beside the distance, so a long one isn't cut (the Mac's 12 Nov bench).
+            val name = if (big) row.station.name else StationText.title(row.station)
+            Text(name, style = if (big) type.headlineMedium else type.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val street = StationText.street(row.station).takeIf { big }
+            val words = listOfNotNull(row.distanceM?.let { StationText.distance(it, imperial) }, street, tags(row), "out of reach".takeIf { row.outOfReach })
+            if (words.isNotEmpty()) {
+                Text(words.joinToString(" · "), style = if (big) type.titleLarge else type.titleMedium, color = secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         row.price?.let { price ->
             Column(horizontalAlignment = Alignment.End) {
@@ -186,11 +203,11 @@ private fun Star(
     val tint = if (row.starred) MaterialTheme.colorScheme.tertiary else LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
     val icon = if (row.starred) Icons.Filled.Star else Icons.Outlined.StarBorder
     if (onStar != null) {
-        IconButton(onClick = { onStar(row) }, modifier = Modifier.size(64.dp)) {
-            Icon(icon, contentDescription = if (row.starred) "Unstar ${row.station.name}" else "Star ${row.station.name}", tint = tint, modifier = Modifier.size(36.dp))
+        IconButton(onClick = { onStar(row) }, modifier = Modifier.size(80.dp)) {
+            Icon(icon, contentDescription = if (row.starred) "Unstar ${row.station.name}" else "Star ${row.station.name}", tint = tint, modifier = Modifier.size(45.dp))
         }
     } else if (row.starred) {
-        Icon(icon, contentDescription = "Starred", tint = tint, modifier = Modifier.padding(end = 12.dp).size(40.dp))
+        Icon(icon, contentDescription = "Starred", tint = tint, modifier = Modifier.padding(end = 12.dp).size(50.dp))
     }
 }
 

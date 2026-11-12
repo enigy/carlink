@@ -171,10 +171,11 @@ private fun Stations(
     val tab by stars.tab.collectAsState()
     val view by FuelStations.view.collectAsState()
     val here by FuelStations.here.collectAsState()
-    val shown = if (tab == StationStars.Tab.STARRED) view.stations.filter { it.id in starred } else view.stations
     val rows =
         StationList
-            .rows(shown, fuel, here, vehicle.rangeM, cheapestFirst = look.parked && !look.low)
+            .rows(view.stations, fuel, here, vehicle.rangeM, cheapestFirst = look.parked && !look.low)
+            // Starred: the starred ones among all, so CHEAPEST and NEAREST still mean of every station (the Mac's 12 Nov bench).
+            .filter { tab != StationStars.Tab.STARRED || it.station.id in starred }
             .take(if (look.parked) PARKED_ROWS else MOVING_ROWS)
             .map { it.copy(starred = it.station.id in starred) }
     if (view.status != FuelStations.Status.OFF && view.status != FuelStations.Status.NEEDS_LOCATION) {
