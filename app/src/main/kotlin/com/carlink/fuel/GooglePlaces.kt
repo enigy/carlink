@@ -8,21 +8,21 @@ import java.time.Instant
 /**
  * Google Places API (New) Nearby Search for the Fuel card (the brief of 11 Nov, stage C), with the driver's own key:
  * `POST https://places.googleapis.com/v1/places:searchNearby`, gas stations within the radius ranked by distance, and
- * for each the field mask's id, name, address, location and `fuelOptions` (the last known price per fuel type, with
- * its `updateTime`). Asking for `fuelOptions` bills the call at the Nearby Search Enterprise + Atmosphere rate, so the
- * card counts every lookup ([MonthlyBudget]). Nothing Google sends is kept past the session; the card shows "Google
+ * for each the field mask's id, name, address and its parts (the street, for "Shell on Hwy 123"), location and
+ * `fuelOptions` (the last known price per fuel type, with its `updateTime`). Asking for `fuelOptions` bills the call at
+ * the Nearby Search Enterprise + Atmosphere rate, so the card counts every lookup ([MonthlyBudget]). Nothing Google sends is kept past the session; the card shows "Google
  * Maps" with it. Plain Kotlin: the request and the answer are tested without a network.
  */
 object GooglePlaces {
     const val ENDPOINT = "https://places.googleapis.com/v1/places:searchNearby"
-    const val FIELD_MASK = "places.id,places.displayName,places.formattedAddress,places.location,places.fuelOptions"
-    private const val MAX_RESULTS = 10
+    const val FIELD_MASK = "places.id,places.displayName,places.formattedAddress,places.addressComponents,places.location,places.fuelOptions"
+    private const val MAX_RESULTS = 20
     private const val NANOS = 1e9
 
     /** Google's own cap for the circle's radius. */
     const val MAX_RADIUS_M = 50_000.0
 
-    /** The request body: gas stations within [radiusM] of [here], nearest first, at most ten. */
+    /** The request body: gas stations within [radiusM] of [here], nearest first, at most twenty (Google's most; a lookup costs the same either way). */
     fun body(
         here: GeoPoint,
         radiusM: Double,
@@ -54,8 +54,18 @@ object GooglePlaces {
             address = p.optString("formattedAddress").ifBlank { null },
             at = GeoPoint(loc.getDouble("latitude"), loc.getDouble("longitude")),
             prices = (0 until (prices?.length() ?: 0)).mapNotNull { i -> prices?.optJSONObject(i)?.let { priceOf(it) } }.toMap(),
+            street = streetOf(p),
         )
     }
+
+    /** The street, from `addressComponents`: the "route" part's short text ("Hwy 123"), else its long text, else null. */
+    private fun streetOf(p: JSONObject): String? {
+        val parts = p.optJSONArray("addressComponents") ?: return null
+        val route = (0 until parts.length()).mapNotNull { parts.optJSONObject(it) }.firstOrNull { it.optJSONArray("types").holds("route") }
+        return route?.let { it.optString("shortText").ifBlank { null } ?: it.optString("longText").ifBlank { null } }
+    }
+
+    private fun JSONArray?.holds(value: String): Boolean = this != null && (0 until length()).any { optString(it) == value }
 
     /** One `fuelOptions.fuelPrices` entry: its type, and the amount (units plus nanos), currency and when it was updated. */
     private fun priceOf(entry: JSONObject): Pair<String, FuelPrice>? {

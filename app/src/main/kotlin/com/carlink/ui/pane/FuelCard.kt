@@ -55,6 +55,8 @@ import com.carlink.fuel.LowFuel
 import com.carlink.fuel.Station
 import com.carlink.fuel.StationList
 import com.carlink.fuel.StationRow
+import com.carlink.fuel.StationStars
+import com.carlink.logging.logWarn
 import com.carlink.ui.settings.VehicleStore
 import com.carlink.ui.settings.VehicleText
 import java.util.Locale
@@ -64,7 +66,7 @@ import java.util.Locale
  * the driver's engine override and grade), and the low-fuel warning as an amber banner ([LowFuel]: the car's warning,
  * or the range at the driver's threshold); then, with Settings › Vehicle › Nearby stations on, the stations around
  * ([FuelStations]). Parked, it adds the tank's bar (only when the level and the tank's size are both read), small print
- * and up to three stations under their source's credit, a tap opening a station's sheet; moving, the range, the fuel
+ * and up to twenty stations under their source's credit, scrolling (asked 12 Nov), a tap opening a station's sheet; moving, the range, the fuel
  * and at most three big rows in large type, no small print, no scrolling, a tap starting directions at once
  * ([onDirections]). Unknown counts as moving ([DrivingState.parked]).
  *
@@ -151,8 +153,9 @@ private fun CarData(
 }
 
 /**
- * The stations around ([FuelStations]) for the car's [fuel] as it is now, as many rows as the layout takes: a change of
- * grade or engine shows the other prices at once, from the same lookup.
+ * The stations around ([FuelStations]) for the car's [fuel] as it is now, under the All and Starred tabs ([StationStars]),
+ * as many rows as the layout takes: a change of grade or engine shows the other prices at once, from the same lookup.
+ * Parked, each row's star marks the station; Starred shows the marked ones among the lookup's.
  */
 @Composable
 private fun Stations(
@@ -162,10 +165,32 @@ private fun Stations(
     onAllowLocation: () -> Unit,
     onTap: (StationRow) -> Unit,
 ) {
+    val context = LocalContext.current
+    val stars = remember(context) { StationStars.get(context) }
+    val starred by stars.starred.collectAsState()
+    val tab by stars.tab.collectAsState()
     val view by FuelStations.view.collectAsState()
     val here by FuelStations.here.collectAsState()
-    val rows = StationList.rows(view.stations, fuel, here, vehicle.rangeM, cheapestFirst = look.parked && !look.low).take(if (look.parked) PARKED_ROWS else MOVING_ROWS)
-    StationsSection(view, rows, look, onTap = onTap, onAllowLocation = onAllowLocation)
+    val shown = if (tab == StationStars.Tab.STARRED) view.stations.filter { it.id in starred } else view.stations
+    val rows =
+        StationList
+            .rows(shown, fuel, here, vehicle.rangeM, cheapestFirst = look.parked && !look.low)
+            .take(if (look.parked) PARKED_ROWS else MOVING_ROWS)
+            .map { it.copy(starred = it.station.id in starred) }
+    if (view.status != FuelStations.Status.OFF && view.status != FuelStations.Status.NEEDS_LOCATION) {
+        FuelTabs(tab, big = !look.parked) {
+            logWarn("[UI_ACTION] Fuel tab -> ${it.code}", tag = "UI")
+            stars.setTab(it)
+        }
+    }
+    // Only that a star changed is logged: a station's id says where it is.
+    val onStar: ((StationRow) -> Unit)? =
+        if (look.parked) {
+            { row -> logWarn("[UI_ACTION] Fuel station ${if (stars.toggle(row.station.id)) "starred" else "unstarred"}", tag = "UI") }
+        } else {
+            null
+        }
+    StationsSection(view, rows, look.copy(starredTab = tab == StationStars.Tab.STARRED), StationActions(onTap, onStar, onAllowLocation))
 }
 
 /**
@@ -186,14 +211,25 @@ private fun FollowStations(
 }
 
 /**
- * How the card lays out now: [parked] (else moving: the big layout), the fuel [low], distances in miles ([imperial]), and
- * the search radius ([radiusMi]) its words name.
+ * How the card lays out now: [parked] (else moving: the big layout), the fuel [low], distances in miles ([imperial]), the
+ * search radius ([radiusMi]) its words name, and whether the Starred tab is up ([starredTab]).
  */
 internal data class FuelLook(
     val parked: Boolean,
     val low: Boolean,
     val imperial: Boolean,
     val radiusMi: Int,
+    val starredTab: Boolean = false,
+)
+
+/**
+ * What the card's stations do when tapped ([StationsSection]): a row ([tap]), its star ([star], parked only: null moving),
+ * and the location request's Allow ([allowLocation]).
+ */
+internal class StationActions(
+    val tap: (StationRow) -> Unit,
+    val star: ((StationRow) -> Unit)?,
+    val allowLocation: () -> Unit,
 )
 
 /** A runtime permission the card asks for: whether it is granted now, and the ask. */
@@ -325,5 +361,5 @@ private val LOCATION_PERMISSIONS = arrayOf(Manifest.permission.ACCESS_FINE_LOCAT
 
 private const val SECONDARY_ALPHA = 0.72f
 private const val TRACK_ALPHA = 0.22f
-private const val PARKED_ROWS = 3
+private const val PARKED_ROWS = 20
 private const val MOVING_ROWS = 3

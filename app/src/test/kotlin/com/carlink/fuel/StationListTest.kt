@@ -62,6 +62,10 @@ class StationListTest {
 
     @Test
     fun `row words`() {
+        val shell = Station("x", "Shell", null, here, street = "Hwy 123")
+        assertEquals("Shell on Hwy 123", StationText.title(shell))
+        assertEquals("no street, the name alone", "Shell", StationText.title(shell.copy(street = null)))
+        assertEquals("the name says it already", "Main St Gas", StationText.title(Station("y", "Main St Gas", null, here, street = "main st")))
         assertEquals("0.6 mi", StationText.distance(1_000.0, imperial = true).replace(',', '.'))
         assertEquals("12 mi", StationText.distance(19_312.0, imperial = true))
         assertEquals("19 km", StationText.distance(19_312.0, imperial = false))

@@ -85,7 +85,8 @@ class OverpassSource(
             val lon = if (e.has("lon")) e.optDouble("lon") else centre?.optDouble("lon") ?: Double.NaN
             if (lat.isNaN() || lon.isNaN()) return null
             val name = listOf("name", "brand", "operator").firstNotNullOfOrNull { tags.optString(it).ifBlank { null } } ?: "Fuel station"
-            return Station("osm:${e.optString("type")}/${e.optLong("id")}", name, address(tags), GeoPoint(lat, lon), diesel = diesel(tags))
+            val street = tags.optString("addr:street").ifBlank { null }
+            return Station("osm:${e.optString("type")}/${e.optLong("id")}", name, address(tags), GeoPoint(lat, lon), diesel = diesel(tags), street = street)
         }
 
         /** `fuel:diesel`: yes, no, or not said. Every station sells gasoline as far as OSM tags go. */

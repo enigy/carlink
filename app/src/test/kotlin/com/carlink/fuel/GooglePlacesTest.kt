@@ -18,7 +18,10 @@ class GooglePlacesTest {
     private val answer =
         """
         {"places":[
-          {"id":"p1","displayName":{"text":"Made-up Gas"},"formattedAddress":"1 Example Road","location":{"latitude":-33.91,"longitude":151.2},
+          {"id":"p1","displayName":{"text":"Made-up Gas"},"formattedAddress":"1 Example Road",
+           "addressComponents":[{"longText":"1","shortText":"1","types":["street_number"]},
+             {"longText":"Example Road","shortText":"Example Rd","types":["route"]}],
+           "location":{"latitude":-33.91,"longitude":151.2},
            "fuelOptions":{"fuelPrices":[
              {"type":"REGULAR_UNLEADED","price":{"currencyCode":"USD","units":"3","nanos":459000000},"updateTime":"2026-11-11T08:00:00Z"},
              {"type":"DIESEL","price":{"currencyCode":"USD","units":"3","nanos":899000000},"updateTime":"2026-11-10T08:00:00.123Z"}]}},
@@ -32,12 +35,12 @@ class GooglePlacesTest {
         val body = JSONObject(GooglePlaces.body(here, 8_046.72))
         assertEquals("gas_station", body.getJSONArray("includedTypes").getString(0))
         assertEquals("DISTANCE", body.getString("rankPreference"))
-        assertEquals(10, body.getInt("maxResultCount"))
+        assertEquals(20, body.getInt("maxResultCount"))
         val circle = body.getJSONObject("locationRestriction").getJSONObject("circle")
         assertEquals(-33.9, circle.getJSONObject("center").getDouble("latitude"), 1e-9)
         assertEquals(8_046.72, circle.getDouble("radius"), 1e-9)
         assertEquals("Google's cap", 50_000.0, JSONObject(GooglePlaces.body(here, 99_000.0)).getJSONObject("locationRestriction").getJSONObject("circle").getDouble("radius"), 0.0)
-        assertEquals("places.id,places.displayName,places.formattedAddress,places.location,places.fuelOptions", GooglePlaces.FIELD_MASK)
+        assertEquals("places.id,places.displayName,places.formattedAddress,places.addressComponents,places.location,places.fuelOptions", GooglePlaces.FIELD_MASK)
     }
 
     @Test
@@ -50,6 +53,8 @@ class GooglePlacesTest {
         assertEquals("USD", dieselPrice.currency)
         assertEquals(Instant.parse("2026-11-10T08:00:00.123Z").toEpochMilli(), dieselPrice.atMs)
         assertEquals("1 Example Road", d[0].address)
+        assertEquals("the route's short text", "Example Rd", d[0].street)
+        assertNull("no address parts, no street", d[1].street)
         assertNull("no price for this fuel", d[1].priceFor(diesel))
         assertNull(d[1].address)
         assertEquals(3.459, d[0].priceFor(regular)!!.amount, 1e-9)

@@ -24,7 +24,8 @@ data class FuelPrice(
  * A place to fill up, from a [FuelPriceSource], kept in memory only. Its source's facts are kept whole and the card picks
  * from them for the fuel it shows, so a change of grade, engine or the car's fuel type needs no lookup (the Mac's 11 Nov
  * bench): [prices] by Google's fuel type ([CarFuel.googleType]), and [diesel], OpenStreetMap's tag (yes true, no false,
- * not said null). [credit]: its source's attribution, shown wherever the station is.
+ * not said null). [street]: the street it's on, for "Shell on Hwy 123". [credit]: its source's attribution, shown
+ * wherever the station is.
  */
 data class Station(
     val id: String,
@@ -33,6 +34,7 @@ data class Station(
     val at: GeoPoint,
     val prices: Map<String, FuelPrice> = emptyMap(),
     val diesel: Boolean? = null,
+    val street: String? = null,
     val credit: String? = null,
 ) {
     /** The price for [fuel], or null when the source has none. */

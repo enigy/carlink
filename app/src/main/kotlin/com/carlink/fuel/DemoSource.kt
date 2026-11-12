@@ -24,8 +24,9 @@ class DemoSource(
                 Station(
                     id = "demo:$i",
                     name = spot.name,
-                    address = "${i + 1} Demo Road",
+                    address = "${(i + 1) * 100} ${spot.street}",
                     at = at,
+                    street = spot.street,
                     // Every fuel a made-up step from the regular price, so a change of grade shows on the card.
                     prices = spot.price?.let { p -> STEPS.mapValues { (_, step) -> FuelPrice(p + step, "USD", atMs) } }.orEmpty(),
                     diesel = true,
@@ -36,6 +37,7 @@ class DemoSource(
 
     private class Spot(
         val name: String,
+        val street: String,
         val northM: Double,
         val eastM: Double,
         val price: Double?,
@@ -51,11 +53,11 @@ class DemoSource(
         // Made up: a mix of near and far, cheap and dear, fresh and a day stale, and one with no price.
         private val SPOTS =
             listOf(
-                Spot("Demo Fuel North", 900.0, 100.0, 3.459, 12),
-                Spot("Demo Truck Stop", -2_400.0, 1_800.0, 3.279, 95),
-                Spot("Demo Corner Gas", 300.0, -3_600.0, 3.619, 1_560),
-                Spot("Demo Highway Fuel", 6_200.0, 4_100.0, 3.199, 240),
-                Spot("Demo Express", -5_500.0, -4_800.0, null, 0),
+                Spot("Demo Fuel North", "Hwy 123", 900.0, 100.0, 3.459, 12),
+                Spot("Demo Truck Stop", "Industrial Way", -2_400.0, 1_800.0, 3.279, 95),
+                Spot("Demo Corner Gas", "Main St", 300.0, -3_600.0, 3.619, 1_560),
+                Spot("Demo Highway Fuel", "Hwy 123", 6_200.0, 4_100.0, 3.199, 240),
+                Spot("Demo Express", "Oak Ave", -5_500.0, -4_800.0, null, 0),
             )
     }
 }

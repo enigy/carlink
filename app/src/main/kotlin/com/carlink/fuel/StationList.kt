@@ -5,7 +5,10 @@ import java.util.Currency
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** One row of the Fuel card's list: the station, its [price] for the card's fuel, how far, whether the range reaches it, and its tags. */
+/**
+ * One row of the Fuel card's list: the station, its [price] for the card's fuel, how far, whether the range reaches it,
+ * its tags, and whether the driver [starred] it.
+ */
 data class StationRow(
     val station: Station,
     val price: FuelPrice?,
@@ -13,6 +16,7 @@ data class StationRow(
     val outOfReach: Boolean,
     val cheapest: Boolean = false,
     val nearest: Boolean = false,
+    val starred: Boolean = false,
 )
 
 /**
@@ -51,8 +55,14 @@ object StationList {
     }
 }
 
-/** The words in a station row: distance, price and its age. */
+/** The words in a station row: its name, distance, price and its age. */
 object StationText {
+    /** "Shell on Hwy 123": the name, then its street when the source has one and the name doesn't already say it. */
+    fun title(station: Station): String {
+        val street = station.street?.takeUnless { station.name.contains(it, ignoreCase = true) }
+        return if (street != null) "${station.name} on $street" else station.name
+    }
+
     private const val METRES_PER_MILE = 1609.344
     private const val METRES_PER_KM = 1000.0
     private const val TENTHS_BELOW = 10.0

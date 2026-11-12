@@ -41,6 +41,7 @@ class OverpassSourceTest {
         val first = all[0]
         assertEquals("Made-up Fuel", first.name)
         assertEquals("12 Example Street, Sampletown", first.address)
+        assertEquals("Example Street", first.street)
         assertEquals("a way's centre", GeoPoint(-33.901, 151.2), all[1].at)
         assertEquals("brand when there's no name", "Invented Oil", all[1].name)
         assertEquals("Fuel station", all[3].name)

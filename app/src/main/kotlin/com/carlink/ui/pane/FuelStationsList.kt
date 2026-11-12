@@ -9,37 +9,46 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.carlink.fuel.FuelStations
 import com.carlink.fuel.Station
 import com.carlink.fuel.StationRow
+import com.carlink.fuel.StationStars
 import com.carlink.fuel.StationText
 import com.carlink.ui.settings.VehicleText
 
 /**
  * The Fuel card's stations ([FuelStations]): what the lookup is doing in words, the [rows], and the source's attribution
- * under them. Moving ([FuelLook.parked] false), larger rows and no small print. A row tap goes to [onTap].
+ * under them. Moving ([FuelLook.parked] false), larger rows and no small print. A row tap goes to [StationActions.tap].
  */
 @Composable
 internal fun StationsSection(
     view: FuelStations.View,
     rows: List<StationRow>,
     look: FuelLook,
-    onTap: (StationRow) -> Unit,
-    onAllowLocation: () -> Unit,
+    actions: StationActions,
 ) {
     val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
     val imperial = look.imperial
@@ -47,14 +56,33 @@ internal fun StationsSection(
     when (view.status) {
         FuelStations.Status.OFF ->
             if (!big) Text("Turn on Nearby stations in Settings › Vehicle to see stations around", style = MaterialTheme.typography.bodyLarge, color = secondary)
-        FuelStations.Status.NEEDS_LOCATION -> AllowLocation(onAllowLocation)
+        FuelStations.Status.NEEDS_LOCATION -> AllowLocation(actions.allowLocation)
         else -> {
             // The source's attribution (ODbL for OpenStreetMap) heads its stations, in view without scrolling, in both layouts.
             if (rows.isNotEmpty()) view.attribution?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = secondary) }
-            rows.forEach { StationRowView(it, imperial, big, onTap) }
+            rows.forEach { StationRowView(it, imperial, big, actions) }
             note(view, rows.isEmpty(), look)?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = secondary) }
             // Why the free stations stand in for Google's (no key, the month's limit): small print, parked only.
             if (!big) view.notice?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = secondary) }
+        }
+    }
+}
+
+/** All or Starred ([StationStars.Tab]), under the tank's gauge (asked 12 Nov), tall enough to tap at a glance. */
+@Composable
+internal fun FuelTabs(
+    tab: StationStars.Tab,
+    big: Boolean,
+    onTab: (StationStars.Tab) -> Unit,
+) {
+    PrimaryTabRow(selectedTabIndex = tab.ordinal, containerColor = Color.Transparent) {
+        StationStars.Tab.entries.forEach { t ->
+            Tab(
+                selected = t == tab,
+                onClick = { onTab(t) },
+                modifier = Modifier.heightIn(min = if (big) 72.dp else 64.dp),
+                text = { Text(t.label, style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge) },
+            )
         }
     }
 }
@@ -69,11 +97,24 @@ private fun note(
     return when (view.status) {
         FuelStations.Status.NO_POSITION -> "Waiting for the car's position"
         FuelStations.Status.LOOKING -> "Finding stations nearby".takeIf { empty }
-        FuelStations.Status.READY -> "No stations within ${VehicleText.radius(look.radiusMi, look.imperial)}".takeIf { empty }
+        FuelStations.Status.READY -> nothingWithin(view, look).takeIf { empty }
         FuelStations.Status.OFFLINE -> aged("No internet", "No internet", empty, age)
         FuelStations.Status.BUSY -> aged("The station service is busy, trying again soon", "The station service is busy", empty, age)
         FuelStations.Status.FAILED -> aged("Couldn't get the stations", "Couldn't update", empty, age)
         FuelStations.Status.OFF, FuelStations.Status.NEEDS_LOCATION -> null
+    }
+}
+
+/** An empty list in words: no stations in the radius, or none starred among them (parked, with how to star one). */
+private fun nothingWithin(
+    view: FuelStations.View,
+    look: FuelLook,
+): String {
+    val radius = VehicleText.radius(look.radiusMi, look.imperial)
+    return when {
+        !look.starredTab || view.stations.isEmpty() -> "No stations within $radius"
+        look.parked -> "No starred stations within $radius. Star one under All to see it here."
+        else -> "No starred stations within $radius"
     }
 }
 
@@ -85,13 +126,13 @@ private fun aged(
     age: String?,
 ): String = if (empty || age == null) alone else "$before: these are from $age"
 
-/** One station: name and distance with its tags, and the price with its age when the source has one. */
+/** One station: its star, name and street, distance with its tags, and the price with its age when the source has one. */
 @Composable
 private fun StationRowView(
     row: StationRow,
     imperial: Boolean,
     big: Boolean,
-    onTap: (StationRow) -> Unit,
+    actions: StationActions,
 ) {
     val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
     val now = System.currentTimeMillis()
@@ -101,15 +142,16 @@ private fun StationRowView(
                 .fillMaxWidth()
                 .heightIn(min = if (big) 88.dp else 72.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .clickable { onTap(row) }
+                .clickable { actions.tap(row) }
                 .padding(horizontal = 12.dp, vertical = 8.dp)
                 .alpha(if (row.outOfReach) OUT_OF_REACH_ALPHA else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Star(row, actions.star)
         Column(modifier = Modifier.weight(1f)) {
             // Moving: both lines large, no small print (the Mac's 11 Nov bench).
             val type = MaterialTheme.typography
-            Text(row.station.name, style = if (big) type.headlineMedium else type.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(StationText.title(row.station), style = if (big) type.headlineMedium else type.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val words = listOfNotNull(row.distanceM?.let { StationText.distance(it, imperial) }, tags(row), "out of reach".takeIf { row.outOfReach })
             if (words.isNotEmpty()) Text(words.joinToString(" · "), style = if (big) type.titleLarge else type.titleMedium, color = secondary)
         }
@@ -133,6 +175,26 @@ private fun StationRowView(
 private fun tags(row: StationRow): String? = listOfNotNull("CHEAPEST".takeIf { row.cheapest }, "NEAREST".takeIf { row.nearest }).joinToString(" · ").ifEmpty { null }
 
 /**
+ * A row's star. Parked ([onStar] set), a button that stars the station or takes its star away. Moving, only a starred
+ * station's star, as a mark: the row's one tap stays directions, with no small target beside it.
+ */
+@Composable
+private fun Star(
+    row: StationRow,
+    onStar: ((StationRow) -> Unit)?,
+) {
+    val tint = if (row.starred) MaterialTheme.colorScheme.tertiary else LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
+    val icon = if (row.starred) Icons.Filled.Star else Icons.Outlined.StarBorder
+    if (onStar != null) {
+        IconButton(onClick = { onStar(row) }, modifier = Modifier.size(64.dp)) {
+            Icon(icon, contentDescription = if (row.starred) "Unstar ${row.station.name}" else "Star ${row.station.name}", tint = tint, modifier = Modifier.size(36.dp))
+        }
+    } else if (row.starred) {
+        Icon(icon, contentDescription = "Starred", tint = tint, modifier = Modifier.padding(end = 12.dp).size(40.dp))
+    }
+}
+
+/**
  * Parked: a station's sheet, its price and age, distance and address, and its source's credit ("Google Maps" for
  * Google's data, the Mac's 11 Nov bench), with Directions and Close.
  */
@@ -148,7 +210,7 @@ internal fun StationSheet(
     val now = System.currentTimeMillis()
     Surface(modifier = modifier, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 6.dp) {
         Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(s.name, style = MaterialTheme.typography.headlineMedium)
+            Text(StationText.title(s), style = MaterialTheme.typography.headlineMedium)
             val price = row.price?.let { p -> StationText.price(p.amount, p.currency) + (p.atMs?.let { ", updated ${StationText.age(it, now)}" } ?: "") }
             Text(price ?: "No price", style = MaterialTheme.typography.headlineSmall)
             row.distanceM?.let { d ->
