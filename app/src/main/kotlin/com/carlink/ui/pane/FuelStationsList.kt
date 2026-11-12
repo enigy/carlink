@@ -113,10 +113,10 @@ private fun StationRowView(
             val words = listOfNotNull(row.distanceM?.let { StationText.distance(it, imperial) }, tags(row), "out of reach".takeIf { row.outOfReach })
             if (words.isNotEmpty()) Text(words.joinToString(" · "), style = if (big) type.titleLarge else type.titleMedium, color = secondary)
         }
-        row.station.price?.let { price ->
+        row.price?.let { price ->
             Column(horizontalAlignment = Alignment.End) {
-                Text(StationText.price(price, row.station.currency), style = if (big) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge)
-                val at = row.station.priceAtMs
+                Text(StationText.price(price.amount, price.currency), style = if (big) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge)
+                val at = price.atMs
                 if (!big && at != null) {
                     val stale = StationText.stale(at, now)
                     Text(
@@ -132,7 +132,10 @@ private fun StationRowView(
 
 private fun tags(row: StationRow): String? = listOfNotNull("CHEAPEST".takeIf { row.cheapest }, "NEAREST".takeIf { row.nearest }).joinToString(" · ").ifEmpty { null }
 
-/** Parked: a station's sheet, its price and age, distance and address, with Directions and Close. */
+/**
+ * Parked: a station's sheet, its price and age, distance and address, and its source's credit ("Google Maps" for
+ * Google's data, the Mac's 11 Nov bench), with Directions and Close.
+ */
 @Composable
 internal fun StationSheet(
     row: StationRow,
@@ -146,12 +149,13 @@ internal fun StationSheet(
     Surface(modifier = modifier, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 6.dp) {
         Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(s.name, style = MaterialTheme.typography.headlineMedium)
-            val price = s.price?.let { p -> StationText.price(p, s.currency) + (s.priceAtMs?.let { ", updated ${StationText.age(it, now)}" } ?: "") }
+            val price = row.price?.let { p -> StationText.price(p.amount, p.currency) + (p.atMs?.let { ", updated ${StationText.age(it, now)}" } ?: "") }
             Text(price ?: "No price", style = MaterialTheme.typography.headlineSmall)
             row.distanceM?.let { d ->
                 Text(StationText.distance(d, imperial) + " away" + if (row.outOfReach) ", out of reach on this range" else "", style = MaterialTheme.typography.titleLarge)
             }
             s.address?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
+            s.credit?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)) }
             Spacer(modifier = Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 FilledTonalButton(onClick = onDirections, modifier = Modifier.heightIn(min = 72.dp)) { Text("Directions", style = MaterialTheme.typography.titleLarge) }

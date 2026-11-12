@@ -14,22 +14,21 @@ class DemoSource(
 
     override fun stationsNear(
         here: GeoPoint,
-        fuel: CarFuel,
         radiusM: Double,
     ): List<Station> {
         val perDegreeLon = METRES_PER_DEGREE * cos(Math.toRadians(here.lat)).coerceAtLeast(MIN_COS)
         val stations =
             SPOTS.mapIndexed { i, spot ->
                 val at = GeoPoint(here.lat + spot.northM / METRES_PER_DEGREE, here.lon + spot.eastM / perDegreeLon)
+                val atMs = nowMs() - spot.ageMin * MS_PER_MIN
                 Station(
                     id = "demo:$i",
                     name = spot.name,
                     address = "${i + 1} Demo Road",
                     at = at,
-                    price = spot.price,
-                    currency = "USD",
-                    priceAtMs = nowMs() - spot.ageMin * MS_PER_MIN,
-                    sellsFuel = true,
+                    // Every fuel a made-up step from the regular price, so a change of grade shows on the card.
+                    prices = spot.price?.let { p -> STEPS.mapValues { (_, step) -> FuelPrice(p + step, "USD", atMs) } }.orEmpty(),
+                    diesel = true,
                 )
             }
         return stations.filter { Geo.metres(here, it.at) <= radiusM }.nearestFirst(here)
@@ -47,6 +46,7 @@ class DemoSource(
         private const val METRES_PER_DEGREE = 111_320.0
         private const val MIN_COS = 0.01
         private const val MS_PER_MIN = 60_000L
+        private val STEPS = mapOf("REGULAR_UNLEADED" to 0.0, "MIDGRADE" to 0.4, "PREMIUM" to 0.8, "DIESEL" to 0.6, "E85" to -0.7)
 
         // Made up: a mix of near and far, cheap and dear, fresh and a day stale, and one with no price.
         private val SPOTS =

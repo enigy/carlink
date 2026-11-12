@@ -134,9 +134,10 @@ object FuelStations {
             val fuel = carFuel(store).takeIf { it.hasStations } ?: CarFuel(CarFuel.Kind.GASOLINE, FuelGrade.REGULAR)
             keys.spendLookup()
             try {
-                val stations = google(app).stationsNear(here, fuel, radiusM(store))
-                logInfo("[FUEL] Google Places test: ${stations.size} stations (${stations.count { it.price != null }} priced)", tag = Logger.Tags.ADAPTR)
-                "It works: ${stations.size} stations nearby, ${stations.count { it.price != null }} with a ${fuel.label.lowercase()} price."
+                val stations = google(app).stationsNear(here, radiusM(store))
+                val priced = stations.count { it.priceFor(fuel) != null }
+                logInfo("[FUEL] Google Places test: ${stations.size} stations ($priced priced)", tag = Logger.Tags.ADAPTR)
+                "It works: ${stations.size} stations nearby, $priced with a ${fuel.label.lowercase()} price."
             } catch (e: GoogleKeyProblem) {
                 e.words
             } catch (e: GoogleQuota) {
@@ -203,7 +204,7 @@ object FuelStations {
         val source = pick.source
         if (source is GooglePlacesSource) GooglePlacesStore.get(app).spendLookup()
         val started = SystemClock.elapsedRealtime()
-        val outcome = runCatching { source.stationsNear(here, fuel, pick.radiusMi * METRES_PER_MILE) }
+        val outcome = runCatching { source.stationsNear(here, pick.radiusMi * METRES_PER_MILE) }
         val ms = SystemClock.elapsedRealtime() - started
         googleAside(outcome.exceptionOrNull(), pick.keyVersion)
         // What the lookup changed itself (Google set aside, the month's last lookup spent) is no new pick for the next fix:
@@ -212,11 +213,12 @@ object FuelStations {
         lastPick = next
         // The instance asked, also on a busy or failed line: the log shows which one timed out (the Mac's 11 Nov bench).
         val from = source.detail?.let { " ($it)" }.orEmpty()
-        val stations = outcome.getOrNull()
+        // Each station carries its source's credit, for its sheet as well as the list (the Mac's 11 Nov bench).
+        val stations = outcome.getOrNull()?.map { it.copy(credit = source.attribution) }
         if (stations != null) {
             busyInARow = 0
             viewState.value = View(Status.READY, stations, SystemClock.elapsedRealtime(), source.attribution, pick.notice)
-            logInfo("[FUEL] ${source.name}$from: ${stations.size} stations (${stations.count { it.price != null }} priced) in $ms ms", tag = Logger.Tags.ADAPTR)
+            logInfo("[FUEL] ${source.name}$from: ${stations.size} stations (${stations.count { it.priceFor(fuel) != null }} priced) in $ms ms", tag = Logger.Tags.ADAPTR)
             return
         }
         val e = outcome.exceptionOrNull() ?: return

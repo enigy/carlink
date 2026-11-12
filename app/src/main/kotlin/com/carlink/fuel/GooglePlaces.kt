@@ -37,46 +37,33 @@ object GooglePlaces {
             .toString()
     }
 
-    /** The answer to stations, each with its price for [fuel] (Google's [CarFuel.googleType]) when it has one. */
-    fun parse(
-        json: String,
-        fuel: CarFuel,
-    ): List<Station> {
+    /** The answer to stations, each with every price Google has for it, by fuel type ([Station.prices]). */
+    fun parse(json: String): List<Station> {
         val places = JSONObject(json).optJSONArray("places") ?: return emptyList()
-        return (0 until places.length()).mapNotNull { i -> station(places.getJSONObject(i), fuel.googleType) }
+        return (0 until places.length()).mapNotNull { i -> station(places.getJSONObject(i)) }
     }
 
-    private fun station(
-        p: JSONObject,
-        type: String?,
-    ): Station? {
+    private fun station(p: JSONObject): Station? {
         val loc = p.optJSONObject("location") ?: return null
         if (!loc.has("latitude") || !loc.has("longitude")) return null
         val name = p.optJSONObject("displayName")?.optString("text")?.ifBlank { null } ?: "Fuel station"
-        val price = type?.let { priceOf(p, it) }
+        val prices = p.optJSONObject("fuelOptions")?.optJSONArray("fuelPrices")
         return Station(
             id = "google:${p.optString("id")}",
             name = name,
             address = p.optString("formattedAddress").ifBlank { null },
             at = GeoPoint(loc.getDouble("latitude"), loc.getDouble("longitude")),
-            price = price?.first,
-            currency = price?.second,
-            priceAtMs = price?.third,
-            sellsFuel = if (price != null) true else null,
+            prices = (0 until (prices?.length() ?: 0)).mapNotNull { i -> prices?.optJSONObject(i)?.let { priceOf(it) } }.toMap(),
         )
     }
 
-    /** [type]'s entry in `fuelOptions.fuelPrices`: the amount (units plus nanos), its currency and when it was updated. */
-    private fun priceOf(
-        p: JSONObject,
-        type: String,
-    ): Triple<Double, String?, Long?>? {
-        val prices = p.optJSONObject("fuelOptions")?.optJSONArray("fuelPrices") ?: return null
-        val entry = (0 until prices.length()).map { prices.getJSONObject(it) }.firstOrNull { it.optString("type") == type }
-        val money = entry?.optJSONObject("price") ?: return null
+    /** One `fuelOptions.fuelPrices` entry: its type, and the amount (units plus nanos), currency and when it was updated. */
+    private fun priceOf(entry: JSONObject): Pair<String, FuelPrice>? {
+        val type = entry.optString("type").ifBlank { null } ?: return null
+        val money = entry.optJSONObject("price") ?: return null
         val amount = (money.optString("units").toLongOrNull() ?: 0L) + money.optLong("nanos") / NANOS
         val at = runCatching { Instant.parse(entry.optString("updateTime")).toEpochMilli() }.getOrNull()
-        return if (amount > 0.0) Triple(amount, money.optString("currencyCode").ifBlank { null }, at) else null
+        return if (amount > 0.0) type to FuelPrice(amount, money.optString("currencyCode").ifBlank { null }, at) else null
     }
 
     /**

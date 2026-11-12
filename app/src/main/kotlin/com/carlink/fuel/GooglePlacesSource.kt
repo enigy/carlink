@@ -23,7 +23,6 @@ class GooglePlacesSource(
 
     override fun stationsNear(
         here: GeoPoint,
-        fuel: CarFuel,
         radiusM: Double,
     ): List<Station> {
         val k = key() ?: throw GoogleKeyProblem("No Google key is set.")
@@ -35,7 +34,7 @@ class GooglePlacesSource(
                     "X-Goog-FieldMask" to GooglePlaces.FIELD_MASK,
                 )
         val answer = post(GooglePlaces.body(here, radiusM), headers)
-        if (answer.code == HTTP_OK) return GooglePlaces.parse(answer.body, fuel)
+        if (answer.code == HTTP_OK) return GooglePlaces.parse(answer.body)
         throw failure(answer)
     }
 

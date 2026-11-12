@@ -101,8 +101,8 @@ internal fun FuelCard(
     }
     val imperial = vehicle.distanceImperial(Locale.getDefault())
     val low = LowFuel.isLow(vehicle, lowAt, imperial)
-    FollowStations(active, listOf(nearby, location.allowed, source, radiusMi, googleKey), low)
     val fuel = CarFuel.of(vehicle.fuelTypes, engine, grade)
+    FollowStations(active, listOf(nearby, location.allowed, source, radiusMi, googleKey, fuel.hasStations), low)
     var picked by remember { mutableStateOf<StationRow?>(null) }
     LaunchedEffect(parked) { if (!parked) picked = null } // the sheet is a parked view
     Box(modifier = modifier) {
@@ -111,7 +111,7 @@ internal fun FuelCard(
             val look = FuelLook(parked, low, imperial, radiusMi)
             CarData(vehicle, fuel, look, energy)
             if (fuel.hasStations) {
-                Stations(vehicle, look, onAllowLocation = { location.ask(fromButton = true) }) { row ->
+                Stations(vehicle, fuel, look, onAllowLocation = { location.ask(fromButton = true) }) { row ->
                     if (parked) picked = row else onDirections(row.station)
                 }
             }
@@ -150,17 +150,21 @@ private fun CarData(
     }
 }
 
-/** The stations around ([FuelStations]), as many rows as the layout takes. */
+/**
+ * The stations around ([FuelStations]) for the car's [fuel] as it is now, as many rows as the layout takes: a change of
+ * grade or engine shows the other prices at once, from the same lookup.
+ */
 @Composable
 private fun Stations(
     vehicle: VehicleState,
+    fuel: CarFuel,
     look: FuelLook,
     onAllowLocation: () -> Unit,
     onTap: (StationRow) -> Unit,
 ) {
     val view by FuelStations.view.collectAsState()
     val here by FuelStations.here.collectAsState()
-    val rows = StationList.rows(view.stations, here, vehicle.rangeM, cheapestFirst = look.parked && !look.low, max = if (look.parked) PARKED_ROWS else MOVING_ROWS)
+    val rows = StationList.rows(view.stations, fuel, here, vehicle.rangeM, cheapestFirst = look.parked && !look.low).take(if (look.parked) PARKED_ROWS else MOVING_ROWS)
     StationsSection(view, rows, look, onTap = onTap, onAllowLocation = onAllowLocation)
 }
 

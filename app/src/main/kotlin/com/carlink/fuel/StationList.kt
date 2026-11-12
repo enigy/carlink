@@ -5,9 +5,10 @@ import java.util.Currency
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** One row of the Fuel card's list: the station, how far, whether the range reaches it, and its tags. */
+/** One row of the Fuel card's list: the station, its [price] for the card's fuel, how far, whether the range reaches it, and its tags. */
 data class StationRow(
     val station: Station,
+    val price: FuelPrice?,
     val distanceM: Double?,
     val outOfReach: Boolean,
     val cheapest: Boolean = false,
@@ -15,35 +16,38 @@ data class StationRow(
 )
 
 /**
- * The card's rows (the brief of 11 Nov). [cheapestFirst] (parked, the fuel not low): cheapest first with the cheapest and
- * the nearest tagged, and stations without a price last; otherwise (low fuel, moving) nearest first. A station out of
- * reach is marked for greying ([Geo.outOfReach]). Without prices (OpenStreetMap), nearest first, the ones known to sell
- * the fuel ahead.
+ * The card's rows (the brief of 11 Nov), for the car's [CarFuel] as it is now: its price at each station, and without a
+ * station that says it doesn't sell it. [cheapestFirst] (parked, the fuel not low): cheapest first with the cheapest and
+ * the nearest tagged, and stations without a price last; otherwise (low fuel, moving) nearest first, for diesel the ones
+ * known to sell it ahead ([Station.sells]). A station out of reach is marked for greying ([Geo.outOfReach]). The card
+ * shows the first few.
  */
 object StationList {
     fun rows(
         stations: List<Station>,
+        fuel: CarFuel,
         here: GeoPoint?,
         rangeM: Float?,
         cheapestFirst: Boolean,
-        max: Int,
     ): List<StationRow> {
         val all =
-            stations.map { s ->
-                val d = here?.let { Geo.metres(it, s.at) }
-                StationRow(s, d, d != null && Geo.outOfReach(d, rangeM))
-            }
-        val byPrice = cheapestFirst && all.any { it.station.price != null }
+            stations
+                .filter { it.sells(fuel) != false }
+                .map { s ->
+                    val d = here?.let { Geo.metres(it, s.at) }
+                    StationRow(s, s.priceFor(fuel), d, d != null && Geo.outOfReach(d, rangeM))
+                }
+        val byPrice = cheapestFirst && all.any { it.price != null }
         val ordered =
             when {
-                byPrice -> all.sortedWith(compareBy({ it.station.price == null }, { it.station.price }, { it.distanceM }))
-                here != null -> all.sortedWith(compareBy({ it.station.sellsFuel != true }, { it.distanceM }))
+                byPrice -> all.sortedWith(compareBy({ it.price == null }, { it.price?.amount }, { it.distanceM }))
+                here != null -> all.sortedWith(compareBy({ it.station.sells(fuel) != true }, { it.distanceM }))
                 else -> all
             }
-        if (!byPrice) return ordered.take(max)
+        if (!byPrice) return ordered
         val cheapest = ordered.first()
         val nearest = ordered.filter { it.distanceM != null }.minByOrNull { it.distanceM ?: Double.MAX_VALUE }
-        return ordered.take(max).map { it.copy(cheapest = it === cheapest, nearest = it === nearest) }
+        return ordered.map { it.copy(cheapest = it === cheapest, nearest = it === nearest) }
     }
 }
 

@@ -13,21 +13,43 @@ data class GeoPoint(
     val lon: Double,
 )
 
+/** A station's price for one fuel: per US gallon in the US and per litre elsewhere, in [currency], reported at [atMs] (wall clock). */
+data class FuelPrice(
+    val amount: Double,
+    val currency: String?,
+    val atMs: Long?,
+)
+
 /**
- * A place to fill up, from a [FuelPriceSource]. [price] is per US gallon in the US and per litre elsewhere, in
- * [currency], when the source has one, reported at [priceAtMs] (wall clock). [sellsFuel]: the source says it sells the
- * car's fuel (true), or doesn't say (null); one that says it doesn't is left out. Kept in memory only.
+ * A place to fill up, from a [FuelPriceSource], kept in memory only. Its source's facts are kept whole and the card picks
+ * from them for the fuel it shows, so a change of grade, engine or the car's fuel type needs no lookup (the Mac's 11 Nov
+ * bench): [prices] by Google's fuel type ([CarFuel.googleType]), and [diesel], OpenStreetMap's tag (yes true, no false,
+ * not said null). [credit]: its source's attribution, shown wherever the station is.
  */
 data class Station(
     val id: String,
     val name: String,
     val address: String?,
     val at: GeoPoint,
-    val price: Double? = null,
-    val currency: String? = null,
-    val priceAtMs: Long? = null,
-    val sellsFuel: Boolean? = null,
-)
+    val prices: Map<String, FuelPrice> = emptyMap(),
+    val diesel: Boolean? = null,
+    val credit: String? = null,
+) {
+    /** The price for [fuel], or null when the source has none. */
+    fun priceFor(fuel: CarFuel): FuelPrice? = fuel.googleType?.let { prices[it] }
+
+    /**
+     * Whether it sells [fuel], for diesel (the diesel rule: the ones known to sell it go first, one that says no is left
+     * out): a diesel price says yes, else OpenStreetMap's tag, else not said (null). Every station sells gasoline as far
+     * as the sources go, so for gasoline it is null and the nearest comes first, priced or not.
+     */
+    fun sells(fuel: CarFuel): Boolean? =
+        when {
+            fuel.kind != CarFuel.Kind.DIESEL -> null
+            priceFor(fuel) != null -> true
+            else -> diesel
+        }
+}
 
 /** Straight-line distance, and whether the range reaches a station (the brief of 11 Nov). */
 object Geo {

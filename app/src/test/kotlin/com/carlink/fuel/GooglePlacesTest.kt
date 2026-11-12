@@ -41,17 +41,22 @@ class GooglePlacesTest {
     }
 
     @Test
-    fun `each station has its price for the car's fuel, with its age, or none`() {
-        val d = GooglePlaces.parse(answer, diesel)
+    fun `each station keeps every price, and gives the car's fuel its own with its age, or none`() {
+        val d = GooglePlaces.parse(answer)
         assertEquals(listOf("google:p1", "google:p2"), d.map { it.id })
-        assertEquals(3.899, d[0].price!!, 1e-9)
-        assertEquals("USD", d[0].currency)
-        assertEquals(Instant.parse("2026-11-10T08:00:00.123Z").toEpochMilli(), d[0].priceAtMs)
+        assertEquals("every fuel kept, for a change of grade", setOf("REGULAR_UNLEADED", "DIESEL"), d[0].prices.keys)
+        val dieselPrice = d[0].priceFor(diesel)!!
+        assertEquals(3.899, dieselPrice.amount, 1e-9)
+        assertEquals("USD", dieselPrice.currency)
+        assertEquals(Instant.parse("2026-11-10T08:00:00.123Z").toEpochMilli(), dieselPrice.atMs)
         assertEquals("1 Example Road", d[0].address)
-        assertNull("no price for this fuel", d[1].price)
+        assertNull("no price for this fuel", d[1].priceFor(diesel))
         assertNull(d[1].address)
-        assertEquals(3.459, GooglePlaces.parse(answer, regular)[0].price!!, 1e-9)
-        assertEquals("no fuel type, no price", null, GooglePlaces.parse(answer, CarFuel(CarFuel.Kind.ELECTRIC))[0].price)
+        assertEquals(3.459, d[0].priceFor(regular)!!.amount, 1e-9)
+        assertNull("no premium price sent", d[0].priceFor(CarFuel(CarFuel.Kind.GASOLINE, FuelGrade.PREMIUM)))
+        assertEquals("no fuel type, no price", null, d[0].priceFor(CarFuel(CarFuel.Kind.ELECTRIC)))
+        assertEquals("a price says it sells the fuel", true, d[0].sells(diesel))
+        assertNull(d[1].sells(diesel))
     }
 
     @Test
@@ -78,14 +83,14 @@ class GooglePlacesTest {
                 sent = headers
                 HttpAnswer(200, answer)
             }
-        assertEquals(2, ok.stationsNear(here, diesel, 8_000.0).size)
+        assertEquals(2, ok.stationsNear(here, 8_000.0).size)
         assertEquals("AIzaMadeUpKey", sent["X-Goog-Api-Key"])
         assertEquals(GooglePlaces.FIELD_MASK, sent["X-Goog-FieldMask"])
         assertEquals("com.example", sent["X-Android-Package"])
         assertTrue("a 429 is the key's quota, not a busy server", GooglePlacesSource.failure(HttpAnswer(429, "")) is GoogleQuota)
         assertTrue(GooglePlacesSource.failure(HttpAnswer(503, "")) is SourceBusy)
         assertTrue(GooglePlacesSource.failure(HttpAnswer(403, "")) is GoogleKeyProblem)
-        assertThrows(GoogleKeyProblem::class.java) { GooglePlacesSource(key = { null }) { _, _ -> HttpAnswer(200, answer) }.stationsNear(here, diesel, 8_000.0) }
+        assertThrows(GoogleKeyProblem::class.java) { GooglePlacesSource(key = { null }) { _, _ -> HttpAnswer(200, answer) }.stationsNear(here, 8_000.0) }
     }
 
     @Test

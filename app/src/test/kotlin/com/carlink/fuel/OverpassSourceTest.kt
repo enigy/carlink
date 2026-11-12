@@ -35,8 +35,8 @@ class OverpassSourceTest {
     }
 
     @Test
-    fun `stations are named, placed and kept or dropped by their diesel tag`() {
-        val all = OverpassSource.parse(answer, gasoline)
+    fun `stations are named, placed and keep their diesel tag`() {
+        val all = OverpassSource.parse(answer)
         assertEquals(listOf("osm:node/1", "osm:way/2", "osm:node/3", "osm:node/5"), all.map { it.id })
         val first = all[0]
         assertEquals("Made-up Fuel", first.name)
@@ -45,7 +45,7 @@ class OverpassSourceTest {
         assertEquals("brand when there's no name", "Invented Oil", all[1].name)
         assertEquals("Fuel station", all[3].name)
         assertNull(all[3].address)
-        assertEquals("diesel drops a station tagged no", listOf("osm:node/1", "osm:way/2", "osm:node/5"), OverpassSource.parse(answer, diesel).map { it.id })
+        assertEquals("yes, not said, no, not said", listOf(true, null, false, null), all.map { it.diesel })
     }
 
     /** The Mac's 11 Nov bench: overpass-api.de at capacity answered 502 and 25-32 s late. */
@@ -62,9 +62,9 @@ class OverpassSourceTest {
                 asked += endpoint
                 if (asked.size == 1) throw SourceBusy("HTTP 504") else answer
             }
-        assertThrows(SourceBusy::class.java) { source.stationsNear(here, diesel, 8_000.0) }
+        assertThrows(SourceBusy::class.java) { source.stationsNear(here, 8_000.0) }
         assertEquals("the busy line names the instance that was busy", "one.example", source.detail)
-        assertEquals(3, source.stationsNear(here, diesel, 8_000.0).size)
+        assertEquals(4, source.stationsNear(here, 8_000.0).size)
         assertEquals(listOf("https://one.example/api/interpreter", "https://two.example/api/interpreter"), asked)
         assertEquals("the log names the host that answered", "two.example", source.detail)
     }
@@ -80,10 +80,27 @@ class OverpassSourceTest {
         assertEquals("up to an hour", 3_600L, RetryWait.seconds(1, 86_400))
     }
 
+    /** The Mac's 11 Nov bench: a change of engine changed the diesel ordering only at the next lookup. */
     @Test
-    fun `for diesel the stations known to sell it come first, then the nearest`() {
-        val source = OverpassSource(post = { _, _ -> answer })
-        assertEquals(listOf("osm:node/1", "osm:way/2", "osm:node/5"), source.stationsNear(here, diesel, 8_000.0).map { it.id })
-        assertEquals("gasoline: nearest first", listOf("osm:way/2", "osm:node/3", "osm:node/1", "osm:node/5"), source.stationsNear(here, gasoline, 8_000.0).map { it.id })
+    fun `for diesel the stations known to sell it come first, then the nearest, from the same lookup as gasoline`() {
+        val stations = OverpassSource(post = { _, _ -> answer }).stationsNear(here, 8_000.0)
+
+        fun ids(fuel: CarFuel) = StationList.rows(stations, fuel, here, null, cheapestFirst = false).map { it.station.id }
+        assertEquals("a station tagged no is left out", listOf("osm:node/1", "osm:way/2", "osm:node/5"), ids(diesel))
+        assertEquals("gasoline: nearest first", listOf("osm:way/2", "osm:node/3", "osm:node/1", "osm:node/5"), ids(gasoline))
+    }
+
+    @Test
+    fun `the nearest 40 are kept, and up to 40 more tagged for diesel`() {
+        // 50 made-up stations going south, the farthest five tagged for diesel.
+        val elements =
+            (1..50).joinToString(",") { i ->
+                val tag = if (i > 45) ",\"fuel:diesel\":\"yes\"" else ""
+                "{\"type\":\"node\",\"id\":$i,\"lat\":${-33.9 - i * 0.001},\"lon\":151.2,\"tags\":{\"amenity\":\"fuel\"$tag}}"
+            }
+        val kept = OverpassSource(post = { _, _ -> "{\"elements\":[$elements]}" }).stationsNear(here, 8_000.0)
+        assertEquals(OverpassSource.KEEP + 5, kept.size)
+        val dieselFirst = StationList.rows(kept, diesel, here, null, cheapestFirst = false).take(5).map { it.station.id }
+        assertEquals("diesel still finds the five past the nearest 40", (46..50).map { "osm:node/$it" }, dieselFirst)
     }
 }

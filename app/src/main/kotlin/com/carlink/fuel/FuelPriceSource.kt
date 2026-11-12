@@ -18,19 +18,19 @@ interface FuelPriceSource {
     val detail: String? get() = null
 
     /**
-     * Stations within [radiusM] of [here] that sell [fuel], nearest first with the ones known to sell it ahead. Blocking:
-     * call it off the main thread. Throws [IOException] when the source can't be reached.
+     * Stations within [radiusM] of [here], with what the source knows of each fuel there ([Station.prices],
+     * [Station.diesel]): the card picks from it for the car's fuel ([StationList]). Blocking: call it off the main thread.
+     * Throws [IOException] when the source can't be reached.
      */
     @Throws(IOException::class)
     fun stationsNear(
         here: GeoPoint,
-        fuel: CarFuel,
         radiusM: Double,
     ): List<Station>
 }
 
-/** Nearest first, with the stations known to sell the fuel ahead of the ones whose tags don't say (the diesel rule). */
-internal fun List<Station>.nearestFirst(here: GeoPoint): List<Station> = sortedWith(compareBy({ it.sellsFuel != true }, { Geo.metres(here, it.at) }))
+/** Nearest first. */
+internal fun List<Station>.nearestFirst(here: GeoPoint): List<Station> = sortedBy { Geo.metres(here, it.at) }
 
 /**
  * The station service answered that it is busy (HTTP 429 or 5xx) or took too long to answer: the card says so and tries
