@@ -65,10 +65,9 @@ import java.util.Locale
  * The Fuel card: the truck's range in the car's own distance unit, what it runs on ([CarFuel]: the car's fuel types,
  * the driver's engine override and grade), and the low-fuel warning as an amber banner ([LowFuel]: the car's warning,
  * or the range at the driver's threshold); then, with Settings › Vehicle › Nearby stations on, the stations around
- * ([FuelStations]). Parked, it adds the tank's bar (only when the level and the tank's size are both read), small print
- * and up to twenty stations under their source's credit, scrolling (asked 12 Nov), a tap opening a station's sheet; moving, the range, the fuel
- * and at most three big rows in large type, no small print, no scrolling, a tap starting directions at once
- * ([onDirections]). Unknown counts as moving ([DrivingState.parked]).
+ * ([FuelStations]): the tank's bar (only when the level and the tank's size are both read), small print and up to twenty
+ * stations under their source's credit, scrolling, a tap opening a station's sheet. The same parked and moving (owner,
+ * 12 Nov: the truck's driving layout, three big rows with no scrolling, read as a list that wouldn't swipe).
  *
  * Range, the level and the warning need CAR_ENERGY, and the stations the location permission. The card asks for
  * CAR_ENERGY by itself once per run, when it is opened parked, never at the app's start (the buried-dialog bug of 11
@@ -84,6 +83,7 @@ internal fun FuelCard(
     val context = LocalContext.current
     val store = remember(context) { VehicleStore.get(context) }
     val vehicle by VehicleReadings.state.collectAsState()
+    // Only for asking CAR_ENERGY by itself, parked: a system dialog never pops up over CarPlay while the truck moves.
     val parked by DrivingState.parked.collectAsState()
     val engine by store.engineChoice.collectAsState()
     val grade by store.fuelGrade.collectAsState()
@@ -106,16 +106,12 @@ internal fun FuelCard(
     val fuel = CarFuel.of(vehicle.fuelTypes, engine, grade)
     FollowStations(active, listOf(nearby, location.allowed, source, radiusMi, googleKey, fuel.hasStations), low)
     var picked by remember { mutableStateOf<StationRow?>(null) }
-    LaunchedEffect(parked) { if (!parked) picked = null } // the sheet is a parked view
     Box(modifier = modifier) {
-        val scroll = if (parked) Modifier.verticalScroll(rememberScrollState()) else Modifier
-        Column(modifier = Modifier.fillMaxSize().then(scroll), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            val look = FuelLook(parked, low, imperial, radiusMi)
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            val look = FuelLook(low, imperial, radiusMi)
             CarData(vehicle, fuel, look, energy)
             if (fuel.hasStations) {
-                Stations(vehicle, fuel, look, onAllowLocation = { location.ask(fromButton = true) }) { row ->
-                    if (parked) picked = row else onDirections(row.station)
-                }
+                Stations(vehicle, fuel, look, onAllowLocation = { location.ask(fromButton = true) }) { row -> picked = row }
             }
         }
         picked?.let { row ->
@@ -133,7 +129,7 @@ internal fun FuelCard(
     }
 }
 
-/** The car's part: the low-fuel banner, the range (or the energy request), the fuel, and parked the tank and small print. */
+/** The car's part: the low-fuel banner, the range (or the energy request), the fuel, the tank and its small print. */
 @Composable
 private fun CarData(
     vehicle: VehicleState,
@@ -144,18 +140,16 @@ private fun CarData(
     val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
     val imperial = look.imperial
     if (look.low) LowFuelBanner()
-    if (energy.allowed) Range(vehicle, imperial) else AllowFuel(hint = look.parked) { energy.ask(fromButton = true) }
+    if (energy.allowed) Range(vehicle, imperial) else AllowFuel { energy.ask(fromButton = true) }
     Text(fuel.label, style = MaterialTheme.typography.headlineMedium, color = if (fuel.kind == CarFuel.Kind.UNKNOWN) secondary else LocalContentColor.current)
-    if (look.parked) {
-        vehicle.fuelFraction()?.let { TankBar(it) }
-        VehicleText.tank(vehicle, imperial)?.let { Text("Tank: $it", style = MaterialTheme.typography.titleMedium, color = secondary) }
-    }
+    vehicle.fuelFraction()?.let { TankBar(it) }
+    VehicleText.tank(vehicle, imperial)?.let { Text("Tank: $it", style = MaterialTheme.typography.titleMedium, color = secondary) }
 }
 
 /**
  * The stations around ([FuelStations]) for the car's [fuel] as it is now, under the All and Starred tabs ([StationStars]),
  * as many rows as the layout takes: a change of grade or engine shows the other prices at once, from the same lookup.
- * Parked, each row's star marks the station; Starred shows the marked ones among the lookup's.
+ * Each row's star marks the station; Starred shows the marked ones among the lookup's.
  */
 @Composable
 private fun Stations(
@@ -173,25 +167,20 @@ private fun Stations(
     val here by FuelStations.here.collectAsState()
     val rows =
         StationList
-            .rows(view.stations, fuel, here, vehicle.rangeM, cheapestFirst = look.parked && !look.low)
+            .rows(view.stations, fuel, here, vehicle.rangeM, cheapestFirst = !look.low)
             // Starred: the starred ones among all, so CHEAPEST and NEAREST still mean of every station (the Mac's 12 Nov bench).
             .filter { tab != StationStars.Tab.STARRED || it.station.id in starred }
-            .take(if (look.parked) PARKED_ROWS else MOVING_ROWS)
+            .take(MAX_ROWS)
             .map { it.copy(starred = it.station.id in starred) }
     if (view.status != FuelStations.Status.OFF && view.status != FuelStations.Status.NEEDS_LOCATION) {
-        FuelTabs(tab, big = !look.parked) {
+        FuelTabs(tab) {
             logWarn("[UI_ACTION] Fuel tab -> ${it.code}", tag = "UI")
             stars.setTab(it)
         }
     }
     // Only that a star changed is logged: a station's id says where it is.
-    val onStar: ((StationRow) -> Unit)? =
-        if (look.parked) {
-            { row -> logWarn("[UI_ACTION] Fuel station ${if (stars.toggle(row.station.id)) "starred" else "unstarred"}", tag = "UI") }
-        } else {
-            null
-        }
-    // The refresh, parked and moving (owner, 12 Nov): its own target above the rows, which keep their one tap.
+    val onStar: (StationRow) -> Unit = { row -> logWarn("[UI_ACTION] Fuel station ${if (stars.toggle(row.station.id)) "starred" else "unstarred"}", tag = "UI") }
+    // The refresh (owner, 12 Nov): its own target above the rows, which keep their one tap.
     val onRefresh = {
         logWarn("[UI_ACTION] Fuel refresh", tag = "UI")
         FuelStations.refresh(context)
@@ -217,11 +206,9 @@ private fun FollowStations(
 }
 
 /**
- * How the card lays out now: [parked] (else moving: the big layout), the fuel [low], distances in miles ([imperial]), the
- * search radius ([radiusMi]) its words name, and whether the Starred tab is up ([starredTab]).
+ * How the card lays out now: the fuel [low], distances in miles ([imperial]), the search radius ([radiusMi]) its words name, and whether the Starred tab is up ([starredTab]).
  */
 internal data class FuelLook(
-    val parked: Boolean,
     val low: Boolean,
     val imperial: Boolean,
     val radiusMi: Int,
@@ -229,12 +216,12 @@ internal data class FuelLook(
 )
 
 /**
- * What the card's stations do when tapped ([StationsSection]): a row ([tap]), its star ([star], parked only: null moving),
- * the location request's Allow ([allowLocation]), and the refresh by the source line ([refresh], parked and moving).
+ * What the card's stations do when tapped ([StationsSection]): a row ([tap]), its star ([star]), the location request's
+ * Allow ([allowLocation]), and the refresh by the source line ([refresh]).
  */
 internal class StationActions(
     val tap: (StationRow) -> Unit,
-    val star: ((StationRow) -> Unit)?,
+    val star: (StationRow) -> Unit,
     val allowLocation: () -> Unit,
     val refresh: () -> Unit,
 )
@@ -314,26 +301,21 @@ private fun LowFuelBanner() {
 }
 
 /**
- * Without CAR_ENERGY: the card's request, with an Allow at the head unit's touch height. Parked, a [hint] says where the
+ * Without CAR_ENERGY: the card's request, with an Allow at the head unit's touch height. A hint says where the
  * switch is when Android no longer asks and Allow opens Carlink's app info (the Mac's 11 Nov bench: three levels down).
  */
 @Composable
-private fun AllowFuel(
-    hint: Boolean,
-    onAllow: () -> Unit,
-) {
+private fun AllowFuel(onAllow: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Allow Carlink to read the fuel", style = MaterialTheme.typography.headlineSmall)
         FilledTonalButton(onClick = onAllow, modifier = Modifier.heightIn(min = 72.dp)) {
             Text("Allow", style = MaterialTheme.typography.titleLarge)
         }
-        if (hint) {
-            Text(
-                "If no question comes, Allow opens Carlink's app info: under Permissions, find Car information.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA),
-            )
-        }
+        Text(
+            "If no question comes, Allow opens Carlink's app info: under Permissions, find Car information.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA),
+        )
     }
 }
 
@@ -368,5 +350,4 @@ private val LOCATION_PERMISSIONS = arrayOf(Manifest.permission.ACCESS_FINE_LOCAT
 
 private const val SECONDARY_ALPHA = 0.72f
 private const val TRACK_ALPHA = 0.22f
-private const val PARKED_ROWS = 20
-private const val MOVING_ROWS = 3
+private const val MAX_ROWS = 20
