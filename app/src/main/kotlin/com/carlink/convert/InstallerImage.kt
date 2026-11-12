@@ -40,11 +40,11 @@ object InstallerImage {
      */
     val PINNED: PinnedImage? =
         PinnedImage(
-            // "2.0.0 ocbm 31a2828", every binary built from 31a2828: its files match the pinned update package.
+            // "2.0.0 ocbm c05d066", every binary built from c05d066: its files match the pinned update package.
             tag = "installer-2.0.0",
             url = "https://github.com/enigy/ocbm/releases/download/installer-2.0.0/A15W_Update.img",
-            sizeBytes = 2_047_100L,
-            sha256 = "986141937cffd8f5d72872b3c00b855542a850557b76f930629b2b594e63a206",
+            sizeBytes = 2_049_057L,
+            sha256 = "c6c00fc31013d1bacc0d0d0e127c47f6f601c21c3f0383b22b774799ff149681",
         )
 
     /** Where the stick guide is: the installer image's release page (M7). A build with the switch off points at it. */

@@ -37,15 +37,15 @@ object AdapterUpdates {
         PinnedPackage(
             tag = "v2.0.0",
             url = "https://github.com/enigy/ocbm/releases/download/v2.0.0/ocbm-update-2.0.0.tgz",
-            sizeBytes = 2_018_485L,
-            sha256 = "4ffaa7969c0e0b5d2c2362c41a49158606bd4d00d4c3987aa985e0b6c016547d",
-            // "2.0.0 ocbm 31a2828" from 1.0.1: btd, carplayd, iap2d, iap_role_switch, ocbmd, 10 scripts and etc/ocbm/retired.list, built from 31a2828.
+            sizeBytes = 2_030_373L,
+            sha256 = "26873931eb5807e7f4a45644f45129de6de0adbb357120d94698994d0d447d21",
+            // "2.0.0 ocbm c05d066" from 1.0.1: btd, carplayd, iap2d, iap_role_switch, ocbmd, 12 scripts and etc/ocbm/retired.list, built from c05d066.
             // ROOM trial=no: a trial adapter finishes its install first.
             pkg =
                 UpdatePackage(
                     version = "2.0.0",
                     fromMin = "1.0.1",
-                    needKb = 3015,
+                    needKb = 3043,
                     notes = "Video from your iPhone on the car's screen while parked, and the car's GPS and status for your iPhone.",
                 ),
         )
