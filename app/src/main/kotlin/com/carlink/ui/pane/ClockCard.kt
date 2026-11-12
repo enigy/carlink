@@ -87,13 +87,13 @@ internal fun HeaderClock(modifier: Modifier = Modifier) {
     }
     val vehicle by VehicleReadings.state.collectAsState()
     val outside = vehicle.outside(vehicle.imperial(Locale.getDefault()))
-    val words = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum")
+    val words = MaterialTheme.typography.titleLarge.copy(fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum")
     val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         Text(now.format(timeFormat), style = words)
         if (outside != null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Thermostat, contentDescription = "Outside", tint = secondary, modifier = Modifier.size(20.dp))
+                Icon(Icons.Default.Thermostat, contentDescription = "Outside", tint = secondary, modifier = Modifier.size(24.dp))
                 Text("$outside°", style = words, color = secondary)
             }
         }

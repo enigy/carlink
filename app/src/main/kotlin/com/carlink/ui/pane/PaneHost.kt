@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
 import com.carlink.logging.logInfo
@@ -351,7 +352,8 @@ private fun PaneHeader(
         val tappable = if (onTitle != null) Modifier.clip(MaterialTheme.shapes.small).clickable(onClick = onTitle).padding(horizontal = 8.dp, vertical = 6.dp) else Modifier
         Text(
             title,
-            style = MaterialTheme.typography.titleMedium,
+            // 24 sp (owner, 12 Nov, on the backgrounds canvas), the header clock too ([HeaderClock]).
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = 24.sp, lineHeight = 32.sp),
             color = content.copy(alpha = HEADER_ALPHA),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
