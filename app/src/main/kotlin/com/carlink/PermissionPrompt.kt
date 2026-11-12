@@ -1,0 +1,94 @@
+package com.carlink
+
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.result.ActivityResultLauncher
+import com.carlink.logging.logWarn
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+/**
+ * Whether a runtime permission dialog Carlink asked for is waiting for its answer: from [ask] until the request's
+ * callback calls [answered]. The system shows the dialog in Carlink's own task, so the cluster's bring-back
+ * (MainActivity reordered to the front) buried it under MainActivity, unanswerable, and Android then refused every
+ * later request ("Can request only one set of permissions at a time"): the first-launch location request, Mac bench
+ * 11 Nov. MainActivity holds its cluster steps while a dialog is up, as it does for
+ * [com.carlink.usb.UsbPermissionPrompt].
+ */
+object PermissionPrompt {
+    private val state = MutableStateFlow(false)
+
+    /** When the open request was launched (System.nanoTime), to tell an answer the system gave without a dialog. */
+    @Volatile private var askedAtNs = 0L
+
+    val open: StateFlow<Boolean> = state.asStateFlow()
+
+    val isOpen: Boolean get() = state.value
+
+    /** Launch [launcher] with [input], marked open until [answered]. A launch that throws is not left open. */
+    fun <I> ask(
+        launcher: ActivityResultLauncher<I>,
+        input: I,
+    ) {
+        state.value = true
+        askedAtNs = System.nanoTime()
+        runCatching { launcher.launch(input) }.onFailure {
+            state.value = false
+            logWarn("[PERMISSION] request failed to launch: ${it.message}", tag = "MAIN")
+        }
+    }
+
+    /**
+     * Ask with [launcher] or, while an earlier dialog still waits unanswered (Android would refuse this request without
+     * asking), open Carlink's page in the system's app settings instead. For an Allow button that must always work.
+     */
+    fun <I> askOrOpenSettings(
+        context: Context,
+        launcher: ActivityResultLauncher<I>,
+        input: I,
+    ) {
+        if (isOpen && openAppSettings(context)) return
+        ask(launcher, input)
+    }
+
+    /** The request's answer came back. */
+    fun answered() {
+        state.value = false
+    }
+
+    /**
+     * The answer to a request the driver made with an Allow button: true when it was refused without a dialog, faster
+     * than anyone answers one ([NO_DIALOG_MS]). That is Android's answer after "Don't allow & don't ask again" (the Mac's
+     * bench, 11 Nov: 56 ms), and the caller then opens Carlink's app settings ([openAppSettings]), the one place left to
+     * allow it.
+     */
+    fun answered(granted: Boolean): Boolean {
+        answered()
+        return !granted && (System.nanoTime() - askedAtNs) / NS_PER_MS < NO_DIALOG_MS
+    }
+
+    /** Faster than a person can read a dialog and answer it. */
+    private const val NO_DIALOG_MS = 500L
+    private const val NS_PER_MS = 1_000_000L
+
+    /**
+     * Carlink's page in the system's app settings, for a request Android would refuse because an earlier dialog
+     * still waits unanswered. False where the head unit has no such page.
+     */
+    fun openAppSettings(context: Context): Boolean {
+        val intent =
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            context.startActivity(intent)
+            true
+        } catch (e: ActivityNotFoundException) {
+            logWarn("[PERMISSION] no app settings page: ${e.message}", tag = "MAIN")
+            false
+        }
+    }
+}

@@ -775,6 +775,12 @@ class OcbmClient(
      */
     fun sendTelephony(index: Byte): Boolean = enqueue(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_TELEPHONY, index), "telephony $index")
 
+    /** One NMEA sentence of the head unit's GPS (`INPUT_LOCATION`, [com.carlink.car.CarGpsFeed]). Non-blocking, any thread. */
+    fun sendLocation(sentence: String): Boolean = enqueue(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_LOCATION) + sentence.toByteArray(Charsets.US_ASCII), "location")
+
+    /** The car's status values, `[id][value]…` (`INPUT_VEHICLE_STATUS`, [com.carlink.car.VehicleStatusFeed]). Non-blocking, any thread. */
+    fun sendVehicleStatus(values: ByteArray): Boolean = enqueue(Ocbm.CH_INPUT, byteArrayOf(Ocbm.INPUT_VEHICLE_STATUS) + values, "vehicle status")
+
     /**
      * `[INPUT_DATASTREAM][stream u32 LE][JSON]` on CH_INPUT -> the box sends the message to the phone on that shared
      * DataStream (route A's answers, [com.carlink.video.VideoPlayback]). False = dropped: not subscribed, the queue

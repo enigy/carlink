@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.SystemClock
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -140,9 +139,8 @@ internal fun rememberArtIsDark(image: ImageBitmap?): Boolean =
  * the cover stays whole and sharp above the words. The first cut started the fade at a fixed 38 % of
  * the pane, well above the title (owner, 10-26: "bring it down closer to the Title text start").
  *
- * [frostAll] (the clock while music plays, [PaneBackdrop.FROSTED]) raises the band to the top so the
- * whole cover is frosted, gliding over [FROST_ALL_MS] as the driver swipes from the music to the clock
- * and back; the plain background crossfades in when the art goes (owner, 10-27).
+ * The clock once wore the whole cover frosted while music played (owner, 10-27); it has Drift + Tide
+ * instead ([TideBackdrop], owner, 12 Nov).
  */
 @Composable
 internal fun MediaBackdrop(
@@ -150,14 +148,12 @@ internal fun MediaBackdrop(
     background: Color,
     wordsTopInRoot: Float,
     modifier: Modifier = Modifier,
-    frostAll: Boolean = false,
 ) {
-    val cover by animateFloatAsState(if (frostAll) 1f else 0f, tween(FROST_ALL_MS), label = "frost all")
     Crossfade(targetState = image, animationSpec = tween(ART_FADE_MS), label = "album art", modifier = modifier) { img ->
         if (img != null) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().frostedBand(wordsTopInRoot, cover))
+                Image(bitmap = img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().frostedBand(wordsTopInRoot))
             }
         } else {
             Box(modifier = Modifier.fillMaxSize().background(background))
@@ -171,10 +167,7 @@ internal fun MediaBackdrop(
  * column and the pager; this layer's own root offset is measured and taken off.
  */
 @Composable
-private fun Modifier.frostedBand(
-    wordsTopInRoot: Float,
-    cover: Float,
-): Modifier {
+private fun Modifier.frostedBand(wordsTopInRoot: Float): Modifier {
     var selfTopInRoot by remember { mutableFloatStateOf(Float.NaN) }
     val lead = with(LocalDensity.current) { FROST_LEAD.toPx() }
     return this
@@ -184,11 +177,9 @@ private fun Modifier.frostedBand(
             drawContent()
             val measured = !wordsTopInRoot.isNaN() && !selfTopInRoot.isNaN()
             val band = if (measured) wordsTopInRoot - selfTopInRoot else size.height * FROST_FALLBACK
-            // [cover] lifts the band to the top: at 1 the fade sits just above the pane, frost everywhere.
-            val full = band * (1f - cover)
-            val clear = (band - lead).coerceAtLeast(0f) * (1f - cover) - lead * cover
+            val clear = (band - lead).coerceAtLeast(0f)
             drawRect(
-                brush = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = clear, endY = full.coerceAtLeast(clear + 1f)),
+                brush = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = clear, endY = band.coerceAtLeast(clear + 1f)),
                 blendMode = BlendMode.DstIn,
             )
         }.blur(FROST_RADIUS)
@@ -328,8 +319,6 @@ private const val FROST_FALLBACK = 0.6f
 private const val PROGRESS_TICK_MS = 250L
 private const val ART_FADE_MS = 600
 
-/** How long the frost takes to cover the whole cover, or draw back to the band. */
-private const val FROST_ALL_MS = 700
 private const val ART_SETTLE_MS = 1_000L
 private const val TONE_SAMPLE = 16
 private const val SECONDARY_ALPHA = 0.72f

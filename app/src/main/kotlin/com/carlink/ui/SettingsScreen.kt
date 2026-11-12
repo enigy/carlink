@@ -86,6 +86,9 @@ import com.carlink.ui.settings.SettingsLiveState
 import com.carlink.ui.settings.SettingsModel
 import com.carlink.ui.settings.SettingsStyle
 import com.carlink.ui.settings.TroubleshootPane
+import com.carlink.ui.settings.VehiclePane
+import com.carlink.ui.settings.VehicleStore
+import com.carlink.ui.settings.VehicleText
 import com.carlink.ui.settings.rememberSettingsLiveState
 import com.carlink.ui.theme.LocalCarlinkColors
 import com.carlink.usb.BridgeAccessHub
@@ -261,6 +264,7 @@ private fun CategoryPane(
         SettingsCategory.DISPLAY -> DisplayPane(savedMode = savedMode, onApply = onApplyMode, onApplyLayout = onApplyLayout)
         SettingsCategory.CALLS -> CallsPane(panes.carlinkManager)
         SettingsCategory.CLUSTER -> ClusterPane(panes.live, onResetCluster = panes.actions.onResetCluster)
+        SettingsCategory.VEHICLE -> VehiclePane()
         SettingsCategory.TROUBLESHOOT -> TroubleshootPane(panes.carlinkManager, panes.live, connected = panes.connected)
         SettingsCategory.ADAPTER -> AdapterPane(panes.carlinkManager, panes.live)
         SettingsCategory.BRIDGE -> BridgePane(panes.carlinkManager, panes.live)
@@ -282,11 +286,15 @@ private fun categorySummaries(
     val layout by remember { LayoutStore.get(context) }.flow.collectAsState()
     val live = panes.live
     val access by BridgeAccessHub.state.collectAsState()
+    val vehicle = remember { VehicleStore.get(context) }
+    val vehicleGps by vehicle.carGps.collectAsState()
+    val vehicleShares by vehicle.shares.collectAsState()
     return mapOf(
         SettingsCategory.PHONES to SettingsModel.phonesSummary(live.connectedPhone, live.devices.size),
         SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo, layout.layout),
         SettingsCategory.CALLS to SettingsModel.callsSummary(mic, buffer),
         SettingsCategory.CLUSTER to SettingsModel.clusterSummary(live.clusterOn, laneGuidance.anyOn),
+        SettingsCategory.VEHICLE to VehicleText.summary(vehicleGps, vehicleShares),
         SettingsCategory.TROUBLESHOOT to SettingsModel.troubleshootSummary(live.driveLog, live.driveLogTrouble != null),
         SettingsCategory.ADAPTER to SettingsModel.adapterSummary(panes.carlinkManager.adapterName, live.box),
         SettingsCategory.BRIDGE to BridgeAccessText.summary(access),

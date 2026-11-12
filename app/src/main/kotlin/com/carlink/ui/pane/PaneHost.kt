@@ -1,5 +1,9 @@
 package com.carlink.ui.pane
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -42,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.carlink.CarlinkManager
 import com.carlink.callui.CallRoster
 import com.carlink.logging.logInfo
@@ -127,7 +132,8 @@ private fun rememberDeck(
     session: Boolean,
 ): Deck {
     val nav by NavigationStateManager.state.collectAsState()
-    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack)
+    val lowFuel = rememberLowFuel()
+    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack, fuel = rememberFuelDealt(lowFuel))
     var shown by remember { mutableStateOf(PaneDeck.default(pages)) }
     var dealt by remember { mutableStateOf(pages) }
     // Now Playing put in front by the pane's title, and the card the pane stepped to; null when it is
@@ -168,6 +174,7 @@ private fun rememberDeck(
             shown = next
         }
     }
+    FollowLowFuel(lowFuel, pages, shown) { shown = it }
     LaunchedEffect(session) { if (!session) aside = null }
     return Deck(pages, shown, onShown = { shown = it }) { app ->
         val to = PaneDeck.beside(app, pages)
@@ -200,10 +207,11 @@ private fun PaneHost(
     val nav by NavigationStateManager.state.collectAsState()
     val showCall = call != CallRoster.Presentation.None
     val card = if (showCall) null else deck.shown
-    // The cover behind the music, and frosted behind the clock while music plays; a call, the route and a quiet clock take the plain background.
-    val backdrop = PaneBackdrop.of(card, media.playing)
-    val art = if (backdrop != PaneBackdrop.PLAIN) art else null
-    val look = paneLook(art, rememberArtIsDark(art), night = isSystemInDarkTheme())
+    // The cover behind the music, Drift + Tide behind the Fuel card and the clock; a call and the route take the plain background.
+    val backdrop = PaneBackdrop.of(card)
+    val art = if (backdrop == PaneBackdrop.BAND) art else null
+    val night = isSystemInDarkTheme()
+    val look = paneLook(art, rememberArtIsDark(art), night = night)
     val title = paneTitle(card, media.info.appName)
     val onTitle = titleTap(card, deck, carlinkManager)
     // Where the music card's title starts (root coordinates): the frost on the art begins just above it.
@@ -216,7 +224,11 @@ private fun PaneHost(
         color = look.background,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, frostAll = backdrop == PaneBackdrop.FROSTED, modifier = Modifier.fillMaxSize())
+            MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, modifier = Modifier.fillMaxSize())
+            // Drift + Tide behind the Fuel card and the clock (owner, 12 Nov), fading in and out as the cards swipe.
+            AnimatedVisibility(visible = backdrop == PaneBackdrop.TIDE, enter = fadeIn(tween(TIDE_FADE_MS)), exit = fadeOut(tween(TIDE_FADE_MS))) {
+                TideBackdrop(night = night, modifier = Modifier.fillMaxSize())
+            }
             if (art != null) {
                 Box(
                     modifier =
@@ -235,6 +247,7 @@ private fun PaneHost(
                         PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, header = header, modifier = Modifier.fillMaxSize()) { which, m ->
                             when (which) {
                                 PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
+                                PaneCard.FUEL -> FuelCard(active = deck.shown == PaneCard.FUEL, onDirections = { carlinkManager.openDirections(it.at) }, modifier = m)
                                 PaneCard.MEDIA -> MusicCard(carlinkManager, media, lyrics, m) { wordsTop = it }
                                 PaneCard.CLOCK -> ClockCard(modifier = m)
                             }
@@ -307,6 +320,7 @@ private fun paneTitle(
         null -> "Phone"
         PaneCard.MEDIA -> appName?.takeIf { it.isNotBlank() } ?: "Music"
         PaneCard.DIRECTIONS -> "Directions"
+        PaneCard.FUEL -> "Fuel"
         PaneCard.CLOCK -> "Carlink"
     }
 
@@ -347,7 +361,8 @@ private fun PaneHeader(
         val tappable = if (onTitle != null) Modifier.clip(MaterialTheme.shapes.small).clickable(onClick = onTitle).padding(horizontal = 8.dp, vertical = 6.dp) else Modifier
         Text(
             title,
-            style = MaterialTheme.typography.titleMedium,
+            // 24 sp (owner, 12 Nov, on the backgrounds canvas), the header clock too ([HeaderClock]).
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = 24.sp, lineHeight = 32.sp),
             color = content.copy(alpha = HEADER_ALPHA),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -388,6 +403,7 @@ private val NIGHT_PANE = Color(0xFF0B0D10)
 private val PANE_CORNER = 52.dp
 private const val SCRIM_TOP = 0.45f
 private const val SCRIM_BOTTOM = 0.75f
+private const val TIDE_FADE_MS = 600
 private const val HEADER_ALPHA = 0.85f
 private const val TAB_ALPHA = 0.7f
 

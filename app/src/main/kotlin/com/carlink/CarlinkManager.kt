@@ -27,8 +27,12 @@ import com.carlink.callui.CallNotificationHost
 import com.carlink.callui.CallRoster
 import com.carlink.callui.CallState
 import com.carlink.car.AppFocusClaimer
+import com.carlink.car.CarGpsFeed
 import com.carlink.car.DriveStateMonitor
 import com.carlink.car.DrivingState
+import com.carlink.car.VehicleReadings
+import com.carlink.car.VehicleStatusFeed
+import com.carlink.car.VehicleStatusValues
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.convert.BridgeStickTransport
 import com.carlink.convert.ConversionUsb
@@ -41,6 +45,8 @@ import com.carlink.device.KnownDeviceSnapshot
 import com.carlink.device.KnownDeviceStore
 import com.carlink.device.mergeDeviceList
 import com.carlink.device.phonePolicyJson
+import com.carlink.fuel.Directions
+import com.carlink.fuel.GeoPoint
 import com.carlink.logging.DriveLog
 import com.carlink.logging.DriveLogging
 import com.carlink.logging.LogExport
@@ -111,6 +117,7 @@ import com.carlink.ui.settings.LaneGuidanceStore
 import com.carlink.ui.settings.LayoutStore
 import com.carlink.ui.settings.MusicStore
 import com.carlink.ui.settings.SessionSettings
+import com.carlink.ui.settings.VehicleStore
 import com.carlink.usb.AdapterHandover
 import com.carlink.usb.BridgeAccessHub
 import com.carlink.usb.BridgeAccessText
@@ -764,6 +771,15 @@ class CarlinkManager(
     /** When this phone's session reaches STREAMING: its media once keyed, or its key when its media came first. */
     private val streamingStamp = StreamingStamp()
 
+    /**
+     * The head unit's GPS for the phone (Settings › Vehicle › Car GPS for the iPhone), started and stopped by the box's
+     * `{"kind":"location"}` records, which come only when Carlink pushed `location:`. Made by the first record.
+     */
+    @Volatile private var carGps: CarGpsFeed? = null
+
+    /** The truck's status for the phone (Settings › Vehicle), sent once the box says the phone asked for it. */
+    private val vehicleStatusFeed = VehicleStatusFeed(scope, VehicleStore.get(context).shares) { values -> client?.sendVehicleStatus(values) ?: false }
+
     /** One-time [initialize] work (mic manager, MediaSession attach) has run. */
     private var initializedOnce = false
 
@@ -817,8 +833,9 @@ class CarlinkManager(
 
     /**
      * The truck is known to be parked: AAOS's car service is connected and its last reading needs no distraction
-     * optimization. False off automotive, before the car service answers, and once it's lost. Route A's video plays
-     * only while this is true, so not knowing counts as moving ([DriveStateMonitor.parked]).
+     * optimization. False off automotive, before the car service answers, and once it's lost, so not knowing counts
+     * as moving ([DriveStateMonitor.parked]). What parked-only actions wait for: route A's video, the adapter and
+     * bridge updates, Copy logs.
      */
     val isParked: Boolean get() = driveMonitor?.parked == true
 
@@ -1701,6 +1718,8 @@ class CarlinkManager(
         val split = layout.carPlayArea(g.width, g.height)
         declaredSplitArea = split
         val driveSide = DriveSideStore.get(context).current
+        val vehicle = VehicleStore.get(context)
+        val shares = vehicle.shares.value
         if (layout.split) {
             val area = split?.let { "${it.width}x${it.height}@${it.x},${it.y}" } ?: "NONE (illegal for this panel; full screen)"
             logInfo("[VIEW_AREA] layout ${layout.layout.name} ${layout.width.percent}%: CarPlay area $area", tag = Logger.Tags.VIDEO)
@@ -1735,7 +1754,13 @@ class CarlinkManager(
                 viewAreaAnimMs = if (split != null) SplitViewArea.TRANSITION_MS else null,
                 metadataTier = if (askLanes) "extended" else "proven",
                 metadataSkip = if (askLanes) VehicleConfigSpec.LANES_ONLY_SKIP else emptyList(),
+                // Settings › Vehicle: the truck's GPS (with the location permission), the data points the driver shares, and
+                // always the engine type, the car's own unless the driver picked one.
+                location = if (vehicle.carGps.value && CarGpsFeed.permitted(context)) CarGpsFeed.DECLARED else emptyList(),
+                vehicleStatus = VehicleStatusValues.declared(shares),
+                engineTypes = VehicleStatusValues.declaredEngines(vehicle.engineChoice.value.engines, VehicleReadings.state.value.fuelTypes),
             )
+        logInfo("[VEHICLE] declared: location=${spec.location} vehicleStatus=${spec.vehicleStatus} engineTypes=${spec.engineTypes}", tag = Logger.Tags.ADAPTR)
         dockOnRight = spec.rightHandDrive
         pushedSettings = SessionSettings(displayMode, layout, driveSide, askLanes)
         LaneActivity.noteAsked(askLanes)
@@ -1779,6 +1804,8 @@ class CarlinkManager(
         helloReplayJob?.cancel()
         helloReplay.reset()
         streamingStamp.reset()
+        carGps?.stop("Carlink stopped")
+        vehicleStatusFeed.stop()
         // Always clear the streaming-start timestamp: with preserveEscalation a stale value
         // would let the NEXT error measure "session duration" from the PREVIOUS session's start,
         // producing phantom Pattern C increments for attempts that never reached STREAMING.
@@ -1946,6 +1973,18 @@ class CarlinkManager(
     fun openCarPlayApp(url: String) {
         val c = client ?: return
         logInfo("[CARPLAY_UI] requestUI url=$url", tag = Logger.Tags.ADAPTR)
+        scope.launch(Dispatchers.IO) { c.sendRequestUiUrl(url) }
+    }
+
+    /**
+     * CarPlay's route preview to [at] ([Directions]): a station tapped on the Fuel card. GO starts
+     * guidance; with a route running, CarPlay offers Add Stop (the Mac's bench, 11 Nov). The coordinates aren't logged:
+     * a log of stations tapped near home says where the driver lives.
+     */
+    fun openDirections(at: GeoPoint) {
+        val c = client ?: return
+        val url = Directions.url(at)
+        logInfo("[CARPLAY_UI] requestUI directions to a station (${url.length} B)", tag = Logger.Tags.ADAPTR)
         scope.launch(Dispatchers.IO) { c.sendRequestUiUrl(url) }
     }
 
@@ -2451,6 +2490,8 @@ class CarlinkManager(
      */
     private fun phoneSessionEnded() {
         phoneSetup.onPhoneLeft()
+        carGps?.stop("the phone's session ended")
+        vehicleStatusFeed.stop()
         clearCachedMediaMetadata()
         client?.reannounceKeyed()
         streamingStamp.reset()
@@ -3459,6 +3500,7 @@ class CarlinkManager(
     private fun updateBlockedReason(): String? =
         when {
             isDriving -> "The car is moving. Park, then update the adapter."
+            !isParked -> "Carlink can't tell yet that the car is parked. Park, then update the adapter."
             voiceRouter?.isCallActive() == true -> "A phone call is active. Update the adapter after the call."
             else -> null
         }
@@ -4010,6 +4052,27 @@ class CarlinkManager(
         }
     }
 
+    /** One META_JSON record, by its `kind`. On the OCBM read thread: hands off to the main thread. */
+    private fun onMetadataJson(obj: JSONObject) {
+        when (obj.optString("kind")) {
+            "nowPlaying" -> scope.launch { processNowPlaying(obj) }
+            "callState" -> CallState.fromJson(obj)?.let { cs -> scope.launch { onCallState(cs) } }
+            // 0 = no route. Claiming NAVIGATION app focus is the 3P way to tell AAOS the
+            // phone is now the navigator; a native maps app mid-route is told it lost it.
+            // Carlink: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
+            "routeGuidance", "maneuver", "laneGuidance" -> onNavigationJson(obj)
+            // Settings › Vehicle: the phone asks for the truck's GPS, or its status, and is done with them.
+            "location" -> scope.launch { (carGps ?: CarGpsFeed(context) { s -> client?.sendLocation(s) ?: false }.also { carGps = it }).onRecord(obj) }
+            "vehicleStatus" -> {
+                logInfo("[VEHICLE] the iPhone asks for the truck's status: $obj", tag = Logger.Tags.ADAPTR)
+                vehicleStatusFeed.onRecord(obj)
+            }
+            // Route A: a message on one of the phone's shared DataStreams (OCBM receiver::playback).
+            "dataStream" -> videoPlayback.onRecord(obj)
+            else -> Unit
+        }
+    }
+
     private fun onMetadata(
         marker: Int,
         payload: ByteArray,
@@ -4017,17 +4080,7 @@ class CarlinkManager(
         when (marker) {
             Ocbm.META_JSON -> {
                 val obj = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull() ?: return
-                when (obj.optString("kind")) {
-                    "nowPlaying" -> scope.launch { processNowPlaying(obj) }
-                    "callState" -> CallState.fromJson(obj)?.let { cs -> scope.launch { onCallState(cs) } }
-                    // 0 = no route. Claiming NAVIGATION app focus is the 3P way to tell AAOS the
-                    // phone is now the navigator; a native maps app mid-route is told it lost it.
-                    // Carlink: both records also drive the cluster/HUD trip (OcbmNavigationFeed).
-                    "routeGuidance", "maneuver", "laneGuidance" -> onNavigationJson(obj)
-                    // Route A: a message on one of the phone's shared DataStreams (OCBM receiver::playback).
-                    "dataStream" -> videoPlayback.onRecord(obj)
-                    else -> Unit
-                }
+                onMetadataJson(obj)
             }
             Ocbm.META_ARTWORK -> {
                 if (payload.size < 2) return

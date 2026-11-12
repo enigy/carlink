@@ -61,7 +61,8 @@ internal fun UsbBridgeGroup(
         BridgeUpdateRows(
             offer = updateOffer,
             step = updateStep,
-            driving = live.driving,
+            // Parked only, and parked must be known: not knowing counts as moving.
+            driving = !live.parked,
             onUpdate = { pin -> BridgeUpdateHub.update(context, pin) },
             onAllowInstalls = allowInstalls,
             onOpenFiles = { FilesLauncher.open(context, "[BRIDGE_UPDATE]") },

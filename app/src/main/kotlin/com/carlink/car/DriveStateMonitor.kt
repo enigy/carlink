@@ -136,6 +136,7 @@ class DriveStateMonitor(
         if (now == parked) return
         parked = now
         logInfo("[DRIVE] parked=$now", tag = Logger.Tags.ADAPTR)
+        DrivingState.setParked(now)
         handler.post { onParkedChanged?.invoke(now) }
     }
 

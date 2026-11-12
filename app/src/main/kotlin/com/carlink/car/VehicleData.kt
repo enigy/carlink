@@ -23,15 +23,23 @@ import com.carlink.navigation.TurnAlert
  * call and published nowhere; the truck does (1.06 probe, owner's drive 10-26: speed live 0-22 mph,
  * outside 16.5 °C, mph and miles). The properties this app can see are still logged at each connect,
  * in case another car differs. A reading is null until it comes, and stays null where the car says no.
+ *
+ * Settings › Vehicle adds range and the low-fuel warning (`CAR_ENERGY`, dangerous, asked for there) and the fuel
+ * types (`CAR_INFO`, normal), all granted to an app on the truck (the 10 Nov probe drive), for the phone.
  */
 object VehicleData {
     /** The one runtime permission: `CAR_SPEED` is dangerous. */
     const val SPEED_PERMISSION = "android.car.permission.CAR_SPEED"
 
+    /**
+     * Range and the low-fuel warning, for Settings › Vehicle: `CAR_ENERGY` is dangerous too, asked for there when the
+     * driver shares either. The truck grants it to an app (the 10 Nov probe drive).
+     */
+    const val ENERGY_PERMISSION = "android.car.permission.CAR_ENERGY"
+
     private var car: Car? = null
     private var props: CarPropertyManager? = null
     private val subscribed = mutableSetOf<Int>()
-
     private val callback =
         object : CarPropertyManager.CarPropertyEventCallback {
             override fun onChangeEvent(value: CarPropertyValue<*>) = take(value)
@@ -58,19 +66,27 @@ object VehicleData {
         }
         runCatching {
             Car.createCar(context, null, Car.CAR_WAIT_TIMEOUT_DO_NOT_WAIT) { c, ready ->
-                if (ready) connect(c, context) else logWarn("[VEHICLE] car service disconnected", tag = Logger.Tags.ADAPTR)
+                if (ready) connect(c, context) else onCarLost()
             }
         }.onSuccess { car = it }
             .onFailure { logWarn("[VEHICLE] Car.createCar failed: ${it.message}", tag = Logger.Tags.ADAPTR) }
     }
 
     fun stop() {
+        logInfo("[VEHICLE] stopped (watching ${names(subscribed)})", tag = Logger.Tags.ADAPTR)
         runCatching { props?.unregisterCallback(callback) }
         props = null
         subscribed.clear()
         runCatching { car?.disconnect() }
         car = null
         VehicleReadings.clear()
+    }
+
+    /** The car service went away: its managers go with it, so the next connect watches everything again. */
+    private fun onCarLost() {
+        logWarn("[VEHICLE] car service disconnected", tag = Logger.Tags.ADAPTR)
+        props = null
+        subscribed.clear()
     }
 
     private fun connect(
@@ -90,11 +106,21 @@ object VehicleData {
                 .getOrDefault(emptyList())
         val names = visible.map(VehiclePropertyIds::toString).sorted()
         logInfo("[VEHICLE] speed permission=$speedAllowed; ${visible.size} properties visible: ${names.joinToString()}", tag = Logger.Tags.ADAPTR)
+        val added = mutableListOf<Int>()
         for ((id, rate) in WATCHED) {
             if (id !in visible || id in subscribed) continue
             runCatching { mgr.getProperty<Any>(id, 0) }.getOrNull()?.let(::take)
             val ok = runCatching { mgr.registerCallback(callback, id, rate) }.getOrDefault(false)
-            if (ok) subscribed += id else logWarn("[VEHICLE] could not watch ${VehiclePropertyIds.toString(id)}", tag = Logger.Tags.ADAPTR)
+            if (ok) added += id else logWarn("[VEHICLE] could not watch ${VehiclePropertyIds.toString(id)}", tag = Logger.Tags.ADAPTR)
+        }
+        subscribed += added
+        logInfo(
+            "[VEHICLE] watching ${names(subscribed)} (new: ${names(added)}; not readable: ${names(WATCHED.keys - visible.toSet())})",
+            tag = Logger.Tags.ADAPTR,
+        )
+        // Static, so read once rather than watched: what the car runs on.
+        for (id in READ_ONCE) {
+            if (id in visible) runCatching { mgr.getProperty<Any>(id, 0) }.getOrNull()?.let(::take)
         }
         logInfo("[VEHICLE] ${VehicleReadings.state.value}", tag = Logger.Tags.ADAPTR)
     }
@@ -111,6 +137,19 @@ object VehicleData {
             VehiclePropertyIds.PERF_VEHICLE_SPEED_DISPLAY -> VehicleReadings.update { it.copy(displayMps = f) }
             VehiclePropertyIds.ENV_OUTSIDE_TEMPERATURE -> VehicleReadings.update { it.copy(outsideC = f) }
             VehiclePropertyIds.VEHICLE_SPEED_DISPLAY_UNITS -> VehicleReadings.update { it.copy(speedUnit = (v.value as? Int)?.takeIf { ok }) }
+            VehiclePropertyIds.RANGE_REMAINING -> VehicleReadings.update { it.copy(rangeM = f) }
+            VehiclePropertyIds.FUEL_LEVEL -> VehicleReadings.update { it.copy(fuelLevelMl = f) }
+            VehiclePropertyIds.INFO_FUEL_CAPACITY -> VehicleReadings.update { it.copy(fuelCapacityMl = f) }
+            VehiclePropertyIds.DISTANCE_DISPLAY_UNITS -> VehicleReadings.update { it.copy(distanceUnit = (v.value as? Int)?.takeIf { ok }) }
+            VehiclePropertyIds.FUEL_LEVEL_LOW -> {
+                val low = (v.value as? Boolean)?.takeIf { ok }
+                if (low != VehicleReadings.state.value.fuelLow) logInfo("[VEHICLE] low fuel warning: ${low ?: "unknown"}", tag = Logger.Tags.ADAPTR)
+                VehicleReadings.update { it.copy(fuelLow = low) }
+            }
+            VehiclePropertyIds.INFO_FUEL_TYPE -> {
+                val types = (v.value as? Array<*>)?.mapNotNull { it as? Int }
+                VehicleReadings.update { it.copy(fuelTypes = types?.takeIf { ok }) }
+            }
         }
     }
 
@@ -124,5 +163,16 @@ object VehicleData {
             VehiclePropertyIds.PERF_VEHICLE_SPEED_DISPLAY to CarPropertyManager.SENSOR_RATE_UI,
             VehiclePropertyIds.ENV_OUTSIDE_TEMPERATURE to CarPropertyManager.SENSOR_RATE_NORMAL,
             VehiclePropertyIds.VEHICLE_SPEED_DISPLAY_UNITS to CarPropertyManager.SENSOR_RATE_ONCHANGE,
+            // Settings › Vehicle, for the phone: range as it drops, and the low-fuel warning when it turns on or off.
+            VehiclePropertyIds.RANGE_REMAINING to CarPropertyManager.SENSOR_RATE_NORMAL,
+            VehiclePropertyIds.FUEL_LEVEL_LOW to CarPropertyManager.SENSOR_RATE_ONCHANGE,
+            // The Fuel card: the tank's level for its bar, and the unit the car shows distances in.
+            VehiclePropertyIds.FUEL_LEVEL to CarPropertyManager.SENSOR_RATE_NORMAL,
+            VehiclePropertyIds.DISTANCE_DISPLAY_UNITS to CarPropertyManager.SENSOR_RATE_ONCHANGE,
         )
+
+    /** Static properties, read at each connect: the fuel types (the truck: [3], diesel) and the tank's size. */
+    private val READ_ONCE = listOf(VehiclePropertyIds.INFO_FUEL_TYPE, VehiclePropertyIds.INFO_FUEL_CAPACITY)
+
+    private fun names(ids: Collection<Int>): String = ids.joinToString { VehiclePropertyIds.toString(it) }.ifEmpty { "none" }
 }

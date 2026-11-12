@@ -63,7 +63,7 @@ internal fun LogsGroup(
         GroupDivider()
         SaveLogsRow(carlinkManager, live)
         GroupDivider()
-        CopyToUsbRow()
+        CopyToUsbRow(parked = live.parked)
     }
 }
 
@@ -73,7 +73,7 @@ internal fun LogsGroup(
  * Carlink, so the same return notification as the bridge install is posted.
  */
 @Composable
-private fun CopyToUsbRow() {
+private fun CopyToUsbRow(parked: Boolean) {
     val context = LocalContext.current
     var failed by remember { mutableStateOf(false) }
     SettingRow(
@@ -81,6 +81,8 @@ private fun CopyToUsbRow() {
         subtitle =
             if (failed) {
                 "This head unit's Files app couldn't be opened"
+            } else if (!parked) {
+                "Park to copy the logs: Files opens only while the car is known to be parked"
             } else {
                 "Opens Files at Downloads/Carlink. Select the logs, then Copy to your USB drive. Parked only."
             },
@@ -88,6 +90,7 @@ private fun CopyToUsbRow() {
     ) {
         RowAction(
             label = "Open Files",
+            enabled = parked,
             onClick = {
                 logWarn("[UI_ACTION] Copy logs to USB: open Files", tag = "UI")
                 val opened = FilesLauncher.openFolder(context, subdir = "Carlink", logTag = "[LOGS]")

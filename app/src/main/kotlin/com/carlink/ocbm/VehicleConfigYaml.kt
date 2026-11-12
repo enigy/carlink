@@ -91,6 +91,18 @@ data class VehicleConfigSpec(
      */
     val metadataSkip: List<String> = emptyList(),
     /**
+     * `location:`, the box's own key: the NMEA sentences Carlink sends the phone from the car's GPS (Settings ›
+     * Vehicle › Car GPS for the iPhone, [com.carlink.car.CarGpsFeed]). Empty = omitted, and the box declares none.
+     */
+    val location: List<String> = emptyList(),
+    /**
+     * `vehicleStatus:`, the box's own key: Apple's names of the car's status Carlink shares with the phone (Settings ›
+     * Vehicle, [com.carlink.car.VehicleStatusFeed]). Empty = omitted, and the box declares none.
+     */
+    val vehicleStatus: List<String> = emptyList(),
+    /** `iapConfig.vehicleInfo.engineTypes`: what the car runs on, Apple's names. Empty = omitted (the box says gasoline). */
+    val engineTypes: List<String> = emptyList(),
+    /**
      * Apple `limitedUIConfig` — WHICH elements iOS restricts once `setLimitedUI(true)` is sent.
      *
      * This is a DECLARATION, not the switch. The runtime on/off is `CMD_LIMITED_UI_ON/OFF` on
@@ -135,6 +147,7 @@ data class VehicleConfigSpec(
         require(width > 0 && height > 0) { "pixelDimensions must be positive" }
         require(metadataTier in LEGAL_TIERS) { "metadata tier must be one of $LEGAL_TIERS" }
         require(metadataSkip.all { SKIP_TOKEN.matches(it) }) { "metadata skip names are lower_snake_case feature names" }
+        require((location + vehicleStatus + engineTypes).all { NAME_TOKEN.matches(it) }) { "vehicle names are plain words (GPGGA, outsideTemperature, diesel)" }
         // Legality, ported from the macOS host (VehicleConfig.swift PanelRule / ViewArea2Rule): a
         // config that iOS tears the session down for must never be constructible. Callers clamp
         // BEFORE constructing (DisplayProfile.toGeometry); this is the last line, not the policy.
@@ -171,6 +184,9 @@ data class VehicleConfigSpec(
         val VIEW_AREA_ANIM_MS_RANGE = 100..10_000
 
         private val SKIP_TOKEN = Regex("[a-z][a-z_]*")
+
+        /** A sentence, status or engine name: letters only, so nothing in one can bend the YAML around it. */
+        private val NAME_TOKEN = Regex("[A-Za-z]+")
     }
 }
 
@@ -286,6 +302,7 @@ object VehicleConfigYaml {
         limitedUiConfig(b, s)
         oemIconConfig(b, s)
         audioAndMetadata(b, s)
+        vehicle(b, s)
         return b.toString()
     }
 
@@ -469,6 +486,19 @@ object VehicleConfigYaml {
         line("metadata:")
         line("  tier: ${s.metadataTier}")
         if (s.metadataSkip.isNotEmpty()) line("  skip: [${s.metadataSkip.joinToString(", ")}]")
+    }
+
+    /** Settings › Vehicle: the car's GPS, its status and its engine, each omitted when empty (the document as before). */
+    private fun vehicle(
+        b: StringBuilder,
+        s: VehicleConfigSpec,
+    ) = with(b) {
+        if (s.location.isNotEmpty()) line("location: [${s.location.joinToString(", ")}]")
+        if (s.vehicleStatus.isNotEmpty()) line("vehicleStatus: [${s.vehicleStatus.joinToString(", ")}]")
+        if (s.engineTypes.isEmpty()) return@with
+        line("iapConfig:")
+        line("  vehicleInfo:")
+        line("    engineTypes: [${s.engineTypes.joinToString(", ")}]")
     }
 
     fun renderBytes(s: VehicleConfigSpec): ByteArray = render(s).toByteArray(Charsets.UTF_8)

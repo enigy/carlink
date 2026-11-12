@@ -372,6 +372,21 @@ object Ocbm {
     const val INPUT_TELEPHONY: Byte = 0x08
 
     /**
+     * `[INPUT_LOCATION][one NMEA sentence, ASCII, no CR LF]` -> the head unit's GPS for the phone (Settings › Vehicle,
+     * [com.carlink.car.CarGpsFeed]). The box forwards it as iAP2 LocationInformation when the phone asked for that
+     * sentence type, and drops it otherwise. lib.rs:420
+     */
+    const val INPUT_LOCATION: Byte = 0x09
+
+    /**
+     * `[INPUT_VEHICLE_STATUS][id u8][value]…` -> the car's status for the phone (Settings › Vehicle,
+     * [com.carlink.car.VehicleStatusFeed]): Apple's 0xA101 parameter ids, u16/i16 big-endian, a bool one byte. The box
+     * sends what the phone's StartVehicleStatusUpdates asked for, as VehicleStatusUpdate. 0x0A and 0x0B are route
+     * A's. lib.rs:426
+     */
+    const val INPUT_VEHICLE_STATUS: Byte = 0x0C
+
+    /**
      * `[INPUT_DATASTREAM][stream u32 LE][JSON message]` -> the box sends the message on that shared DataStream
      * (route A: the phone's video Playback channel; receiver::playback). lib.rs:420
      */

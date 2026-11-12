@@ -10,6 +10,8 @@ import com.carlink.BuildConfig
  * CH_LOG stream and the pulled box files alike. Logcat is left alone. What goes:
  * - Bluetooth/Wi-Fi MACs keep their last two octets (`..25:10`), enough to tell phones apart.
  * - The phone's name in the box's identity JSON (`"name":"…"` next to `deviceID`).
+ * - A directions link's coordinates (`daddr=…`, `destination=…`): the Fuel card's station taps, which the box logs as it
+ *   sends them on to the phone.
  *
  * Callers, the phone name in app lines and road names are handled where they are logged
  * ([com.carlink.callui.CallState.logLabel], [place]).
@@ -21,10 +23,12 @@ object LogRedactor {
     // accepts it, which is why the JVM tests passed (AndroidRegexTest now guards the whole app).
     private val MAC = Regex("(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{2}[-:]){4}([0-9A-Fa-f]{2})[-:]([0-9A-Fa-f]{2})(?![0-9A-Fa-f:])")
     private val IDENTITY_NAME = Regex("\"(name|deviceName)\":\"[^\"]*\"")
+    private val DIRECTIONS = Regex("(daddr|destination)=[-+]?[0-9]+(?:\\.[0-9]+)?,[-+]?[0-9]+(?:\\.[0-9]+)?")
 
     fun line(text: String): String {
         var out = MAC.replace(text) { "..${it.groupValues[1]}:${it.groupValues[2]}" }
         if ("deviceID" in out) out = IDENTITY_NAME.replace(out) { "\"${it.groupValues[1]}\":\"<phone>\"" }
+        if ("daddr=" in out || "destination=" in out) out = DIRECTIONS.replace(out) { "${it.groupValues[1]}=<place>" }
         return out
     }
 
