@@ -4,6 +4,7 @@ import com.carlink.ocbm.Ocbm
 import java.io.Closeable
 import java.io.IOException
 import java.io.InputStream
+import java.io.InterruptedIOException
 import java.io.OutputStream
 import java.net.SocketTimeoutException
 import java.nio.ByteBuffer
@@ -117,7 +118,16 @@ class Tunnels(
         }
 
         internal fun awaitOpen() {
-            val answered = openLatch.await(OPEN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            // A load the player cancels interrupts its thread: that is ExoPlayer's InterruptedIOException, a cancellation,
+            // not an unexpected error (the Mac's 12 Nov bench).
+            val answered =
+                try {
+                    openLatch.await(OPEN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    close()
+                    throw InterruptedIOException("the tunnel's open was cancelled").apply { initCause(e) }
+                }
             val refused = why
             if (!answered || refused != null) {
                 close()

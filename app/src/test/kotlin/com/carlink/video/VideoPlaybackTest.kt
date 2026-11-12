@@ -54,6 +54,7 @@ class VideoPlaybackTest {
     private var parked = true
     private val announced = mutableListOf<Pair<Boolean, VideoPlayback.Status>>()
     private var pauses = 0
+    private var viaPhone = true
     private val playback =
         VideoPlayback(
             send = { stream, json ->
@@ -64,6 +65,7 @@ class VideoPlaybackTest {
             parked = { parked },
             announce = { allowed, status -> announced += allowed to status },
             pausePhone = { pauses++ },
+            viaPhone = { viaPhone },
         )
 
     private fun record(
@@ -310,5 +312,66 @@ class VideoPlaybackTest {
         assertTrue(ExoVideoEngine.isHls("https://cdn.example.com/v/master.m3u8?sig=x"))
         assertTrue("no extension: AirPlay video's usual playlist", ExoVideoEngine.isHls("https://linear.tv.apple.com/stream/abc"))
         assertFalse(ExoVideoEngine.isHls("https://cdn.example.com/v/clip.mp4"))
+    }
+
+    /** Scott, 12 Nov: route A's video comes through the phone's network only, never the head unit's (the car's data plan). */
+    @Test
+    fun `without the phone's network an item is declined, never loaded`() {
+        viaPhone = false
+        playback.onRecord(record(insert))
+        assertTrue("nothing loaded", engine.calls.none { it.startsWith("load") })
+        assertEquals(VideoPlayback.NO_PHONE_NETWORK, playback.state.failed)
+        assertEquals(listOf(false to VideoPlayback.Status.AUDIO_ONLY), announced)
+        assertEquals("insertPlayQueueItem", sent.single().second.getString("type"))
+        playback.onRecord(rate(1.0))
+        assertFalse(playback.showing.value)
+        assertFalse(playback.showRequested())
+        assertTrue(engine.calls.none { it.startsWith("load") })
+        announced.clear()
+        playback.onRecord(record("""{"type":"stop","kind":"request","messageID":20}"""))
+        assertEquals("dropped: video may play again", listOf(true to VideoPlayback.Status.IDLE), announced)
+        viaPhone = true
+        playback.onRecord(record(insert))
+        assertEquals("load 12.5", engine.calls.last())
+    }
+
+    /** The Mac's 12 Nov bench: in Drive the playlist began loading 50 ms before the refusal. */
+    @Test
+    fun `an item queued in Drive loads only once it may play`() {
+        parked = false
+        playback.onRecord(record(insert))
+        assertTrue("nothing loaded in Drive", engine.calls.isEmpty())
+        playback.onRecord(rate(1.0))
+        assertTrue(engine.calls.none { it.startsWith("load") })
+        assertEquals(1, pauses)
+        playback.onRecord(rate(0.0))
+        parked = true
+        playback.onParked(true)
+        playback.onRecord(rate(1.0))
+        assertEquals(listOf("load 12.5", "rate 1.0"), engine.calls.filter { it.startsWith("load") || it == "rate 1.0" })
+        assertTrue(playback.showing.value)
+    }
+
+    /** The Mac's 12 Nov bench: closed while paused, the phone kept its item and reopened it at its next play. */
+    @Test
+    fun `Close ends the hand-off whether the video plays or is paused`() {
+        playback.onRecord(record(insert))
+        playback.onRecord(rate(1.0))
+        playback.onRecord(rate(0.0)) // paused
+        playback.close()
+        assertFalse(playback.showing.value)
+        assertEquals("a paused phone gets no Pause", 0, pauses)
+        assertEquals(false to VideoPlayback.Status.AUDIO_ONLY, announced.last())
+        assertEquals(VideoPlayback.CLOSED_HERE, playback.state.failed)
+        playback.onRecord(rate(1.0))
+        assertFalse("its next play doesn't reopen it", playback.showing.value)
+        announced.clear()
+        playback.onRecord(record("""{"type":"removePlayQueueItem","kind":"request","messageID":21}"""))
+        assertEquals(listOf(true to VideoPlayback.Status.IDLE), announced)
+        playback.onRecord(record(insert))
+        playback.onRecord(rate(1.0))
+        playback.close()
+        assertEquals("a playing one gets Pause, then the same", 1, pauses)
+        assertEquals(false to VideoPlayback.Status.AUDIO_ONLY, announced.last())
     }
 }

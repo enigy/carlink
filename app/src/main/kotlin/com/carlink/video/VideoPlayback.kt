@@ -28,6 +28,7 @@ import org.json.JSONObject
  * LIVI pauses the phone: on the Mac's 10 Nov bench the phone didn't follow `playbackInfo`'s rate. Logs name
  * the address's host only.
  */
+@Suppress("TooManyFunctions") // the phone's play-queue commands, the car's parking and Close: one entry point each
 class VideoPlayback(
     /** Sends one JSON answer on the phone's stream; false when it was dropped. Any thread. */
     private val send: (stream: Int, json: String) -> Boolean,
@@ -38,6 +39,11 @@ class VideoPlayback(
     private val announce: (allowed: Boolean, status: Status) -> Unit,
     /** Presses Pause on the phone (its media key), so its player follows a pause the car made. Any thread. */
     private val pausePhone: () -> Unit,
+    /**
+     * Whether the phone offered its network (`setProxyParameters`): route A's video comes only through it, never over the
+     * head unit's own, which could bill the car's data plan (owner, 12 Nov).
+     */
+    private val viaPhone: () -> Boolean,
 ) {
     /** The play queue's status as `setVideoPlaybackAllowed` names it (LIVI's words), with its wire byte. */
     enum class Status(
@@ -83,6 +89,10 @@ class VideoPlayback(
     @Volatile
     private var refused = false
 
+    /** The queued item is in the player: it loads only once it may play (parked, and through the phone). */
+    @Volatile
+    private var loaded = false
+
     private val showingState = MutableStateFlow(false)
 
     /** Whether the video screen is up ([VideoOverlay]). */
@@ -95,21 +105,11 @@ class VideoPlayback(
     /** The player failed on the item (DRM it can't play, a network failure): its screen closes. */
     @Synchronized
     private fun onPlayerFailed(code: String) {
-        val wasPlaying = phonePlays
-        state = state.copy(failed = code)
-        showingState.value = false
         // The Mac's 11 Nov bench: after a FairPlay failure the phone ignored Pause and setVideoPlaybackAllowed(true,
         // audioOnly) and stayed "playing", asking for playbackInfo once a second. No source gives this channel a failure
         // report yet, so the phone now hears what a drive makes it hear, video not allowed here: the word it has
         // followed. Video is allowed again once the phone drops the item, or at the next parking change.
-        if (wasPlaying) pausePhone()
-        refused = true
-        announce(false, statusOf(state, false))
-        logInfo(
-            "[VIDEO] the player failed ($code): its screen closed, the phone told video may not play here" +
-                if (wasPlaying) ", Pause sent" else "",
-            tag = Logger.Tags.ADAPTR,
-        )
+        endHere(code, "the player failed ($code): its screen closed")
     }
 
     /** One `{"kind":"dataStream"}` record from the box. Any thread. */
@@ -130,13 +130,7 @@ class VideoPlayback(
     /** Carry out the phone's [message] on the player and the screen. */
     private fun act(message: JSONObject) {
         when (val type = message.optString("type")) {
-            "insertPlayQueueItem" -> {
-                val item = state.item
-                askedRate = 0.0 // a new item waits for its own setRate
-                refused = false // its play start tells the phone video may play
-                logInfo("[VIDEO] the phone queued an item: ${hostOf(item?.url) ?: "no address"}, from ${item?.startS} s", tag = Logger.Tags.ADAPTR)
-                item?.url?.let { engine.load(it, item.startS) }
-            }
+            "insertPlayQueueItem" -> onQueued()
             "setRate" -> playAt(message.optDouble("rate", 0.0))
             "seek" -> seconds(message.opt("time"))?.let { engine.seek(it) }
             "stop" -> drop("the phone stopped the video")
@@ -152,6 +146,25 @@ class VideoPlayback(
         }
     }
 
+    /**
+     * The phone queued an item ([state] has it now): loaded at once only when it may play, through the phone's network
+     * and parked. Without the phone's network it is declined (owner, 12 Nov: never over the head unit's); in Drive it
+     * waits, unloaded, for a play request once parked (the Mac's 12 Nov bench: it began loading before the refusal).
+     */
+    private fun onQueued() {
+        val item = state.item
+        askedRate = 0.0 // a new item waits for its own setRate
+        refused = false // its play start tells the phone video may play
+        if (loaded) engine.stop() // the last item's player: this one loads when it may play
+        loaded = false
+        logInfo("[VIDEO] the phone queued an item: ${hostOf(item?.url) ?: "no address"}, from ${item?.startS} s", tag = Logger.Tags.ADAPTR)
+        when {
+            !viaPhone() -> endHere(NO_PHONE_NETWORK, "the phone hasn't offered its network, and route A's video never comes over the head unit's")
+            parked() -> loadQueued()
+            else -> logInfo("[VIDEO] not loaded: the car isn't known to be parked", tag = Logger.Tags.ADAPTR)
+        }
+    }
+
     /** Answer [message] on [stream] when it is a request; a poll's answer is logged only when it fails. */
     private fun reply(
         stream: Int,
@@ -164,9 +177,38 @@ class VideoPlayback(
         }
     }
 
+    /** Put the queued item in the player, once: true when it is there. */
+    private fun loadQueued(): Boolean {
+        if (loaded) return true
+        val url = state.item?.url ?: return false
+        engine.load(url, state.positionS)
+        loaded = true
+        return true
+    }
+
+    /**
+     * End the hand-off here without playing it ([code], [why]): the screen closes, a phone that plays hears Pause, and it
+     * is told video may not play here, the word it follows, so it keeps or drops the video; it may again once the phone
+     * drops the item, or at the next parking change. A play request for the item leaves it closed.
+     */
+    private fun endHere(
+        code: String,
+        why: String,
+    ) {
+        val wasPlaying = phonePlays
+        engine.setRate(0.0)
+        state = state.copy(failed = code)
+        showingState.value = false
+        if (wasPlaying) pausePhone()
+        refused = true
+        announce(false, statusOf(state, false))
+        logInfo("[VIDEO] $why: the phone told video may not play here${if (wasPlaying) ", Pause sent" else ""}", tag = Logger.Tags.ADAPTR)
+    }
+
     /** Stop the player and close the screen: the queue is empty. After a failure the phone hears video may play again. */
     private fun drop(why: String) {
         engine.stop()
+        loaded = false
         askedRate = 0.0
         showingState.value = false
         logInfo("[VIDEO] $why", tag = Logger.Tags.ADAPTR)
@@ -188,7 +230,7 @@ class VideoPlayback(
             rate <= 0.0 -> engine.setRate(0.0)
             state.failed != null -> {
                 engine.setRate(0.0)
-                logInfo("[VIDEO] the phone asks to play the item the player failed on (${state.failed}): it stays closed", tag = Logger.Tags.ADAPTR)
+                logInfo("[VIDEO] the phone asks to play an item ended here (${state.failed}): it stays closed", tag = Logger.Tags.ADAPTR)
                 return
             }
             !parked() -> {
@@ -199,6 +241,7 @@ class VideoPlayback(
                 return
             }
             else -> {
+                loadQueued()
                 engine.setRate(rate)
                 showingState.value = true
                 if (starting) announce(true, statusOf(state, true))
@@ -234,26 +277,33 @@ class VideoPlayback(
     @Synchronized
     fun showRequested(): Boolean {
         val parkedNow = parked()
-        val shown = state.item != null && parkedNow
+        val shown = state.item != null && state.failed == null && parkedNow && loadQueued()
         if (shown) showingState.value = true
         val why =
             when {
                 shown -> "shown"
                 !parkedNow -> "not unless parked"
+                state.failed != null -> "not: the item was ended here (${state.failed})"
                 else -> "nothing is queued"
             }
         logInfo("[VIDEO] iOS asks for the video screen: $why", tag = Logger.Tags.ADAPTR)
         return shown
     }
 
-    /** The screen's Close: pause and close, and press Pause on a phone that thinks it plays. */
+    /**
+     * The screen's Close: it ends the hand-off whether the video plays or is paused (the Mac's 12 Nov bench: closed while
+     * paused, the phone kept its item and reopened it at its next play). Pause for a phone that plays, and video may not
+     * play here until the phone drops the item ([endHere]).
+     */
     @Synchronized
     fun close() {
-        val wasPlaying = phonePlays
-        engine.setRate(0.0)
-        showingState.value = false
-        if (wasPlaying) pausePhone()
-        logInfo("[VIDEO] closed on the car's screen${if (wasPlaying) ", Pause sent to the phone" else ""}", tag = Logger.Tags.ADAPTR)
+        if (state.item == null) {
+            engine.setRate(0.0)
+            showingState.value = false
+            logInfo("[VIDEO] closed on the car's screen", tag = Logger.Tags.ADAPTR)
+            return
+        }
+        endHere(CLOSED_HERE, "closed on the car's screen")
     }
 
     /** Forget the queue and free the player: the session ended. */
@@ -263,12 +313,17 @@ class VideoPlayback(
         state = State()
         askedRate = 0.0
         refused = false
+        loaded = false
         showingState.value = false
     }
 
     companion object {
         /** The phone's Playback channel, by its `clientTypeUUID` (CarPlaySDK's UrlFling). */
         const val PLAYBACK_CLIENT = "A6B27562-B43A-4F2D-B75F-82391E250194"
+
+        /** Why an item was ended here without playing ([State.failed]): no phone network for it, or the screen's Close. */
+        const val NO_PHONE_NETWORK = "NO_PHONE_NETWORK"
+        const val CLOSED_HERE = "CLOSED_ON_THE_CAR"
 
         /** CMTime's flags: valid, and the ones that make it not a number (+infinity, -infinity, indefinite). */
         private const val CMTIME_VALID = 0x1L

@@ -41,7 +41,8 @@ class ExoVideoEngine(
     private val mayPlay: () -> Boolean,
     /**
      * Where a stream is fetched from at its load: through the phone's network once it offered its proxy
-     * ([com.carlink.video.proxy.TunnelDataSource]), or null for this unit's own.
+     * ([com.carlink.video.proxy.TunnelDataSource]). Null: not loaded at all, since route A's video never comes over
+     * this unit's own network (owner, 12 Nov: the car's data plan).
      */
     private val network: () -> DataSource.Factory?,
 ) : VideoEngine {
@@ -92,19 +93,19 @@ class ExoVideoEngine(
         url: String,
         startS: Double,
     ) = onMain {
+        val viaPhone = network()
+        if (viaPhone == null) {
+            logWarn("[VIDEO] not loaded: the phone's network is gone, and route A's video never comes over this unit's", tag = Logger.Tags.ADAPTR)
+            onFailed?.invoke(NO_NETWORK)
+            return@onMain
+        }
         val p = playerState.value ?: build()
         val startMs = (startS * MS_PER_S).toLong().coerceAtLeast(0)
-        val viaPhone = network()
-        if (viaPhone != null) {
-            p.setMediaSource(DefaultMediaSourceFactory(viaPhone).createMediaSource(mediaItem(url)), startMs)
-        } else {
-            p.setMediaItem(mediaItem(url), startMs)
-        }
+        p.setMediaSource(DefaultMediaSourceFactory(viaPhone).createMediaSource(mediaItem(url)), startMs)
         p.playWhenReady = false
         p.prepare()
         snap = VideoEngine.Snapshot(positionS = startS)
-        val over = if (viaPhone != null) "over the phone's network" else "over this unit's own network"
-        logInfo("[VIDEO] loading (${if (isHls(url)) "HLS" else "by its extension"}), from $startS s, $over", tag = Logger.Tags.ADAPTR)
+        logInfo("[VIDEO] loading (${if (isHls(url)) "HLS" else "by its extension"}), from $startS s, over the phone's network", tag = Logger.Tags.ADAPTR)
     }
 
     override fun setRate(rate: Double) =
@@ -178,6 +179,9 @@ class ExoVideoEngine(
     companion object {
         private const val MS_PER_S = 1000.0
         private const val TICK_MS = 500L
+
+        /** [onFailed]'s code for a load with no phone network to come over. */
+        const val NO_NETWORK = "NO_PHONE_NETWORK"
 
         /** The item for [url]: HLS when its path ends in `.m3u8` or has no extension (AirPlay video's usual form). */
         fun mediaItem(url: String): MediaItem {

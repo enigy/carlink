@@ -2325,6 +2325,7 @@ class CarlinkManager(
             parked = { isParked },
             announce = { allowed, status -> sendVideoAllowed(allowed, status) },
             pausePhone = { sendMediaButton(Ocbm.MEDIA_BTN_PAUSE) },
+            viaPhone = { phoneProxy != null },
         )
     private var connectPlayJob: Job? = null
 
