@@ -1451,10 +1451,28 @@ class CarlinkManager(
                 wifiLink.provisioned(key, ssid)
                 wifiGraceUntil = SystemClock.elapsedRealtime() + WIFI_PROVISION_GRACE_MS
                 logInfo("[WIFI] the adapter took the Wi-Fi link; it restarts and joins \"$ssid\"", tag = Logger.Tags.ADAPTR)
+                switchToWifiAfterProvisioning()
                 null
             }
             null -> "The adapter didn't answer. Its firmware may not have the Wi-Fi link yet."
             else -> "The adapter refused the settings (status $status)."
+        }
+    }
+
+    /**
+     * Go quiet on USB at once, then connect again, Wi-Fi first. ocbmd restarts ~1.5 s after its ACK and gives the
+     * link to the first host that speaks: a session still heartbeating over the bridge wins that race for USB
+     * (truck, 11-11: "USB won on a serializing driver", then "HEARTBEAT from an unsubscribed host"), and the
+     * restarted adapter never waits for Wi-Fi. So the bridge's socket closes first, before anything else in the
+     * teardown can write (stopImpl's CT_STOP comes late), and the start that follows looks on Wi-Fi for
+     * [WIFI_PROVISION_GRACE_MS] while the adapter joins the hotspot.
+     */
+    private suspend fun switchToWifiAfterProvisioning() {
+        withContext(Dispatchers.IO) { transport?.stop() }
+        logInfo("[WIFI] USB session closed so the restarted adapter waits for Wi-Fi", tag = Logger.Tags.ADAPTR)
+        scope.launch {
+            lifecycleMutex.withLock { withContext(Dispatchers.IO) { stopImpl() } }
+            startIfDisconnected("Wi-Fi link provisioned")
         }
     }
 
