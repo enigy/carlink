@@ -21,7 +21,7 @@ class PaneDeckTest {
         assertEquals("no cover behind the clock (owner, 12 Nov)", PaneBackdrop.TIDE, PaneBackdrop.of(CLOCK))
         assertEquals(PaneBackdrop.BAND, PaneBackdrop.of(MEDIA))
         assertEquals(PaneBackdrop.PLAIN, PaneBackdrop.of(DIRECTIONS))
-        assertEquals("a call", PaneBackdrop.PLAIN, PaneBackdrop.of(null))
+        assertEquals("no card", PaneBackdrop.PLAIN, PaneBackdrop.of(null))
     }
 
     @Test
@@ -89,7 +89,7 @@ class PaneDeckTest {
     fun `a call leads the deck and keeps the music out until it ends`() {
         assertEquals(listOf(CALL, DIRECTIONS, FUEL, CLOCK), PaneDeck.pages(navigating = true, hasTrack = true, fuel = true, calling = true))
         assertEquals(listOf(CALL, CLOCK), PaneDeck.pages(navigating = false, hasTrack = true, calling = true))
-        assertEquals(PaneBackdrop.PLAIN, PaneBackdrop.of(CALL))
+        assertEquals("a call wears Drift + Tide, as the Fuel card and the clock (owner, 12 Nov)", PaneBackdrop.TIDE, PaneBackdrop.of(CALL))
     }
 
     @Test

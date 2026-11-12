@@ -213,7 +213,7 @@ private fun PaneHost(
     val media by carlinkManager.nowPlaying.collectAsState()
     val nav by NavigationStateManager.state.collectAsState()
     val card = deck.shown
-    // The cover behind the music, Drift + Tide behind the Fuel card and the clock; a call and the route take the plain background.
+    // The cover behind the music, Drift + Tide behind a call, the Fuel card and the clock; the route takes the plain background.
     val backdrop = PaneBackdrop.of(card)
     val art = if (backdrop == PaneBackdrop.BAND) art else null
     val night = isSystemInDarkTheme()
@@ -231,7 +231,7 @@ private fun PaneHost(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, modifier = Modifier.fillMaxSize())
-            // Drift + Tide behind the Fuel card and the clock (owner, 12 Nov), fading in and out as the cards swipe.
+            // Drift + Tide behind a call, the Fuel card and the clock (owner, 12 Nov), fading in and out as the cards swipe.
             AnimatedVisibility(visible = backdrop == PaneBackdrop.TIDE, enter = fadeIn(tween(TIDE_FADE_MS)), exit = fadeOut(tween(TIDE_FADE_MS))) {
                 TideBackdrop(night = night, modifier = Modifier.fillMaxSize())
             }

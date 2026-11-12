@@ -35,10 +35,10 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 
 /**
- * "Drift + Tide" (owner, 12 Nov, the pane backgrounds canvas), behind the Fuel card and the clock ([PaneBackdrop.TIDE]):
- * Drift's slow colour fields fill water whose line is the tank's level ([TideMath.waterline]) on both, and above it the
+ * "Drift + Tide" (owner, 12 Nov, the pane backgrounds canvas), behind a call, the Fuel card and the clock ([PaneBackdrop.TIDE]):
+ * Drift's slow colour fields fill water whose line is the tank's level ([TideMath.waterline]) on each, and above it the
  * pane's own day or night colour carries a faint drift of the same colours. Low fuel ([LowFuel]) turns the water amber.
- * Without a level (no CAR_ENERGY, or the car doesn't give level and capacity) neither card draws water, only the faint
+ * Without a level (no CAR_ENERGY, or the car doesn't give level and capacity) no card draws water, only the faint
  * fields above (owner, 12 Nov: a fixed swell on the clock read as a nearly empty tank). The line glides to a new level.
  * Fields and waves move only parked, with the app in front and Android's animations on: moving, the scene holds still,
  * nothing drifting at the edge of the driver's eye.
