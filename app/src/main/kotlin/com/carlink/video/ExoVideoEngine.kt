@@ -10,10 +10,12 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsManifest
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
@@ -69,6 +71,12 @@ class ExoVideoEngine(
                 events: Player.Events,
             ) = publish()
 
+            @OptIn(UnstableApi::class) // the HLS manifest's raw tags
+            override fun onTimelineChanged(
+                timeline: Timeline,
+                reason: Int,
+            ) = declineFairPlay()
+
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 sizeState.value = videoSize.takeIf { it.width > 0 && it.height > 0 }
             }
@@ -79,6 +87,21 @@ class ExoVideoEngine(
                 onFailed?.invoke(error.errorCodeName)
             }
         }
+
+    /**
+     * Once the playlists are read: a FairPlay-protected item (the TV app's) is declined before any segment plays, since
+     * Carlink can't play it (owner, 12 Nov). The player stops, and the queue hears it as a failure, [VideoEngine.FAIRPLAY].
+     */
+    @OptIn(UnstableApi::class) // the HLS manifest's raw tags
+    private fun declineFairPlay() {
+        val p = playerState.value ?: return
+        val hls = p.currentManifest as? HlsManifest ?: return
+        if (snap.failed || !fairPlay(hls.multivariantPlaylist.tags + hls.mediaPlaylist.tags)) return
+        p.stop()
+        logInfo("[VIDEO] the item is FairPlay-protected, which Carlink doesn't play: declined", tag = Logger.Tags.ADAPTR)
+        snap = snap.copy(failed = true, ready = false, rate = 0.0)
+        onFailed?.invoke(VideoEngine.FAIRPLAY)
+    }
 
     private val ticker =
         object : Runnable {
@@ -179,6 +202,13 @@ class ExoVideoEngine(
     companion object {
         private const val MS_PER_S = 1000.0
         private const val TICK_MS = 500L
+
+        /** Whether an HLS playlist's [tags] declare FairPlay keys: an EXT-X-KEY or EXT-X-SESSION-KEY for Apple's key delivery. */
+        fun fairPlay(tags: List<String>): Boolean =
+            tags.any { tag ->
+                (tag.startsWith("#EXT-X-KEY:") || tag.startsWith("#EXT-X-SESSION-KEY:")) &&
+                    (tag.contains("com.apple.streamingkeydelivery", ignoreCase = true) || tag.contains("URI=\"skd://", ignoreCase = true))
+            }
 
         /** [onFailed]'s code for a load with no phone network to come over. */
         const val NO_NETWORK = "NO_PHONE_NETWORK"

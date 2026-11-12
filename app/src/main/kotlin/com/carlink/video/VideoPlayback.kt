@@ -109,7 +109,8 @@ class VideoPlayback(
         // audioOnly) and stayed "playing", asking for playbackInfo once a second. No source gives this channel a failure
         // report yet, so the phone now hears what a drive makes it hear, video not allowed here: the word it has
         // followed. Video is allowed again once the phone drops the item, or at the next parking change.
-        endHere(code, "the player failed ($code): its screen closed")
+        val why = if (code == VideoEngine.FAIRPLAY) "the item is FairPlay-protected: declined" else "the player failed ($code): its screen closed"
+        endHere(code, why)
     }
 
     /** One `{"kind":"dataStream"}` record from the box. Any thread. */

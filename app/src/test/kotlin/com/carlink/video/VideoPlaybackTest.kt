@@ -374,4 +374,18 @@ class VideoPlaybackTest {
         assertEquals("a playing one gets Pause, then the same", 1, pauses)
         assertEquals(false to VideoPlayback.Status.AUDIO_ONLY, announced.last())
     }
+
+    @Test
+    fun `a playlist with FairPlay keys is told apart from a clear one`() {
+        val fairPlay = """#EXT-X-SESSION-KEY:METHOD=SAMPLE-AES,URI="skd://itunes.apple.com/P000000000/s1/e1",KEYFORMAT="com.apple.streamingkeydelivery",KEYFORMATVERSIONS="1""""
+        assertTrue(ExoVideoEngine.fairPlay(listOf("#EXTM3U", fairPlay)))
+        assertTrue(ExoVideoEngine.fairPlay(listOf("#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://key\"")))
+        assertFalse("AES-128 with a plain key plays", ExoVideoEngine.fairPlay(listOf("#EXT-X-KEY:METHOD=AES-128,URI=\"https://cdn.example.com/k\"")))
+        assertFalse(ExoVideoEngine.fairPlay(listOf("#EXTM3U", "#EXT-X-VERSION:6", "#EXT-X-STREAM-INF:BANDWIDTH=1")))
+        playback.onRecord(record(insert))
+        playback.onRecord(rate(1.0))
+        engine.fail(VideoEngine.FAIRPLAY)
+        assertFalse(playback.showing.value)
+        assertEquals(false to VideoPlayback.Status.AUDIO_ONLY, announced.last())
+    }
 }

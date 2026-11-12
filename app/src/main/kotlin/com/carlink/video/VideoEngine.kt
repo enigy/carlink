@@ -26,6 +26,11 @@ interface VideoEngine {
     /** Told on the main thread when the player fails, with the error's code name (never the address). */
     var onFailed: ((code: String) -> Unit)?
 
+    companion object {
+        /** [onFailed]'s code for a FairPlay-protected item, declined once its playlist says so. */
+        const val FAIRPLAY = "FAIRPLAY"
+    }
+
     /** Playback as `playbackInfo` reports it, in seconds. Nothing loaded is all zeros and not ready. */
     data class Snapshot(
         val ready: Boolean = false,
