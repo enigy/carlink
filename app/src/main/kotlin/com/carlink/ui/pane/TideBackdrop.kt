@@ -24,7 +24,6 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
-import com.carlink.car.DrivingState
 import com.carlink.car.VehicleReadings
 import com.carlink.fuel.LowFuel
 import com.carlink.ui.settings.VehicleStore
@@ -40,8 +39,8 @@ import kotlin.math.roundToInt
  * pane's own day or night colour carries a faint drift of the same colours. Low fuel ([LowFuel]) turns the water amber.
  * Without a level (no CAR_ENERGY, or the car doesn't give level and capacity) no card draws water, only the faint
  * fields above (owner, 12 Nov: a fixed swell on the clock read as a nearly empty tank). The line glides to a new level.
- * Fields and waves move only parked, with the app in front and Android's animations on: moving, the scene holds still,
- * nothing drifting at the edge of the driver's eye.
+ * Fields and waves move parked and driving alike, while the app is in front with Android's animations on (owner, 12 Nov:
+ * the pane is mostly the passenger's, and the moving water tells them the tank's state).
  */
 @Composable
 internal fun TideBackdrop(
@@ -50,7 +49,6 @@ internal fun TideBackdrop(
 ) {
     val context = LocalContext.current
     val vehicle by VehicleReadings.state.collectAsState()
-    val parked by DrivingState.parked.collectAsState()
     val lowAt by remember(context) { VehicleStore.get(context) }.lowFuelAt.collectAsState()
     val low = LowFuel.isLow(vehicle, lowAt, vehicle.distanceImperial(Locale.getDefault()))
     val line by animateFloatAsState(TideMath.waterline(vehicle.fuelFraction()), tween(LINE_MS), label = "waterline")
@@ -61,7 +59,7 @@ internal fun TideBackdrop(
     }
     // The scene's own clock: it runs only while the scene may move, so it stops and starts where it was.
     var elapsedMs by remember { mutableLongStateOf(0L) }
-    val running = parked && resumed && ValueAnimator.areAnimatorsEnabled()
+    val running = resumed && ValueAnimator.areAnimatorsEnabled()
     LaunchedEffect(running) {
         var last = SystemClock.uptimeMillis()
         while (running) {
