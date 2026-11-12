@@ -109,4 +109,10 @@ class PaneDeckTest {
         assertEquals(CALL, LowFuelDeck.onLow(listOf(CALL, FUEL, CLOCK), CALL))
         assertEquals(FUEL, LowFuelDeck.onLow(listOf(CALL, FUEL, CLOCK), CLOCK))
     }
+
+    @Test
+    fun `with the Phone app in front the pane steps to the route, else the clock`() {
+        assertEquals(DIRECTIONS, PaneDeck.beside(CALL, listOf(CALL, DIRECTIONS, FUEL, CLOCK)))
+        assertEquals(CLOCK, PaneDeck.beside(CALL, listOf(CALL, FUEL, CLOCK)))
+    }
 }

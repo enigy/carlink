@@ -293,8 +293,8 @@ private fun paneLook(
 
 /**
  * What a tap on the header's title does: it puts the card's app in front in CarPlay (the box's
- * `requestUI` URL), and the pane moves on to what CarPlay is then not showing. Nothing for the clock
- * or a call. Which app is in front is otherwise unknown to the app, so this tap is its one tell.
+ * `requestUI` URL), and the pane moves on to what CarPlay is then not showing. A call's "Phone" opens the Phone
+ * app (owner, 12 Nov). Nothing for the clock or the Fuel card. Which app is in front is otherwise unknown to the app, so this tap is its one tell.
  */
 private fun titleTap(
     card: PaneCard?,
@@ -305,6 +305,7 @@ private fun titleTap(
         when (card) {
             PaneCard.MEDIA -> CarPlayUrls.NOW_PLAYING
             PaneCard.DIRECTIONS -> CarPlayUrls.MAPS
+            PaneCard.CALL -> CarPlayUrls.PHONE
             else -> return null
         }
     return {
