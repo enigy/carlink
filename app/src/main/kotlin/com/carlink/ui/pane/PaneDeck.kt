@@ -1,10 +1,10 @@
 package com.carlink.ui.pane
 
 /**
- * The cards the pane shows in turn, in swipe order: the route first, the truck's range and fuel, the music, the clock
- * (with the truck's speed and outside temperature) last.
+ * The cards the pane shows in turn, in swipe order: a call first while there is one, then the route, the truck's
+ * range and fuel, the music, the clock (with the truck's speed and outside temperature) last.
  */
-enum class PaneCard { DIRECTIONS, FUEL, MEDIA, CLOCK }
+enum class PaneCard { CALL, DIRECTIONS, FUEL, MEDIA, CLOCK }
 
 /**
  * What fills the pane behind the card: the plain day or night colour ([PLAIN]: the route, a call); the album art with
@@ -23,7 +23,7 @@ enum class PaneBackdrop {
             when (card) {
                 PaneCard.MEDIA -> BAND
                 PaneCard.CLOCK, PaneCard.FUEL -> TIDE
-                PaneCard.DIRECTIONS, null -> PLAIN
+                PaneCard.CALL, PaneCard.DIRECTIONS, null -> PLAIN
             }
     }
 }
@@ -39,20 +39,26 @@ data class Aside(
  * front (the box reports no such thing), so it shows what CarPlay is NOT showing by its own tells:
  * the music by default, the route once the driver has put the Now Playing app in front from the
  * pane's own source tap, and the music again once a tap on CarPlay's Dock says they left it. A swipe
- * picks any card. The call card is not here: a call takes the whole pane for as long as it lasts, and
- * the deck resumes where it was.
+ * picks any card. A call is the deck's first card while it lasts (owner, 12 Nov: the driver can swipe to the Fuel
+ * card or the clock during a call), and the music is not dealt until it ends; the pane comes back to the card it
+ * showed before the call.
  */
 object PaneDeck {
-    /** The cards available now. The clock is always there, so the deck is never empty. [fuel]: the Fuel card is dealt. */
+    /**
+     * The cards available now. The clock is always there, so the deck is never empty. [fuel]: the Fuel card is dealt.
+     * [calling]: a phone or VoIP call is on, so its card leads and the music waits for it to end.
+     */
     fun pages(
         navigating: Boolean,
         hasTrack: Boolean,
         fuel: Boolean = false,
+        calling: Boolean = false,
     ): List<PaneCard> =
         buildList {
+            if (calling) add(PaneCard.CALL)
             if (navigating) add(PaneCard.DIRECTIONS)
             if (fuel) add(PaneCard.FUEL)
-            if (hasTrack) add(PaneCard.MEDIA)
+            if (hasTrack && !calling) add(PaneCard.MEDIA)
             add(PaneCard.CLOCK)
         }
 
@@ -95,14 +101,20 @@ object PaneDeck {
      * The card to show after the deck changed from [previous] to [current] while [shown] was up. A
      * card that went away gives way to the default; music that begins takes the pane, as it always
      * has; a route that begins takes it only from the clock, never from the music the driver is
-     * looking at. Anything else leaves the driver's card alone.
+     * looking at. Anything else leaves the driver's card alone. A call that begins takes the pane; one that ends gives
+     * it back to [beforeCall], the card up as it began, if the call's card is still up (a card the driver swiped to
+     * during the call stays), and the music it brings back takes nothing.
      */
     fun after(
         previous: List<PaneCard>,
         current: List<PaneCard>,
         shown: PaneCard,
+        beforeCall: PaneCard? = null,
     ): PaneCard =
         when {
+            PaneCard.CALL in current && PaneCard.CALL !in previous -> PaneCard.CALL
+            PaneCard.CALL in previous && PaneCard.CALL !in current ->
+                if (shown == PaneCard.CALL) beforeCall?.takeIf { it in current } ?: default(current) else shown
             shown !in current -> default(current)
             PaneCard.MEDIA in current && PaneCard.MEDIA !in previous -> PaneCard.MEDIA
             PaneCard.DIRECTIONS in current && PaneCard.DIRECTIONS !in previous && shown == PaneCard.CLOCK -> PaneCard.DIRECTIONS
@@ -115,11 +127,11 @@ object PaneDeck {
  * comes on, and the card it replaced comes back when it goes off, if the driver hasn't swiped away since.
  */
 object LowFuelDeck {
-    /** The card to show as the warning comes on with [shown] up: the Fuel card, where the deck has it. */
+    /** The card to show as the warning comes on with [shown] up: the Fuel card, where the deck has it, but never over a call's. */
     fun onLow(
         pages: List<PaneCard>,
         shown: PaneCard,
-    ): PaneCard = if (PaneCard.FUEL in pages) PaneCard.FUEL else shown
+    ): PaneCard = if (PaneCard.FUEL in pages && shown != PaneCard.CALL) PaneCard.FUEL else shown
 
     /**
      * The card to show as the warning goes off: [before], the card the warning replaced, while the Fuel card it brought

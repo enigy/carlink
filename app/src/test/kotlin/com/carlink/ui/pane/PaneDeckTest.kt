@@ -1,7 +1,9 @@
 package com.carlink.ui.pane
 
+import com.carlink.ui.pane.PaneCard.CALL
 import com.carlink.ui.pane.PaneCard.CLOCK
 import com.carlink.ui.pane.PaneCard.DIRECTIONS
+import com.carlink.ui.pane.PaneCard.FUEL
 import com.carlink.ui.pane.PaneCard.MEDIA
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -80,5 +82,31 @@ class PaneDeckTest {
     fun `a swipe survives a reshuffle that keeps its card`() {
         assertEquals(CLOCK, PaneDeck.after(previous = listOf(DIRECTIONS, MEDIA, CLOCK), current = listOf(MEDIA, CLOCK), shown = CLOCK))
         assertEquals(DIRECTIONS, PaneDeck.after(previous = listOf(DIRECTIONS, MEDIA, CLOCK), current = listOf(DIRECTIONS, CLOCK), shown = DIRECTIONS))
+    }
+
+    /** Owner, 12 Nov: during a call the driver can swipe to the Fuel card or the clock, and the music waits for its end. */
+    @Test
+    fun `a call leads the deck and keeps the music out until it ends`() {
+        assertEquals(listOf(CALL, DIRECTIONS, FUEL, CLOCK), PaneDeck.pages(navigating = true, hasTrack = true, fuel = true, calling = true))
+        assertEquals(listOf(CALL, CLOCK), PaneDeck.pages(navigating = false, hasTrack = true, calling = true))
+        assertEquals(PaneBackdrop.PLAIN, PaneBackdrop.of(CALL))
+    }
+
+    @Test
+    fun `a call takes the pane, and its end gives it back to the card it found`() {
+        val before = listOf(FUEL, MEDIA, CLOCK)
+        val during = listOf(CALL, FUEL, CLOCK)
+        assertEquals(CALL, PaneDeck.after(before, during, shown = MEDIA))
+        assertEquals("the music it found comes back", MEDIA, PaneDeck.after(during, before, shown = CALL, beforeCall = MEDIA))
+        assertEquals("the clock it found", CLOCK, PaneDeck.after(during, before, shown = CALL, beforeCall = CLOCK))
+        assertEquals("a card swiped to during the call stays, the music taking nothing", FUEL, PaneDeck.after(during, before, shown = FUEL, beforeCall = MEDIA))
+        assertEquals("not known: the default", MEDIA, PaneDeck.after(during, before, shown = CALL))
+        assertEquals("a call that began on a card since gone", CLOCK, PaneDeck.after(listOf(CALL, DIRECTIONS, CLOCK), listOf(CLOCK), shown = CALL, beforeCall = DIRECTIONS))
+    }
+
+    @Test
+    fun `low fuel doesn't pull the pane off a call`() {
+        assertEquals(CALL, LowFuelDeck.onLow(listOf(CALL, FUEL, CLOCK), CALL))
+        assertEquals(FUEL, LowFuelDeck.onLow(listOf(CALL, FUEL, CLOCK), CLOCK))
     }
 }

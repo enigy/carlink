@@ -62,7 +62,7 @@ import kotlinx.coroutines.delay
  * Settings, the pane's own full-screen button, or CarPlay's Dock button. While CarPlay has the whole
  * frame but a split is declared, a small tab at the pane's edge brings the split back.
  *
- * The card: a call while the iPhone reports one; otherwise one of the deck ([PaneDeck]) — the route,
+ * The card: one of the deck ([PaneDeck]) — a call while the iPhone reports one, the route, the Fuel card,
  * the music, the clock — swiped between ([PaneDeckPager]), the music up by default. Music puts its
  * album art behind the whole pane and sets the words and buttons light or dark to suit it.
  *
@@ -133,18 +133,25 @@ private fun rememberDeck(
 ): Deck {
     val nav by NavigationStateManager.state.collectAsState()
     val lowFuel = rememberLowFuel()
-    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack, fuel = rememberFuelDealt(lowFuel))
+    val call by carlinkManager.callPresentationFlow.collectAsState()
+    val calling = call != CallRoster.Presentation.None
+    val pages = PaneDeck.pages(navigating = nav.isActive, hasTrack = media.hasTrack, fuel = rememberFuelDealt(lowFuel), calling = calling)
     var shown by remember { mutableStateOf(PaneDeck.default(pages)) }
     var dealt by remember { mutableStateOf(pages) }
+    // The card up as a call began, for the pane to come back to when it ends.
+    var beforeCall by remember { mutableStateOf<PaneCard?>(null) }
     // Now Playing put in front by the pane's title, and the card the pane stepped to; null when it is
     // not known to be in front. Forgotten with the session.
     var aside by remember { mutableStateOf<Aside?>(null) }
     LaunchedEffect(pages) {
         if (pages != dealt) {
-            shown = PaneDeck.after(dealt, pages, shown)
+            if (PaneCard.CALL in pages && PaneCard.CALL !in dealt) beforeCall = shown
+            shown = PaneDeck.after(dealt, pages, shown, beforeCall)
+            if (PaneCard.CALL !in pages) beforeCall = null
             dealt = pages
         }
     }
+    FollowRinging(ringing = call is CallRoster.Presentation.Incoming, pages, shown) { shown = it }
     // Music starting (play after a pause, or already playing when the pane appears) brings the music
     // card up from the clock; a new track's card is dealt by `after` above. Not while Now Playing is in
     // front: CarPlay shows the music then, and a play pressed there would put it on both sides.
@@ -205,8 +212,7 @@ private fun PaneHost(
     val call by carlinkManager.callPresentationFlow.collectAsState()
     val media by carlinkManager.nowPlaying.collectAsState()
     val nav by NavigationStateManager.state.collectAsState()
-    val showCall = call != CallRoster.Presentation.None
-    val card = if (showCall) null else deck.shown
+    val card = deck.shown
     // The cover behind the music, Drift + Tide behind the Fuel card and the clock; a call and the route take the plain background.
     val backdrop = PaneBackdrop.of(card)
     val art = if (backdrop == PaneBackdrop.BAND) art else null
@@ -240,17 +246,13 @@ private fun PaneHost(
             CompositionLocalProvider(LocalContentColor provides look.content) {
                 Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
                     val header: @Composable () -> Unit = { PaneHeader(title, onTitle, card) { carPlayFullScreen(carlinkManager) } }
-                    if (showCall) {
-                        header()
-                        CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp))
-                    } else {
-                        PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, header = header, modifier = Modifier.fillMaxSize()) { which, m ->
-                            when (which) {
-                                PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
-                                PaneCard.FUEL -> FuelCard(active = deck.shown == PaneCard.FUEL, onDirections = { carlinkManager.openDirections(it.at) }, modifier = m)
-                                PaneCard.MEDIA -> MusicCard(carlinkManager, media, lyrics, m) { wordsTop = it }
-                                PaneCard.CLOCK -> ClockCard(modifier = m)
-                            }
+                    PaneDeckPager(pages = deck.pages, shown = deck.shown, onShown = deck.onShown, header = header, modifier = Modifier.fillMaxSize()) { which, m ->
+                        when (which) {
+                            PaneCard.CALL -> CallCard(presentation = call, onButton = { carlinkManager.sendTelephony(it) }, modifier = m.padding(top = 8.dp))
+                            PaneCard.DIRECTIONS -> DirectionsCard(state = nav, modifier = m)
+                            PaneCard.FUEL -> FuelCard(active = deck.shown == PaneCard.FUEL, onDirections = { carlinkManager.openDirections(it.at) }, modifier = m)
+                            PaneCard.MEDIA -> MusicCard(carlinkManager, media, lyrics, m) { wordsTop = it }
+                            PaneCard.CLOCK -> ClockCard(modifier = m)
                         }
                     }
                 }
@@ -311,13 +313,13 @@ private fun titleTap(
     }
 }
 
-/** The header's word for the card: the phone during a call (null card), the app playing (its own name), the route, or this app. */
+/** The header's word for the card: the phone during a call, the app playing (its own name), the route, or this app. */
 private fun paneTitle(
     card: PaneCard?,
     appName: String?,
 ): String =
     when (card) {
-        null -> "Phone"
+        PaneCard.CALL, null -> "Phone"
         PaneCard.MEDIA -> appName?.takeIf { it.isNotBlank() } ?: "Music"
         PaneCard.DIRECTIONS -> "Directions"
         PaneCard.FUEL -> "Fuel"
