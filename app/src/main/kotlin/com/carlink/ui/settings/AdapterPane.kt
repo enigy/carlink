@@ -65,6 +65,7 @@ internal fun AdapterPane(
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(28.dp)) {
                 InstallGroup(carlinkManager)
+                WifiLinkGroup(carlinkManager)
                 LyricsGroup()
             }
         }

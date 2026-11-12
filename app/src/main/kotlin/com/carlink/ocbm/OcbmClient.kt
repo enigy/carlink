@@ -1436,6 +1436,7 @@ private val MGMT_VERB_NAMES =
         Ocbm.MGMT_GO_STOCK to "GO_STOCK",
         Ocbm.MGMT_UPDATE to "UPDATE",
         Ocbm.MGMT_SWITCH_DEVICE to "SWITCH_DEVICE",
+        Ocbm.MGMT_WIFI_LINK to "WIFI_LINK",
     )
 
 private fun mgmtVerbName(v: Byte): String = MGMT_VERB_NAMES[v] ?: "0x%02x".format(v.toInt() and 0xFF)

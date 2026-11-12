@@ -334,6 +334,14 @@ object Ocbm {
      * = not a MAC, not bonded, or the box's Bluetooth daemon unreachable. Only with [CAP_PHONE_SWITCH].
      */
     const val MGMT_SWITCH_DEVICE: Byte = 0x0D
+
+    /**
+     * Provision the box's Wi-Fi link (OCBM `wifi-transport`): [OcbwLink.provisionBody] = `[ver 1][link key 32]
+     * [ssid_len][ssid][psk_len][psk]`, the WPA key pre-hashed so the passphrase never reaches the box. No argument
+     * clears it (USB only from ocbmd's next start). After MGMT_ACK status 0 ocbmd restarts itself (~1.5 s), so this
+     * link drops. Status 1 = malformed or not storable. A box without the Wi-Fi build doesn't answer at all.
+     */
+    const val MGMT_WIFI_LINK: Byte = 0x0E
     const val MGMT_INFO: Byte = 0x81.toByte()
     const val MGMT_ACK: Byte = 0x82.toByte()
 
