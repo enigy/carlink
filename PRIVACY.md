@@ -6,7 +6,7 @@ Carlink collects no data about you. It has no analytics, no telemetry, no crash 
 
 ## What leaves the head unit
 
-Carlink connects to the internet for three things only, and you can turn off the first and the last (which is off until you turn it on). Fuel prices from Google come only with a key of your own. None goes to the developer, and none carries your name, your phone's name or an account.
+Carlink connects to the internet for four things only, and you can turn off the first and the fourth (which is off until you turn it on). A video goes online only when you play one from your iPhone. Fuel prices from Google come only with a key of your own. None goes to the developer, and none carries your name, your phone's name or an account.
 
 | When | What is sent | To |
 | --- | --- | --- |
@@ -14,8 +14,9 @@ Carlink connects to the internet for three things only, and you can turn off the
 | You convert or update your adapter, or update the USB Bridge | A request for the installer, update or bridge file. Nothing about you or the adapter is sent. | GitHub (github.com), where the files are published |
 | Nearby stations is on (Settings › Vehicle, off by default) and the Fuel card is up | The car's position and a search radius, to find fuel stations around: when the card first shows, then after about 3 miles or 15 minutes, and when the fuel runs low. Carlink doesn't store the position or the stations, only the ids of stations you star. | [OpenStreetMap](https://www.openstreetmap.org) through the Overpass API: overpass-api.de (FOSSGIS), and overpass.private.coffee when that one is busy |
 | As above, with Settings › Vehicle › Price source set to Google Places | The same position and radius, with the Google API key you entered, to get each station's fuel prices. Google bills the lookups to your own Google Cloud account; Carlink counts them and stops at the monthly limit you set. Carlink doesn't store what Google sends, except the place ID of a station you star. | Google (places.googleapis.com) |
+| You play a video from your iPhone on the car's screen (parked only) | Requests for that video, at the address your iPhone hands Carlink, to stream it. They go through your iPhone's own internet connection when the iPhone offers it, as it usually does, and through the head unit's otherwise. Carlink doesn't store the video or its address. | The site the video comes from, the one your iPhone was playing it from |
 
-Like any website, LRCLIB, GitHub and the Overpass servers see the head unit's internet (IP) address when it connects. Their own privacy policies cover what they keep.
+Like any website, LRCLIB, GitHub, the Overpass servers and a video's site see the head unit's internet (IP) address when it connects. Their own privacy policies cover what they keep.
 
 ## What stays on the head unit
 
