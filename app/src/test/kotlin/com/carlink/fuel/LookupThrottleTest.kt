@@ -31,6 +31,28 @@ class LookupThrottleTest {
         assertFalse("hidden: it waits", t.due(LookupThrottle.AGE_MS, north(9.0), visible = false))
     }
 
+    /** Owner, 12 Nov: the card's refresh. */
+    @Test
+    fun `the driver's refresh looks up past the 5 km and 15 minutes, with the card up`() {
+        val t = LookupThrottle()
+        t.due(0, start, visible = true)
+        t.ran(0, start)
+        assertFalse(t.due(60_000, start, visible = true))
+        assertTrue(t.due(60_000, start, visible = true, asked = true))
+        assertFalse("not with the card hidden", t.due(60_000, start, visible = false, asked = true))
+        assertFalse("not without a position", t.due(60_000, null, visible = true, asked = true))
+    }
+
+    @Test
+    fun `a refresh waits out a running lookup, the minute after one, and a busy service's own retry`() {
+        assertTrue(RefreshGate.allows(now = 70_000, restUntil = 60_000, looking = false, waiting = false))
+        assertTrue("never looked up yet", RefreshGate.allows(now = 0, restUntil = 0, looking = false, waiting = false))
+        assertFalse("within the minute", RefreshGate.allows(now = 30_000, restUntil = 60_000, looking = false, waiting = false))
+        assertFalse("during a lookup", RefreshGate.allows(now = 70_000, restUntil = 60_000, looking = true, waiting = false))
+        assertFalse("during a busy wait", RefreshGate.allows(now = 70_000, restUntil = 60_000, looking = false, waiting = true))
+        assertTrue("a minute and more", RefreshGate.REST_MS >= 60_000)
+    }
+
     @Test
     fun `low fuel looks up at once, and a reset starts over`() {
         val t = LookupThrottle()

@@ -191,7 +191,12 @@ private fun Stations(
         } else {
             null
         }
-    StationsSection(view, rows, look.copy(starredTab = tab == StationStars.Tab.STARRED), StationActions(onTap, onStar, onAllowLocation))
+    // The refresh, parked and moving (owner, 12 Nov): its own target above the rows, which keep their one tap.
+    val onRefresh = {
+        logWarn("[UI_ACTION] Fuel refresh", tag = "UI")
+        FuelStations.refresh(context)
+    }
+    StationsSection(view, rows, look.copy(starredTab = tab == StationStars.Tab.STARRED), StationActions(onTap, onStar, onAllowLocation, onRefresh))
 }
 
 /**
@@ -225,12 +230,13 @@ internal data class FuelLook(
 
 /**
  * What the card's stations do when tapped ([StationsSection]): a row ([tap]), its star ([star], parked only: null moving),
- * and the location request's Allow ([allowLocation]).
+ * the location request's Allow ([allowLocation]), and the refresh by the source line ([refresh], parked and moving).
  */
 internal class StationActions(
     val tap: (StationRow) -> Unit,
     val star: ((StationRow) -> Unit)?,
     val allowLocation: () -> Unit,
+    val refresh: () -> Unit,
 )
 
 /** A runtime permission the card asks for: whether it is granted now, and the ask. */

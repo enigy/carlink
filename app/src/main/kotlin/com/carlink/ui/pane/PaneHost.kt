@@ -227,7 +227,7 @@ private fun PaneHost(
             MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, modifier = Modifier.fillMaxSize())
             // Drift + Tide behind the Fuel card and the clock (owner, 12 Nov), fading in and out as the cards swipe.
             AnimatedVisibility(visible = backdrop == PaneBackdrop.TIDE, enter = fadeIn(tween(TIDE_FADE_MS)), exit = fadeOut(tween(TIDE_FADE_MS))) {
-                TideBackdrop(fuel = card == PaneCard.FUEL, night = night, modifier = Modifier.fillMaxSize())
+                TideBackdrop(night = night, modifier = Modifier.fillMaxSize())
             }
             if (art != null) {
                 Box(

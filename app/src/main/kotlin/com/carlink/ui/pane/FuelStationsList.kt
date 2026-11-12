@@ -60,8 +60,12 @@ internal fun StationsSection(
             if (!big) Text("Turn on Nearby stations in Settings › Vehicle to see stations around", style = MaterialTheme.typography.bodyLarge, color = secondary)
         FuelStations.Status.NEEDS_LOCATION -> AllowLocation(actions.allowLocation)
         else -> {
-            // The source's attribution (ODbL for OpenStreetMap) heads its stations, in view without scrolling, in both layouts.
-            if (rows.isNotEmpty()) view.attribution?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = secondary) }
+            // The source's attribution (ODbL for OpenStreetMap) heads its stations, in view without scrolling, in both layouts,
+            // with the refresh beside it (owner, 12 Nov).
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(view.attribution.takeIf { rows.isNotEmpty() }.orEmpty(), style = MaterialTheme.typography.bodyLarge, color = secondary, modifier = Modifier.weight(1f))
+                RefreshButton(view, actions.refresh)
+            }
             rows.forEach { StationRowView(it, imperial, big, actions) }
             note(view, rows.isEmpty(), look)?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = secondary) }
             // Why the free stations stand in for Google's (no key, the month's limit): small print, parked only.

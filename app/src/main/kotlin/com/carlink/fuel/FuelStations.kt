@@ -37,7 +37,8 @@ object FuelStations {
 
     /**
      * What the card shows: the [status], the last [stations] and when they came ([fetchedAt], elapsedRealtime), the
-     * source's [attribution], and why the free stations stand in for Google's ([notice]).
+     * source's [attribution], why the free stations stand in for Google's ([notice]), and when the card's refresh may ask
+     * again ([restUntil], elapsedRealtime: [RefreshGate]).
      */
     data class View(
         val status: Status = Status.OFF,
@@ -45,6 +46,7 @@ object FuelStations {
         val fetchedAt: Long? = null,
         val attribution: String? = null,
         val notice: String? = null,
+        val restUntil: Long = 0L,
     )
 
     private const val MS_PER_S = 1_000L
@@ -114,6 +116,16 @@ object FuelStations {
     fun onLowFuel(context: Context) = lookUpIfDue(context.applicationContext, lowFuelRose = true)
 
     /**
+     * The card's refresh, parked or moving (owner, 12 Nov): a lookup now from the current source and position, past the
+     * 5 km and 15 minutes, when [RefreshGate] allows it; a tap it doesn't is ignored.
+     */
+    fun refresh(context: Context) {
+        val now = SystemClock.elapsedRealtime()
+        if (!RefreshGate.allows(now, viewState.value.restUntil, looking?.isActive == true, retry?.isActive == true)) return
+        lookUpIfDue(context.applicationContext, lowFuelRose = false, asked = true)
+    }
+
+    /**
      * Settings' Test for the driver's Google key: one lookup at the head unit's last position, in words. It counts toward
      * the month's lookups like any other.
      */
@@ -162,6 +174,7 @@ object FuelStations {
     private fun lookUpIfDue(
         app: Context,
         lowFuelRose: Boolean,
+        asked: Boolean = false,
     ) {
         val store = VehicleStore.get(app)
         if (!store.nearbyStations.value || !CarGpsFeed.permitted(app)) return
@@ -188,7 +201,7 @@ object FuelStations {
             return
         }
         val now = SystemClock.elapsedRealtime()
-        if (looking?.isActive == true || !throttle.due(now, here, visible, lowFuelRose)) return
+        if (looking?.isActive == true || !throttle.due(now, here, visible, lowFuelRose, asked)) return
         throttle.ran(now, here)
         viewState.value = viewState.value.copy(status = Status.LOOKING)
         retry?.cancel()
@@ -205,7 +218,9 @@ object FuelStations {
         if (source is GooglePlacesSource) GooglePlacesStore.get(app).spendLookup()
         val started = SystemClock.elapsedRealtime()
         val outcome = runCatching { source.stationsNear(here, pick.radiusMi * METRES_PER_MILE) }
-        val ms = SystemClock.elapsedRealtime() - started
+        val endedAt = SystemClock.elapsedRealtime()
+        val ms = endedAt - started
+        val rest = endedAt + RefreshGate.REST_MS
         googleAside(outcome.exceptionOrNull(), pick.keyVersion)
         // What the lookup changed itself (Google set aside, the month's last lookup spent) is no new pick for the next fix:
         // before, each fallback to the free stations was looked up a second time (the Mac's 11 Nov bench).
@@ -217,7 +232,7 @@ object FuelStations {
         val stations = outcome.getOrNull()?.map { it.copy(credit = source.attribution) }
         if (stations != null) {
             busyInARow = 0
-            viewState.value = View(Status.READY, stations, SystemClock.elapsedRealtime(), source.attribution, pick.notice)
+            viewState.value = View(Status.READY, stations, endedAt, source.attribution, pick.notice, rest)
             logInfo("[FUEL] ${source.name}$from: ${stations.size} stations (${stations.count { it.priceFor(fuel) != null }} priced) in $ms ms", tag = Logger.Tags.ADAPTR)
             return
         }
@@ -234,7 +249,7 @@ object FuelStations {
                 // A bad answer (IOException, JSONException), or a bug in reading it: the card says it couldn't, the app goes on.
                 else -> Status.FAILED
             }
-        viewState.value = viewState.value.copy(status = status, notice = pick.notice)
+        viewState.value = viewState.value.copy(status = status, notice = pick.notice, restUntil = rest)
         val why = (e as? SourceBusy)?.why ?: (e as? SourceUnreachable)?.why ?: e.message ?: e.javaClass.simpleName
         if (e !is SourceBusy) {
             logWarn("[FUEL] ${source.name}$from: $status after $ms ms ($why)", tag = Logger.Tags.ADAPTR)

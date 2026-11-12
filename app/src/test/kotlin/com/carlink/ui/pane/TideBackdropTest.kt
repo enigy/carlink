@@ -8,13 +8,11 @@ import org.junit.Test
 /** Drift + Tide's sums and colours (owner, 12 Nov, the pane backgrounds canvas). */
 class TideBackdropTest {
     @Test
-    fun `the water stands at the tank's level on both panes, and unknown the clock keeps a low swell`() {
-        assertEquals(0.38f, TideMath.waterline(fuel = true, level = 0.62f), 1e-6f)
-        assertEquals("full", 0f, TideMath.waterline(fuel = true, level = 1.2f), 1e-6f)
-        assertEquals("empty", 1f, TideMath.waterline(fuel = true, level = 0f), 1e-6f)
-        assertEquals("the clock shows the fuel too (owner, 12 Nov)", 0.9f, TideMath.waterline(fuel = false, level = 0.1f), 1e-6f)
-        assertTrue("unknown: no water on the Fuel card, the line below the pane", TideMath.waterline(fuel = true, level = null) > 1f)
-        assertEquals("unknown: the clock keeps its swell", TideMath.SWELL, TideMath.waterline(fuel = false, level = null), 1e-6f)
+    fun `the water stands at the tank's level on both cards, and unknown there is none`() {
+        assertEquals(0.38f, TideMath.waterline(0.62f), 1e-6f)
+        assertEquals("full", 0f, TideMath.waterline(1.2f), 1e-6f)
+        assertEquals("empty", 1f, TideMath.waterline(0f), 1e-6f)
+        assertTrue("unknown: no water, the line below the pane (owner, 12 Nov)", TideMath.waterline(null) > 1f)
     }
 
     @Test
