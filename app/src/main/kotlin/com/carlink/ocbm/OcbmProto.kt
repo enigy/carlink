@@ -514,11 +514,7 @@ object Ocbm {
      */
     const val CMD_VIDEO_ALLOWED: Byte = 0x13
 
-    /**
-     * `[INPUT_COMMAND][CMD_VIDEO_SCREEN][borrow 0|1]` -> the box borrows the main screen for the phone's video, or gives
-     * it back (`changeModes`, borrowID `VideoPlayback`, as LIVI does), while Carlink's video screen is up. lib.rs:545
-     */
-    const val CMD_VIDEO_SCREEN: Byte = 0x14
+    // 0x14 is retired (OCBM 2.0): route A's screen borrow, which iOS refused and video plays without.
 
     /** playbackStatus, LIVI's words: nothing queued (`idle`), a queued video allowed to show (`video`), one that may not (`audioOnly`). lib.rs:526 */
     const val VIDEO_STATUS_IDLE: Byte = 0

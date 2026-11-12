@@ -425,9 +425,15 @@ pub const INPUT_NAV: u8 = 0x05; // [INPUT_NAV][nav u8] -> box taps the D-Pad HID
 pub const INPUT_TELEPHONY: u8 = 0x08; // [INPUT_TELEPHONY][buttonIndex u8] -> box sends the 1-byte HID
                                       // Telephony report (index) then a release (0). 1=Answer(HookSwitch)
                                       // 2=Flash 3=End(Drop) 4=Mute 5..14=DTMF 0..9 15=* 16=# 17=Delete.
+pub const INPUT_LOCATION: u8 = 0x09; // [INPUT_LOCATION][one NMEA-0183 sentence, ASCII, `$` to the checksum, no CR LF]
+                                     // -> the car's own GPS for the phone (LIVI research item 4). carplayd forwards it as
+                                     // iAP2 LocationInformation (0xFFFB) on the wireless tunnel only after the phone's
+                                     // StartLocationInformation selected that type, no faster than its minimum interval;
+                                     // otherwise it is dropped. Declared only when the app pushed `location: [...]`, and
+                                     // the box tells the app when to start and stop with META_JSON {"kind":"location"}.
 pub const INPUT_DATASTREAM: u8 = 0x0A; // [INPUT_DATASTREAM][stream u32 LE][JSON message] -> box sends the
                                        // message on that shared DataStream (route A: the phone's video Playback
-                                       // channel; receiver::playback). 0x09 is INPUT_LOCATION on livi-research.
+                                       // channel; receiver::playback).
 /// The JSON message's cap in an `INPUT_DATASTREAM` sub-frame. The other sub-frames stay at carplayd's 64 B.
 pub const MAX_INPUT_DATASTREAM: usize = 16_384; // 16 KiB
 pub const INPUT_TUNNEL: u8 = 0x0B; // [INPUT_TUNNEL][op][id u8][data] -> carplayd opens, writes to or closes route A's
@@ -439,6 +445,13 @@ pub const TUNNEL_OPEN: u8 = 0x01; // host->box: data = [port u16 BE][the proxyUr
 pub const TUNNEL_DATA: u8 = 0x02; // both ways: the stream's bytes
 pub const TUNNEL_CLOSE: u8 = 0x03; // host->box: close it; box->host: it closed, data = the reason (UTF-8, may be empty)
 pub const TUNNEL_OPENED: u8 = 0x04; // box->host: connected to the phone's proxy
+pub const INPUT_VEHICLE_STATUS: u8 = 0x0C; // [INPUT_VEHICLE_STATUS][id u8][value]… -> the car's status for the phone
+                                           // (LIVI research item 3): Apple's 0xA101 parameter ids with their values,
+                                           // u16/i16 big-endian, a bool one byte (iap2_core::vehicle). carplayd sends
+                                           // VehicleStatusUpdate (0xA101) on the wireless tunnel with only what the
+                                           // phone's StartVehicleStatusUpdates asked for, which the box tells the app
+                                           // as META_JSON {"kind":"vehicleStatus"}. Declared only when the app pushed
+                                           // `vehicleStatus: [...]`.
 pub const INPUT_KNOB: u8 = 0x07; // [INPUT_KNOB][flags u8][nudge_x i8][nudge_y i8][rotation i8] -> box sends
                                  // one report on the Knob HID (uid 4): flags bit0 Select/bit1 Home/bit2 Back,
                                  // signed X/Y nudge (±127 = a 4-way arrow), signed relative rotation (±1/detent).
@@ -532,17 +545,15 @@ pub const CMD_VIEW_AREA: u8 = 0x11;
 // `showUI{uuid: DISPLAY_UUID, url}` — same command id, different body.
 pub const CMD_REQUEST_UI_URL: u8 = 0x12;
 pub const REQUEST_UI_URL_MAX: usize = 255;
-// Route A (2026-11-11; the phone's AirPlay video inside CarPlay, behind the AirPlay video probe's `video` switch):
+// Route A (2026-11-11; the phone's AirPlay video inside CarPlay, always offered since OCBM 2.0):
 // whether video may play now, as the host decides it (the car known to be parked), and the play queue's status.
 // `[INPUT_COMMAND][CMD_VIDEO_ALLOWED][allowed 0|1][VIDEO_STATUS_*]` -> `setVideoPlaybackAllowed{videoPlaybackAllowed,
 // playbackStatus}` to the phone in a session that negotiated videoPlayback, as LIVI sends it: at RECORD (status
 // idle), at play start and as parking changes. Before RECORD the word is kept for RECORD's; until the host has said,
 // nothing goes out (receiver `playback::host_allows`). A missing status byte is idle.
 pub const CMD_VIDEO_ALLOWED: u8 = 0x13;
-// Route A: borrow the main screen for the phone's video while Carlink shows it, or give it back, as LIVI does
-// (borrowID "VideoPlayback"). `[INPUT_COMMAND][CMD_VIDEO_SCREEN][borrow 0|1]` -> a `changeModes` Borrow or Unborrow
-// of resourceID 1 (receiver `events::send_video_borrow`), with the probe's `video` switch on.
-pub const CMD_VIDEO_SCREEN: u8 = 0x14;
+// 0x14 is retired, never to be reused: route A's screen borrow (`changeModes` borrowID "VideoPlayback"), which
+// iOS answered 400 nine times of nine on the bench and which video plays without. Removed in OCBM 2.0.
 // playbackStatus (LIVI's words): nothing queued, a queued video allowed to show, one queued that may not show.
 pub const VIDEO_STATUS_IDLE: u8 = 0; // "idle"
 pub const VIDEO_STATUS_VIDEO: u8 = 1; // "video"
@@ -1125,7 +1136,7 @@ mod tests {
             CMD_REQUEST_UI, CMD_REQUEST_SIRI, CMD_SIRI_DOWN, CMD_SIRI_UP, CMD_NAV_START, CMD_NAV_STOP,
             CMD_NAV_CARD, CMD_LIMITED_UI_ON, CMD_LIMITED_UI_OFF, CMD_NAV_APP, CMD_NAV_APPEARANCE,
             CMD_NAV_ZOOM_IN, CMD_NAV_ZOOM_OUT, CMD_UI_APPEARANCE, CMD_MAP_APPEARANCE, CMD_NIGHT_MODE,
-            CMD_VIEW_AREA, CMD_REQUEST_UI_URL, CMD_VIDEO_ALLOWED, CMD_VIDEO_SCREEN,
+            CMD_VIEW_AREA, CMD_REQUEST_UI_URL, CMD_VIDEO_ALLOWED,
         ];
         let mut sorted = ids.to_vec();
         sorted.sort_unstable();
@@ -1134,7 +1145,6 @@ mod tests {
         assert_eq!(CMD_VIEW_AREA, 0x11);
         assert_eq!(CMD_REQUEST_UI_URL, 0x12);
         assert_eq!(CMD_VIDEO_ALLOWED, 0x13);
-        assert_eq!(CMD_VIDEO_SCREEN, 0x14);
     }
 
     #[test]
