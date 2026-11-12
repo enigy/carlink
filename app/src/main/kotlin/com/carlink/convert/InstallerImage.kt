@@ -40,16 +40,15 @@ object InstallerImage {
      */
     val PINNED: PinnedImage? =
         PinnedImage(
-            // "1.0.6 ocbm f2bf538", every binary built from f2bf538: its files match the pinned update package (published
-            // 10 Nov; the code benched 10 Nov on b84a58b, which differs only in VERSION).
-            tag = "installer-1.0.6",
-            url = "https://github.com/enigy/ocbm/releases/download/installer-1.0.6/A15W_Update.img",
-            sizeBytes = 1_914_305L,
-            sha256 = "75204b5c4272bf48b607ddb56acdcc165de6987726b4a2cdfcf629325cae3d8c",
+            // "2.0.0 ocbm 31a2828", every binary built from 31a2828: its files match the pinned update package.
+            tag = "installer-2.0.0",
+            url = "https://github.com/enigy/ocbm/releases/download/installer-2.0.0/A15W_Update.img",
+            sizeBytes = 2_047_100L,
+            sha256 = "986141937cffd8f5d72872b3c00b855542a850557b76f930629b2b594e63a206",
         )
 
     /** Where the stick guide is: the installer image's release page (M7). A build with the switch off points at it. */
-    const val STICK_GUIDE = "github.com/enigy/ocbm/releases/tag/installer-1.0.6"
+    const val STICK_GUIDE = "github.com/enigy/ocbm/releases/tag/installer-2.0.0"
 
     /** The name the stock firmware installs from, at the root of a stick in the adapter. */
     const val FILE_NAME = "A15W_Update.img"

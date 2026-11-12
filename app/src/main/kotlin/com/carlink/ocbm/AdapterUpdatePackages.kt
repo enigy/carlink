@@ -35,18 +35,18 @@ object AdapterUpdates {
      */
     val PINNED: PinnedPackage? =
         PinnedPackage(
-            tag = "v1.0.6",
-            url = "https://github.com/enigy/ocbm/releases/download/v1.0.6/ocbm-update-1.0.6.tgz",
-            sizeBytes = 1_886_127L,
-            sha256 = "fc91fd7f9e7023c1ebffcb913e428257a5bed2789435b64daa7c4864f66d8cbd",
-            // "1.0.6 ocbm f2bf538" from 1.0.1: btd, carplayd, iap2d, iap_role_switch, ocbmd and 10 scripts, built from f2bf538.
-            // ROOM trial=no: a trial adapter finishes its install first (published 10 Nov; the code benched 10 Nov on b84a58b).
+            tag = "v2.0.0",
+            url = "https://github.com/enigy/ocbm/releases/download/v2.0.0/ocbm-update-2.0.0.tgz",
+            sizeBytes = 2_018_485L,
+            sha256 = "4ffaa7969c0e0b5d2c2362c41a49158606bd4d00d4c3987aa985e0b6c016547d",
+            // "2.0.0 ocbm 31a2828" from 1.0.1: btd, carplayd, iap2d, iap_role_switch, ocbmd, 10 scripts and etc/ocbm/retired.list, built from 31a2828.
+            // ROOM trial=no: a trial adapter finishes its install first.
             pkg =
                 UpdatePackage(
-                    version = "1.0.6",
+                    version = "2.0.0",
                     fromMin = "1.0.1",
-                    needKb = 2861,
-                    notes = "Video and the phone come back when the link returns within seconds, as after the USB bridge updates itself.",
+                    needKb = 3015,
+                    notes = "Video from your iPhone on the car's screen while parked, and the car's GPS and status for your iPhone.",
                 ),
         )
 
