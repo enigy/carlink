@@ -171,7 +171,10 @@ class VideoPlayback(
         stream: Int,
         message: JSONObject,
     ) {
-        val answer = answer(message, state, engine.snapshot()) ?: return
+        // An item ended here answers as a failed player does, not ready and nothing buffered: the answer the phone let go
+        // of its item for (the Mac's bench #5, 80 ms after it). A paused, ready player kept the phone asking to play (r3).
+        val playing = if (state.failed != null) VideoEngine.Snapshot(positionS = state.positionS, failed = true) else engine.snapshot()
+        val answer = answer(message, state, playing) ?: return
         val sent = send(stream, jsonText(answer))
         if (!sent || message.optString("type") != "playbackInfo") {
             logInfo("[VIDEO] answered ${message.optString("type")} on stream $stream: sent=$sent", tag = Logger.Tags.ADAPTR)
@@ -197,7 +200,8 @@ class VideoPlayback(
         why: String,
     ) {
         val wasPlaying = phonePlays
-        engine.setRate(0.0)
+        engine.stop() // nothing more is fetched for it
+        loaded = false
         state = state.copy(failed = code)
         showingState.value = false
         if (wasPlaying) pausePhone()

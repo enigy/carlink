@@ -84,7 +84,7 @@ class ExoVideoEngine(
             override fun onPlayerError(error: PlaybackException) {
                 logWarn("[VIDEO] the player failed: ${error.errorCodeName}", tag = Logger.Tags.ADAPTR)
                 snap = snap.copy(failed = true, ready = false, rate = 0.0)
-                onFailed?.invoke(error.errorCodeName)
+                report(error.errorCodeName)
             }
         }
 
@@ -100,7 +100,12 @@ class ExoVideoEngine(
         p.stop()
         logInfo("[VIDEO] the item is FairPlay-protected, which Carlink doesn't play: declined", tag = Logger.Tags.ADAPTR)
         snap = snap.copy(failed = true, ready = false, rate = 0.0)
-        onFailed?.invoke(VideoEngine.FAIRPLAY)
+        report(VideoEngine.FAIRPLAY)
+    }
+
+    /** Tell [onFailed], after the player's own callback returns: the queue may free the player in answer. */
+    private fun report(code: String) {
+        main.post { onFailed?.invoke(code) }
     }
 
     private val ticker =
