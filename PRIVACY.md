@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective November 10, 2026.
+Effective November 12, 2026.
 
 Carlink collects no data about you. It has no analytics, no telemetry, no crash reporting, no ads and no accounts, and nothing you do in it is sent to the developer. This policy covers the Carlink app (`com.enigy.carlink3`) and the Carlink USB Bridge.
 
