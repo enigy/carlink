@@ -62,6 +62,7 @@ object FuelStations {
 
     @Volatile private var visible = false
 
+    // The lookup asking now. Launched on the main thread only (lookUpIfDue, retryAfter), so two never run at once.
     @Volatile private var looking: Job? = null
 
     // The pick as the last lookup left it; a different one (a setting changed, Google's hour ran out) looks up again at once.
@@ -169,6 +170,16 @@ object FuelStations {
         if (pick != lastPick) {
             throttle.reset()
             lastPick = pick
+            // A lookup still asking went by the old pick: look again once it ends. Otherwise a change made during a 30 s
+            // Overpass lookup (Price source, the key typed in) waited for the next fix, which never comes parked (the Mac's
+            // 11 Nov bench).
+            val running = looking
+            if (running?.isActive == true) {
+                scope.launch(Dispatchers.Main) {
+                    running.join()
+                    lookUpIfDue(app, lowFuelRose = false)
+                }
+            }
         }
         val here = hereState.value
         if (here == null) {
@@ -232,7 +243,10 @@ object FuelStations {
         retry = scope.launch { retryAfter(app, waitS) }
     }
 
-    /** A busy service, asked again after [waitS] while the card is still up and Nearby stations on. */
+    /**
+     * A busy service, asked again after [waitS] while the card is still up and Nearby stations on. Launched from the main
+     * thread as the running lookup, like [lookUpIfDue]'s: a change made while it asks waits for it, never runs beside it.
+     */
     private suspend fun retryAfter(
         app: Context,
         waitS: Long,
@@ -242,8 +256,12 @@ object FuelStations {
         val here = hereState.value
         if (!visible || here == null) return
         if (!store.nearbyStations.value || !CarGpsFeed.permitted(app)) return
-        throttle.ran(SystemClock.elapsedRealtime(), here)
-        lookUp(app, pick(app, store), here, carFuel(store))
+        withContext(Dispatchers.Main) {
+            if (looking?.isActive != true) {
+                throttle.ran(SystemClock.elapsedRealtime(), here)
+                looking = scope.launch { lookUp(app, pick(app, store), here, carFuel(store)) }
+            }
+        }
     }
 
     /** The source to ask and why it isn't the one picked ([notice]), with the radius and the Google key it goes by. */
