@@ -1,5 +1,9 @@
 package com.carlink.ui.pane
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -203,10 +207,12 @@ private fun PaneHost(
     val nav by NavigationStateManager.state.collectAsState()
     val showCall = call != CallRoster.Presentation.None
     val card = if (showCall) null else deck.shown
-    // The cover behind the music, and frosted behind the clock while music plays; a call, the route and a quiet clock take the plain background.
+    // The cover behind the music, and frosted behind the clock while music plays; Drift + Tide behind the Fuel card and
+    // a quiet clock; a call and the route take the plain background.
     val backdrop = PaneBackdrop.of(card, media.playing)
-    val art = if (backdrop != PaneBackdrop.PLAIN) art else null
-    val look = paneLook(art, rememberArtIsDark(art), night = isSystemInDarkTheme())
+    val art = if (backdrop == PaneBackdrop.BAND || backdrop == PaneBackdrop.FROSTED) art else null
+    val night = isSystemInDarkTheme()
+    val look = paneLook(art, rememberArtIsDark(art), night = night)
     val title = paneTitle(card, media.info.appName)
     val onTitle = titleTap(card, deck, carlinkManager)
     // Where the music card's title starts (root coordinates): the frost on the art begins just above it.
@@ -220,6 +226,10 @@ private fun PaneHost(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, frostAll = backdrop == PaneBackdrop.FROSTED, modifier = Modifier.fillMaxSize())
+            // Drift + Tide behind the Fuel card and the quiet clock (owner, 12 Nov), fading in and out as the cards swipe.
+            AnimatedVisibility(visible = backdrop == PaneBackdrop.TIDE, enter = fadeIn(tween(TIDE_FADE_MS)), exit = fadeOut(tween(TIDE_FADE_MS))) {
+                TideBackdrop(fuel = card == PaneCard.FUEL, night = night, modifier = Modifier.fillMaxSize())
+            }
             if (art != null) {
                 Box(
                     modifier =
@@ -394,6 +404,7 @@ private val NIGHT_PANE = Color(0xFF0B0D10)
 private val PANE_CORNER = 52.dp
 private const val SCRIM_TOP = 0.45f
 private const val SCRIM_BOTTOM = 0.75f
+private const val TIDE_FADE_MS = 600
 private const val HEADER_ALPHA = 0.85f
 private const val TAB_ALPHA = 0.7f
 

@@ -14,7 +14,7 @@ class FuelDeckTest {
         assertEquals(listOf(DIRECTIONS, FUEL, MEDIA, CLOCK), PaneDeck.pages(navigating = true, hasTrack = true, fuel = true))
         assertEquals(listOf(FUEL, CLOCK), PaneDeck.pages(navigating = false, hasTrack = false, fuel = true))
         assertEquals(listOf(MEDIA, CLOCK), PaneDeck.pages(navigating = false, hasTrack = true, fuel = false))
-        assertEquals(PaneBackdrop.PLAIN, PaneBackdrop.of(FUEL, playing = true))
+        assertEquals("Drift + Tide, music or not (owner, 12 Nov)", PaneBackdrop.TIDE, PaneBackdrop.of(FUEL, playing = true))
     }
 
     @Test

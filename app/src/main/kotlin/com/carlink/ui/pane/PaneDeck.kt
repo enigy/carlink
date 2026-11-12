@@ -7,14 +7,16 @@ package com.carlink.ui.pane
 enum class PaneCard { DIRECTIONS, FUEL, MEDIA, CLOCK }
 
 /**
- * What fills the pane behind the card: the plain day or night colour ([PLAIN]); the album art with a
- * frosted band behind the words ([BAND], the music card); or the art frosted all over ([FROSTED], the
- * clock while music plays: owner, 10-27, back to plain once it stops, the 1.07 look).
+ * What fills the pane behind the card: the plain day or night colour ([PLAIN]: the route, a call); the album art with
+ * a frosted band behind the words ([BAND], the music card); the art frosted all over ([FROSTED], the clock while music
+ * plays: owner, 10-27); or Drift + Tide ([TIDE], [TideBackdrop]: the Fuel card, and the clock once music stops, owner,
+ * 12 Nov, in place of the 1.07 plain clock).
  */
 enum class PaneBackdrop {
     PLAIN,
     BAND,
     FROSTED,
+    TIDE,
     ;
 
     companion object {
@@ -26,6 +28,7 @@ enum class PaneBackdrop {
             when {
                 card == PaneCard.MEDIA -> BAND
                 card == PaneCard.CLOCK && playing -> FROSTED
+                card == PaneCard.CLOCK || card == PaneCard.FUEL -> TIDE
                 else -> PLAIN
             }
     }
