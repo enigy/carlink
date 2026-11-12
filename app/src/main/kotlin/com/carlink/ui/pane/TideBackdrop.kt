@@ -35,12 +35,13 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 
 /**
- * "Drift + Tide" (owner, 12 Nov, the pane backgrounds canvas), behind the Fuel card and the clock while nothing plays
- * ([PaneBackdrop.TIDE]): Drift's slow colour fields fill water whose line is the tank's level ([TideMath.waterline]), and
- * above it the pane's own day or night colour carries a faint drift of the same colours. Low fuel ([LowFuel]) turns the
- * water amber. The clock's water is a low swell under its speed and temperature; an unknown level draws none. The line
- * glides to a new level or card. Fields and waves move only parked, with the app in front and Android's animations on:
- * moving, the scene holds still, nothing drifting at the edge of the driver's eye.
+ * "Drift + Tide" (owner, 12 Nov, the pane backgrounds canvas), behind the Fuel card and the clock ([PaneBackdrop.TIDE]):
+ * Drift's slow colour fields fill water whose line is the tank's level ([TideMath.waterline]) on both, and above it the
+ * pane's own day or night colour carries a faint drift of the same colours. Low fuel ([LowFuel]) turns the water amber.
+ * Without a level (no CAR_ENERGY, or the car doesn't give level and capacity) the Fuel card draws no water and the
+ * clock keeps a low swell under its speed and temperature, so it never loses its scene. The line glides to a new level
+ * or card. Fields and waves move only parked, with the app in front and Android's animations on: moving, the scene holds
+ * still, nothing drifting at the edge of the driver's eye.
  */
 @Composable
 internal fun TideBackdrop(
@@ -52,7 +53,7 @@ internal fun TideBackdrop(
     val vehicle by VehicleReadings.state.collectAsState()
     val parked by DrivingState.parked.collectAsState()
     val lowAt by remember(context) { VehicleStore.get(context) }.lowFuelAt.collectAsState()
-    val low = fuel && LowFuel.isLow(vehicle, lowAt, vehicle.distanceImperial(Locale.getDefault()))
+    val low = LowFuel.isLow(vehicle, lowAt, vehicle.distanceImperial(Locale.getDefault()))
     val line by animateFloatAsState(TideMath.waterline(fuel, vehicle.fuelFraction()), tween(LINE_MS), label = "waterline")
     var resumed by remember { mutableStateOf(true) }
     LifecycleResumeEffect(Unit) {
@@ -103,15 +104,18 @@ internal object TideMath {
     /** No water: the line below the pane. */
     const val NONE = 1.08f
 
-    /** The water's line, as a fraction of the pane's height from the top: the tank's [level] on the fuel pane (none when unknown), the swell on the clock's. */
+    /**
+     * The water's line, as a fraction of the pane's height from the top: the tank's [level] on either pane (owner, 12 Nov:
+     * the clock shows the fuel too). Unknown, none on the [fuel] pane and the swell on the clock's.
+     */
     fun waterline(
         fuel: Boolean,
         level: Float?,
     ): Float =
         when {
-            !fuel -> SWELL
-            level == null -> NONE
-            else -> 1f - level.coerceIn(0f, 1f)
+            level != null -> 1f - level.coerceIn(0f, 1f)
+            fuel -> NONE
+            else -> SWELL
         }
 
     /** How far a field has drifted at [t]: 0 at rest to 1 at its far point over [periodMs], eased, and back; [reverse] starts at the far point. */

@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.carlink.fuel.FuelPrice
 import com.carlink.fuel.FuelStations
 import com.carlink.fuel.Station
 import com.carlink.fuel.StationRow
@@ -147,7 +148,6 @@ private fun StationRowView(
     actions: StationActions,
 ) {
     val secondary = LocalContentColor.current.copy(alpha = SECONDARY_ALPHA)
-    val now = System.currentTimeMillis()
     Row(
         modifier =
             Modifier
@@ -159,41 +159,55 @@ private fun StationRowView(
                 .alpha(if (row.outOfReach) OUT_OF_REACH_ALPHA else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Star(row, actions.star)
+        // Parked, the star's button leads every row; moving, a starred station's mark follows its name, so the names and
+        // prices stay in line (the Mac's 12 Nov bench).
+        actions.star?.let { Star(row, it) }
         Column(modifier = Modifier.weight(1f)) {
             // Moving: both lines large, no small print (the Mac's 11 Nov bench).
             val type = MaterialTheme.typography
             // Moving, the name alone and its street beside the distance, so a long one isn't cut (the Mac's 12 Nov bench).
             val name = if (big) row.station.name else StationText.title(row.station)
-            Text(name, style = if (big) type.headlineMedium else type.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(name, style = if (big) type.headlineMedium else type.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (actions.star == null) Star(row, null)
+            }
             val street = StationText.street(row.station).takeIf { big }
-            val words = listOfNotNull(row.distanceM?.let { StationText.distance(it, imperial) }, street, tags(row), "out of reach".takeIf { row.outOfReach })
+            val words = listOfNotNull(row.distanceM?.let { StationText.distance(it, imperial) }, street, row.tags, "out of reach".takeIf { row.outOfReach })
             if (words.isNotEmpty()) {
                 Text(words.joinToString(" · "), style = if (big) type.titleLarge else type.titleMedium, color = secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        row.price?.let { price ->
-            Column(horizontalAlignment = Alignment.End) {
-                Text(StationText.price(price.amount, price.currency), style = if (big) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge)
-                val at = price.atMs
-                if (!big && at != null) {
-                    val stale = StationText.stale(at, now)
-                    Text(
-                        StationText.age(at, now),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (stale) MaterialTheme.colorScheme.tertiary else secondary,
-                    )
-                }
-            }
+        row.price?.let { RowPrice(it, big) }
+    }
+}
+
+/** A row's CHEAPEST and NEAREST, or null. */
+private val StationRow.tags: String? get() = listOfNotNull("CHEAPEST".takeIf { cheapest }, "NEAREST".takeIf { nearest }).joinToString(" · ").ifEmpty { null }
+
+/** A row's price, and parked its age, amber once it is over a day old. */
+@Composable
+private fun RowPrice(
+    price: FuelPrice,
+    big: Boolean,
+) {
+    val now = System.currentTimeMillis()
+    Column(horizontalAlignment = Alignment.End) {
+        Text(StationText.price(price.amount, price.currency), style = if (big) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge)
+        val at = price.atMs
+        if (!big && at != null) {
+            val stale = StationText.stale(at, now)
+            Text(
+                StationText.age(at, now),
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (stale) MaterialTheme.colorScheme.tertiary else LocalContentColor.current.copy(alpha = SECONDARY_ALPHA),
+            )
         }
     }
 }
 
-private fun tags(row: StationRow): String? = listOfNotNull("CHEAPEST".takeIf { row.cheapest }, "NEAREST".takeIf { row.nearest }).joinToString(" · ").ifEmpty { null }
-
 /**
  * A row's star. Parked ([onStar] set), a button that stars the station or takes its star away. Moving, only a starred
- * station's star, as a mark: the row's one tap stays directions, with no small target beside it.
+ * station's star, as a mark after its name: the row's one tap stays directions, with no small target beside it.
  */
 @Composable
 private fun Star(
@@ -207,7 +221,7 @@ private fun Star(
             Icon(icon, contentDescription = if (row.starred) "Unstar ${row.station.name}" else "Star ${row.station.name}", tint = tint, modifier = Modifier.size(45.dp))
         }
     } else if (row.starred) {
-        Icon(icon, contentDescription = "Starred", tint = tint, modifier = Modifier.padding(end = 12.dp).size(50.dp))
+        Icon(icon, contentDescription = "Starred", tint = tint, modifier = Modifier.padding(start = 12.dp).size(50.dp))
     }
 }
 

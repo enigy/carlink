@@ -207,10 +207,9 @@ private fun PaneHost(
     val nav by NavigationStateManager.state.collectAsState()
     val showCall = call != CallRoster.Presentation.None
     val card = if (showCall) null else deck.shown
-    // The cover behind the music, and frosted behind the clock while music plays; Drift + Tide behind the Fuel card and
-    // a quiet clock; a call and the route take the plain background.
-    val backdrop = PaneBackdrop.of(card, media.playing)
-    val art = if (backdrop == PaneBackdrop.BAND || backdrop == PaneBackdrop.FROSTED) art else null
+    // The cover behind the music, Drift + Tide behind the Fuel card and the clock; a call and the route take the plain background.
+    val backdrop = PaneBackdrop.of(card)
+    val art = if (backdrop == PaneBackdrop.BAND) art else null
     val night = isSystemInDarkTheme()
     val look = paneLook(art, rememberArtIsDark(art), night = night)
     val title = paneTitle(card, media.info.appName)
@@ -225,8 +224,8 @@ private fun PaneHost(
         color = look.background,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, frostAll = backdrop == PaneBackdrop.FROSTED, modifier = Modifier.fillMaxSize())
-            // Drift + Tide behind the Fuel card and the quiet clock (owner, 12 Nov), fading in and out as the cards swipe.
+            MediaBackdrop(art, background = look.background, wordsTopInRoot = wordsTop, modifier = Modifier.fillMaxSize())
+            // Drift + Tide behind the Fuel card and the clock (owner, 12 Nov), fading in and out as the cards swipe.
             AnimatedVisibility(visible = backdrop == PaneBackdrop.TIDE, enter = fadeIn(tween(TIDE_FADE_MS)), exit = fadeOut(tween(TIDE_FADE_MS))) {
                 TideBackdrop(fuel = card == PaneCard.FUEL, night = night, modifier = Modifier.fillMaxSize())
             }
