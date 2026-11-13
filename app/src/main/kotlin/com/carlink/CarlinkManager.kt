@@ -958,13 +958,13 @@ class CarlinkManager(
     @Volatile private var wakeAtMs = 0L
 
     /** How [wakeConnect] connected, for that line. */
-    @Volatile private var wakeHow = ""
+    @Volatile private var wakeHow = DisplayOff.WakePath.AT_ONCE
 
     /** The open [wakeConnect] makes at once: it waits [DisplayOff.WAKE_HELLO_MS] for the adapter's first reply. */
     @Volatile private var wakeOpen = false
 
-    /** The adapter's last reported boot radio preload state ([notePreload]). */
-    @Volatile private var adapterPreload = ""
+    /** The adapter's boot radio preload state, logged once per session. */
+    private val preloadNote = PreloadNote()
 
     private var hadPriorSession: Boolean = false
     private var consecutiveNoResponse: Int = 0
@@ -1371,17 +1371,13 @@ class CarlinkManager(
             } else {
                 logInfo("[USB] $reason — connecting", tag = Logger.Tags.USB)
                 cancelReconnect()
-                try {
-                    withContext(Dispatchers.IO) { startImpl() }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    // A start cancelled mid-way (a display OFF in its first moments cancels the wake's) left CONNECTING
-                    // with no session, and a display ON then did nothing until Reset Device (the Mac, 13 Nov).
-                    if (state == State.CONNECTING) {
+                undoCancelledStart(
+                    stuck = { state == State.CONNECTING },
+                    undo = {
                         logInfo("[LIFECYCLE] the start was cancelled before the session came up: back to DISCONNECTED", tag = Logger.Tags.USB)
                         stopImpl()
-                    }
-                    throw e
-                }
+                    },
+                ) { withContext(Dispatchers.IO) { startImpl() } }
             }
         }
 
@@ -1423,7 +1419,8 @@ class CarlinkManager(
         }
         if (released || noSessionFor(dev)) return null
         stockConversion.reset() // an OCBM adapter: a converted one back in its trial, or another
-        return openThroughBridge(dev.deviceName)
+        ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
+        return openThroughBridge(dev.deviceName)?.also { ColdStart.process.bridgeOpen(SystemClock.elapsedRealtime()) }
     }
 
     /**
@@ -1687,15 +1684,15 @@ class CarlinkManager(
         // CT_HELLO, retransmitted until ACK. Failure here is Pattern A's trigger — keep the
         // "no initial response" substring, which remote log filters match on.
         setStatusText("Connecting to adapter...")
-        if (!c.hello(if (wakeOpen) DisplayOff.WAKE_HELLO_MS else OcbmClient.HELLO_TIMEOUT_MS)) {
-            if (wakeOpen) wakeHow = "the open at once got no reply in ${DisplayOff.WAKE_HELLO_MS / 1000} s, then the retry"
+        if (!c.hello(DisplayOff.helloMs(wakeOpen))) {
+            if (wakeOpen) wakeHow = DisplayOff.WakePath.HELLO_MISSED
             handleError("no initial response — no CT_HELLO_ACK from the adapter")
             return
         }
         // The adapter answered: once the link has stayed up RECONNECT_STABLE_MS, the next loss starts a fresh chain ([ReconnectBudget]).
         if (reconnects.used > 0) logInfo("[RECONNECT] reconnected after ${reconnects.used} attempt(s)", tag = Logger.Tags.USB)
         reconnects.linkUp(SystemClock.elapsedRealtime())
-        adapterPreload = "" // logged once per session, not once per Carlink process
+        preloadNote.newSession()
 
         // The box has no RTC battery, so its clock is bogus at every boot and CarPlay's TLS
         // pairing needs a real one. Non-fatal: a wrong clock degrades pairing, a missing
@@ -1709,6 +1706,7 @@ class CarlinkManager(
             handleError("usb — CT_SUBSCRIBE write failed")
             return
         }
+        ColdStart.process.subscribed(SystemClock.elapsedRealtime())?.let { logInfo(it, tag = Logger.Tags.USB) }
         c.startHeartbeat()
         armBoxLogStream(c)
         syncPhonePolicyAfterSubscribe()
@@ -2101,24 +2099,13 @@ class CarlinkManager(
     /** Every MGMT_INFO, whoever asked: the adapter's name, followed when it changes, for Settings and the pairing screen. */
     private fun noteAdapterInfo(json: String) {
         val info = runCatching { JSONObject(json) }.getOrNull() ?: return
-        notePreload(info.optString("preload"))
+        preloadNote.line(info.optString("preload"))?.let { logInfo(it, tag = Logger.Tags.ADAPTR) }
         val name = info.optString("name").takeIf { it.isNotBlank() } ?: return
         val was = ocbmAdapterName
         if (name == was) return
         ocbmAdapterName = name
         logInfo("[PAIRING] the adapter is named $name${was?.let { " (was $it)" }.orEmpty()}", tag = Logger.Tags.ADAPTR)
         phoneSetup.onAdapterName(name)
-    }
-
-    /**
-     * The adapter's boot radio preload (OCBM MGMT_INFO "preload": on, off_guard, off_owner; absent before connect-speed),
-     * logged when it changes, so a drive log shows a preload its guard switched off (the Mac, 13 Nov).
-     */
-    private fun notePreload(preload: String) {
-        if (preload.isEmpty() || preload == adapterPreload) return
-        adapterPreload = preload
-        val words = if (preload == "off_guard") ": its guard switched it off after unfinished preloads" else ""
-        logInfo("[ADAPTER] boot radio preload $preload$words", tag = Logger.Tags.ADAPTR)
     }
 
     private fun pollBoxInfo() {
@@ -2636,6 +2623,7 @@ class CarlinkManager(
      */
     fun onUsbDeviceAttached() {
         if (released) return
+        ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
         val since = rebootAtMs
         if (since != 0L) {
             rebootAtMs = 0L
@@ -2720,8 +2708,8 @@ class CarlinkManager(
      * listed, and settle first only when it is not, or when that open failed. The first video logs the wake's time.
      */
     private suspend fun wakeConnect() {
-        if (BridgeBulkTransport.findAdapter(context) != null) {
-            wakeHow = "at once, the adapter listed"
+        wakeHow = DisplayOff.firstPath(adapterListed = BridgeBulkTransport.findAdapter(context) != null)
+        if (wakeHow == DisplayOff.WakePath.AT_ONCE) {
             wakeOpen = true
             try {
                 startIfDisconnected("Display on, the adapter still listed")
@@ -2730,9 +2718,7 @@ class CarlinkManager(
             }
             if (state != State.DISCONNECTED) return
             logInfo("[POWER] the wake connect did not open the adapter: again after the USB settle", tag = Logger.Tags.USB)
-            wakeHow = "after the settle, the open at once failed"
-        } else {
-            wakeHow = "after the settle, the adapter not listed"
+            wakeHow = DisplayOff.WakePath.OPEN_FAILED
         }
         delay(DisplayOff.WAKE_SETTLE_MS)
         startIfDisconnected("Display on")
@@ -4382,10 +4368,7 @@ class CarlinkManager(
     private fun markStreaming() {
         lastStreamingStartMs = SystemClock.elapsedRealtime()
         // At STREAMING, about 1 s after the picture; not for a wake with no phone for minutes, which times nothing.
-        val woke = lastStreamingStartMs - wakeAtMs
-        if (wakeAtMs != 0L && woke < DisplayOff.WAKE_TIMED_MAX_MS) {
-            logInfo("[startup] wake: display on to STREAMING $woke ms ($wakeHow)", tag = Logger.Tags.USB)
-        }
+        if (wakeAtMs != 0L) DisplayOff.wakeLine(lastStreamingStartMs - wakeAtMs, wakeHow)?.let { logInfo(it, tag = Logger.Tags.USB) }
         wakeAtMs = 0L
         setState(State.STREAMING)
         noteCarPlaySession()
