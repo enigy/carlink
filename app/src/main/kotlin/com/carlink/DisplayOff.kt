@@ -25,6 +25,9 @@ object DisplayOff {
      */
     const val WAKE_HELLO_MS = 3_000L
 
+    /** A wake whose first video comes later than this had no phone for a while: its line would time nothing. */
+    const val WAKE_TIMED_MAX_MS = 120_000L
+
     enum class Decision {
         /** The display came back: nothing to do. */
         DISPLAY_ON,

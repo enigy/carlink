@@ -1371,7 +1371,17 @@ class CarlinkManager(
             } else {
                 logInfo("[USB] $reason — connecting", tag = Logger.Tags.USB)
                 cancelReconnect()
-                withContext(Dispatchers.IO) { startImpl() }
+                try {
+                    withContext(Dispatchers.IO) { startImpl() }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // A start cancelled mid-way (a display OFF in its first moments cancels the wake's) left CONNECTING
+                    // with no session, and a display ON then did nothing until Reset Device (the Mac, 13 Nov).
+                    if (state == State.CONNECTING) {
+                        logInfo("[LIFECYCLE] the start was cancelled before the session came up: back to DISCONNECTED", tag = Logger.Tags.USB)
+                        stopImpl()
+                    }
+                    throw e
+                }
             }
         }
 
@@ -1678,12 +1688,14 @@ class CarlinkManager(
         // "no initial response" substring, which remote log filters match on.
         setStatusText("Connecting to adapter...")
         if (!c.hello(if (wakeOpen) DisplayOff.WAKE_HELLO_MS else OcbmClient.HELLO_TIMEOUT_MS)) {
+            if (wakeOpen) wakeHow = "the open at once got no reply in ${DisplayOff.WAKE_HELLO_MS / 1000} s, then the retry"
             handleError("no initial response — no CT_HELLO_ACK from the adapter")
             return
         }
         // The adapter answered: once the link has stayed up RECONNECT_STABLE_MS, the next loss starts a fresh chain ([ReconnectBudget]).
         if (reconnects.used > 0) logInfo("[RECONNECT] reconnected after ${reconnects.used} attempt(s)", tag = Logger.Tags.USB)
         reconnects.linkUp(SystemClock.elapsedRealtime())
+        adapterPreload = "" // logged once per session, not once per Carlink process
 
         // The box has no RTC battery, so its clock is bogus at every boot and CarPlay's TLS
         // pairing needs a real one. Non-fatal: a wrong clock degrades pairing, a missing
@@ -4369,10 +4381,12 @@ class CarlinkManager(
     /** STREAMING: at this phone's first media once keyed, or at its key when the media came first ([StreamingStamp]). */
     private fun markStreaming() {
         lastStreamingStartMs = SystemClock.elapsedRealtime()
-        if (wakeAtMs != 0L) {
-            logInfo("[startup] wake: display on to video ${lastStreamingStartMs - wakeAtMs} ms ($wakeHow)", tag = Logger.Tags.USB)
-            wakeAtMs = 0L
+        // At STREAMING, about 1 s after the picture; not for a wake with no phone for minutes, which times nothing.
+        val woke = lastStreamingStartMs - wakeAtMs
+        if (wakeAtMs != 0L && woke < DisplayOff.WAKE_TIMED_MAX_MS) {
+            logInfo("[startup] wake: display on to STREAMING $woke ms ($wakeHow)", tag = Logger.Tags.USB)
         }
+        wakeAtMs = 0L
         setState(State.STREAMING)
         noteCarPlaySession()
     }
