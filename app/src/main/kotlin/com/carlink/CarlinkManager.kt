@@ -960,6 +960,9 @@ class CarlinkManager(
     /** How [wakeConnect] connected, for that line. */
     @Volatile private var wakeHow = ""
 
+    /** The adapter's last reported boot radio preload state ([notePreload]). */
+    @Volatile private var adapterPreload = ""
+
     private var hadPriorSession: Boolean = false
     private var consecutiveNoResponse: Int = 0
     private var shortLivedStreamingCount: Int = 0
@@ -2082,12 +2085,25 @@ class CarlinkManager(
 
     /** Every MGMT_INFO, whoever asked: the adapter's name, followed when it changes, for Settings and the pairing screen. */
     private fun noteAdapterInfo(json: String) {
-        val name = runCatching { JSONObject(json).optString("name") }.getOrNull()?.takeIf { it.isNotBlank() } ?: return
+        val info = runCatching { JSONObject(json) }.getOrNull() ?: return
+        notePreload(info.optString("preload"))
+        val name = info.optString("name").takeIf { it.isNotBlank() } ?: return
         val was = ocbmAdapterName
         if (name == was) return
         ocbmAdapterName = name
         logInfo("[PAIRING] the adapter is named $name${was?.let { " (was $it)" }.orEmpty()}", tag = Logger.Tags.ADAPTR)
         phoneSetup.onAdapterName(name)
+    }
+
+    /**
+     * The adapter's boot radio preload (OCBM MGMT_INFO "preload": on, off_guard, off_owner; absent before connect-speed),
+     * logged when it changes, so a drive log shows a preload its guard switched off (the Mac, 13 Nov).
+     */
+    private fun notePreload(preload: String) {
+        if (preload.isEmpty() || preload == adapterPreload) return
+        adapterPreload = preload
+        val words = if (preload == "off_guard") ": its guard switched it off after unfinished preloads" else ""
+        logInfo("[ADAPTER] boot radio preload $preload$words", tag = Logger.Tags.ADAPTR)
     }
 
     private fun pollBoxInfo() {
