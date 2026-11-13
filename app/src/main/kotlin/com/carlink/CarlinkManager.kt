@@ -954,6 +954,12 @@ class CarlinkManager(
 
     @Volatile private var wakeConnectJob: Job? = null
 
+    /** When the display came on, for the first video's wake line ([markStreaming]); 0 when no wake is being timed. */
+    @Volatile private var wakeAtMs = 0L
+
+    /** How [wakeConnect] connected, for that line. */
+    @Volatile private var wakeHow = ""
+
     private var hadPriorSession: Boolean = false
     private var consecutiveNoResponse: Int = 0
     private var shortLivedStreamingCount: Int = 0
@@ -2620,6 +2626,7 @@ class CarlinkManager(
         if (released || !displayOn) return
         displayOn = false
         wakeConnectJob?.cancel()
+        wakeAtMs = 0L
         logInfo(
             "[POWER] display OFF ($source): state=$state driving=$isDriving call=${callActive()}; the session ends in " +
                 "${DisplayOff.GRACE_MS / 1000} s unless the display comes back",
@@ -2660,7 +2667,7 @@ class CarlinkManager(
 
     /**
      * The head unit's display came on. Within the wait the session was never touched; after it, Carlink wakes and
-     * connects once the USB port has settled ([DisplayOff.WAKE_SETTLE_MS]).
+     * connects ([wakeConnect]).
      */
     fun onDisplayOn(source: String) {
         if (released || displayOn) return
@@ -2672,11 +2679,27 @@ class CarlinkManager(
         logInfo("[POWER] display ON ($source): state=$state dormant=$wasDormant", tag = Logger.Tags.USB)
         if (state != State.DISCONNECTED) return
         wakeConnectJob?.cancel()
-        wakeConnectJob =
-            scope.launch {
-                delay(DisplayOff.WAKE_SETTLE_MS)
-                startIfDisconnected("Display on")
-            }
+        wakeAtMs = SystemClock.elapsedRealtime()
+        wakeConnectJob = scope.launch { wakeConnect() }
+    }
+
+    /**
+     * About 90% of the truck's connects are a wake, the adapter powered throughout (Scott, 13 Nov), and each waited
+     * [DisplayOff.WAKE_SETTLE_MS] for a USB port that never lost power. So connect at once while the adapter is still
+     * listed, and settle first only when it is not, or when that open failed. The first video logs the wake's time.
+     */
+    private suspend fun wakeConnect() {
+        if (BridgeBulkTransport.findAdapter(context) != null) {
+            wakeHow = "at once, the adapter listed"
+            startIfDisconnected("Display on, the adapter still listed")
+            if (state != State.DISCONNECTED) return
+            logInfo("[POWER] the wake connect did not open the adapter: again after the USB settle", tag = Logger.Tags.USB)
+            wakeHow = "after the settle, the open at once failed"
+        } else {
+            wakeHow = "after the settle, the adapter not listed"
+        }
+        delay(DisplayOff.WAKE_SETTLE_MS)
+        startIfDisconnected("Display on")
     }
 
     private fun rebootAdapterImpl() {
@@ -4322,6 +4345,10 @@ class CarlinkManager(
     /** STREAMING: at this phone's first media once keyed, or at its key when the media came first ([StreamingStamp]). */
     private fun markStreaming() {
         lastStreamingStartMs = SystemClock.elapsedRealtime()
+        if (wakeAtMs != 0L) {
+            logInfo("[startup] wake: display on to video ${lastStreamingStartMs - wakeAtMs} ms ($wakeHow)", tag = Logger.Tags.USB)
+            wakeAtMs = 0L
+        }
         setState(State.STREAMING)
         noteCarPlaySession()
     }

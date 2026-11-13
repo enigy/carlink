@@ -13,7 +13,10 @@ object DisplayOff {
     /** How long the display stays off before the session ends. */
     const val GRACE_MS = 30_000L
 
-    /** After the display comes back: let the re-powered USB port settle before connecting (Carlink2's WAKE_SETTLE_MS). */
+    /**
+     * After the display comes back: let a re-powered USB port settle before connecting (Carlink2's WAKE_SETTLE_MS). Only
+     * when the adapter is not listed, or opening it at once failed (CarlinkManager.wakeConnect).
+     */
     const val WAKE_SETTLE_MS = 2_500L
 
     enum class Decision {
