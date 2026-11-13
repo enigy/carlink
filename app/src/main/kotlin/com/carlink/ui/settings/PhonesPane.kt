@@ -68,6 +68,7 @@ internal fun PhonesPane(
         Column {
             PaneHeader(title = "Phones")
             AdapterNameLine(adapterName)
+            CallOrderLine()
         }
         if (connected != null) {
             ConnectedPhoneCard(
@@ -150,6 +151,18 @@ private fun profileOpener(
             null
         }
     }
+
+/** The adapter's first page round gives each phone about 3.75 s (OCBM connect-speed, Scott 13 Nov). */
+@Composable
+private fun CallOrderLine() {
+    Text(
+        "Phones are tried in this order. If the first phone isn’t available, the adapter waits about 4 seconds " +
+            "for it before trying the next phone.",
+        style = SettingsStyle.RowSubtitle,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+}
 
 @Composable
 private fun AdapterNameLine(adapterName: String) {
