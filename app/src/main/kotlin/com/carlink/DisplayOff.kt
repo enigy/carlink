@@ -19,6 +19,12 @@ object DisplayOff {
      */
     const val WAKE_SETTLE_MS = 2_500L
 
+    /**
+     * The wake's open at once waits this long for the adapter's first reply, not 20 s: one wake in seven got none for
+     * 21 s, and the retry 2 s later connected at once (the Mac, 13 Nov). The adapter has been running all along.
+     */
+    const val WAKE_HELLO_MS = 3_000L
+
     enum class Decision {
         /** The display came back: nothing to do. */
         DISPLAY_ON,

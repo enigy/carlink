@@ -902,7 +902,7 @@ class OcbmClient(
      * Send CT_HELLO and wait for CT_HELLO_ACK, retransmitting on the reference cadence (500 ms for
      * the first 15 s, then 2 s). Every non-ACK frame arriving meanwhile is discarded by [dispatch].
      */
-    fun hello(timeoutMs: Long = 20_000): Boolean {
+    fun hello(timeoutMs: Long = HELLO_TIMEOUT_MS): Boolean {
         ctrlQ.clear()
         // The trailing 4 bytes are the HOST INSTANCE NONCE (u32 LE). See Ocbm.CT_HELLO: it is how the
         // box tells one host PROCESS from another. Without it, a host killed without CT_STOP leaves the
@@ -1399,6 +1399,11 @@ class OcbmClient(
             "btPhase=${Ocbm.btpName(lastBtPhase)} phone=$phonePresent txDrop=$txDropped " +
             "altVid=$altVideoFrames" +
             (lanes?.let { " ${it.statsLine()}" } ?: "")
+
+    companion object {
+        /** How long [hello] resends CT_HELLO for the adapter's first reply. */
+        const val HELLO_TIMEOUT_MS = 20_000L
+    }
 }
 
 /** `[FILE_ACK][status u8][crc32 u32 LE][size u32 LE]` — the terminal sub-frame of a pull, and the box's answer to a push's OPEN and CLOSE. */

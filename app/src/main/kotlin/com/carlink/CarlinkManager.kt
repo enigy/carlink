@@ -960,6 +960,9 @@ class CarlinkManager(
     /** How [wakeConnect] connected, for that line. */
     @Volatile private var wakeHow = ""
 
+    /** The open [wakeConnect] makes at once: it waits [DisplayOff.WAKE_HELLO_MS] for the adapter's first reply. */
+    @Volatile private var wakeOpen = false
+
     /** The adapter's last reported boot radio preload state ([notePreload]). */
     @Volatile private var adapterPreload = ""
 
@@ -1674,7 +1677,7 @@ class CarlinkManager(
         // CT_HELLO, retransmitted until ACK. Failure here is Pattern A's trigger — keep the
         // "no initial response" substring, which remote log filters match on.
         setStatusText("Connecting to adapter...")
-        if (!c.hello()) {
+        if (!c.hello(if (wakeOpen) DisplayOff.WAKE_HELLO_MS else OcbmClient.HELLO_TIMEOUT_MS)) {
             handleError("no initial response — no CT_HELLO_ACK from the adapter")
             return
         }
@@ -2707,7 +2710,12 @@ class CarlinkManager(
     private suspend fun wakeConnect() {
         if (BridgeBulkTransport.findAdapter(context) != null) {
             wakeHow = "at once, the adapter listed"
-            startIfDisconnected("Display on, the adapter still listed")
+            wakeOpen = true
+            try {
+                startIfDisconnected("Display on, the adapter still listed")
+            } finally {
+                wakeOpen = false
+            }
             if (state != State.DISCONNECTED) return
             logInfo("[POWER] the wake connect did not open the adapter: again after the USB settle", tag = Logger.Tags.USB)
             wakeHow = "after the settle, the open at once failed"
