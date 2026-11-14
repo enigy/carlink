@@ -71,8 +71,9 @@ class DisplayPowerWatcher(
             context.registerReceiver(receiver, filter)
         }
         logInfo("[POWER] watching the head unit's display (on=$lastOn)", tag = "MAIN")
-        // Off already: say so once, as the listener would have, so a manager never starts out believing it is on.
-        if (!lastOn) onOff("display off at start")
+        // As it is now, once, as the listener would have: a manager kept through a rebuild may have missed either edge, and
+        // one that missed the ON stayed dormant with the display on (the Mac's 14 Nov review, W5). Both are idempotent.
+        if (lastOn) onOn("display on at start") else onOff("display off at start")
     }
 
     fun unregister() {

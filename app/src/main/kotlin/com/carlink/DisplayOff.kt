@@ -63,13 +63,12 @@ object DisplayOff {
         HELLO_MISSED("the open at once got no reply in ${WAKE_HELLO_MS / 1000} s, then the retry"),
         OPEN_FAILED("after the settle, the open at once failed"),
         NOT_LISTED("after the settle, the adapter not listed"),
+        QUEUED("after the start or stop in flight"),
+        AFTER_UNDO("again after a display OFF undid its start"),
     }
 
     /** A wake opens at once while the adapter is still listed (powered throughout); else it settles first. */
     fun firstPath(adapterListed: Boolean): WakePath = if (adapterListed) WakePath.AT_ONCE else WakePath.NOT_LISTED
-
-    /** The wake's open at once waits [WAKE_HELLO_MS] for the adapter's first reply; every other open the usual 20 s. */
-    fun helloMs(wakeOpen: Boolean): Long = if (wakeOpen) WAKE_HELLO_MS else com.carlink.ocbm.OcbmClient.HELLO_TIMEOUT_MS
 
     /** The wake's line at STREAMING, `elapsedMs` after display on; none past [WAKE_TIMED_MAX_MS], which timed no phone. */
     fun wakeLine(

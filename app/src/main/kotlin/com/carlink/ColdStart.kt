@@ -9,8 +9,10 @@ package com.carlink
 class ColdStart(
     private val processStartMs: Long,
 ) {
-    private var adapterSeenMs = 0L
-    private var bridgeOpenMs = 0L
+    // Written on Main and on IO, read under the lock: volatile (the Mac's 14 Nov review, W9).
+    @Volatile private var adapterSeenMs = 0L
+
+    @Volatile private var bridgeOpenMs = 0L
     private var logged = false
 
     /** The adapter is on USB (listed, or its attach seen); the first time counts. */

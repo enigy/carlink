@@ -9,7 +9,7 @@ import kotlinx.coroutines.CancellationException
  */
 suspend fun <T> undoCancelledStart(
     stuck: () -> Boolean,
-    undo: () -> Unit,
+    undo: suspend () -> Unit,
     start: suspend () -> T,
 ): T =
     try {
@@ -45,7 +45,31 @@ fun restartAfterUndo(
  * only from DISCONNECTED, so a session that came up is left alone (the 13 Nov lifecycle review).
  */
 fun queueStartOnDisplayOn(
-    disconnected: Boolean,
     wakeCut: Boolean,
     wasDormant: Boolean,
-): Boolean = !disconnected && (wakeCut || wasDormant)
+): Boolean = wakeCut || wasDormant
+
+/**
+ * When Carlink last sent CT_STOP to a subscribed adapter (OcbmClient.stop), on the monotonic clock: the box tears that
+ * session down for about [CleanSlateReset.BOX_TEARDOWN_SETTLE_MS] after it. Process-wide: a new manager meets the same box.
+ */
+object BoxTeardown {
+    @Volatile var stoppedAtMs = 0L
+
+    fun nowMs(): Long = System.nanoTime() / NANOS_PER_MS
+
+    private const val NANOS_PER_MS = 1_000_000L
+}
+
+/**
+ * How long a start about to send HELLO at [nowMs] waits for the box to finish tearing down the session stopped at
+ * [stoppedAtMs] (0: none): what is left of [settleMs] from that CT_STOP. A display ON within seconds of Carlink's own stop
+ * (the grace end, or a wake) re-subscribed into the teardown, and on any OCBM before 251b590 the box then lost wireless
+ * until a reset (the Mac's 14 Nov review, W1). Measured as the start reaches HELLO, not when it was asked for, so an ON
+ * that lands while the stop still runs counts from that stop's CT_STOP.
+ */
+fun holdBeforeHello(
+    nowMs: Long,
+    stoppedAtMs: Long,
+    settleMs: Long,
+): Long = if (stoppedAtMs == 0L) 0L else (settleMs - (nowMs - stoppedAtMs)).coerceIn(0L, settleMs)

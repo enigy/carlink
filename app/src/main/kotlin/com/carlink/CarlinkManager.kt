@@ -953,25 +953,33 @@ class CarlinkManager(
 
     @Volatile private var dormantForDisplayOff = false
 
-    @Volatile private var wakeConnectJob: Job? = null
+    /** The starts, the display wake's and the undo of one a display OFF cut short ([WakeStarts]). */
+    private val starts =
+        WakeStarts(
+            scope,
+            lifecycleMutex,
+            object : WakeStarts.Host {
+                override fun stateName(): String = state.name
 
-    /** When the display came on, for the first video's wake line ([markStreaming]); 0 when no wake is being timed. */
-    @Volatile private var wakeAtMs = 0L
+                override fun disconnected(): Boolean = state == State.DISCONNECTED
 
-    /** How [wakeConnect] connected, for that line. */
-    @Volatile private var wakeHow = DisplayOff.WakePath.AT_ONCE
+                override fun connecting(): Boolean = state == State.CONNECTING
 
-    /** This start sent SUBSCRIBE: a cancel after it leaves a session that came up ([startNeedsUndo]). */
-    @Volatile private var startSubscribed = false
+                override fun released(): Boolean = released
 
-    /**
-     * A display OFF cut the wake's start in flight ([onDisplayOff]): the one cancel after which the undo starts again if the
-     * display is on by then. Close app and a handover cancel a start too, and clear it first.
-     */
-    @Volatile private var wakeCut = false
+                override fun displayOn(): Boolean = displayOn
 
-    /** The open [wakeConnect] makes at once: it waits [DisplayOff.WAKE_HELLO_MS] for the adapter's first reply. */
-    @Volatile private var wakeOpen = false
+                override fun adapterListed(): Boolean = BridgeBulkTransport.findAdapter(context) != null
+
+                override fun cancelReconnect() = this@CarlinkManager.cancelReconnect()
+
+                override suspend fun start(helloMs: Long) = startImpl(helloMs)
+
+                override fun stop() = stopImpl()
+
+                override fun log(line: String) = logInfo(line, tag = Logger.Tags.USB)
+            },
+        )
 
     /** The adapter's boot radio preload state, logged once per session. */
     private val preloadNote = PreloadNote()
@@ -1374,27 +1382,7 @@ class CarlinkManager(
      * triggers for the same attach (the broadcast and an attach intent, or the reboot fallback) can't
      * tear down the session the first one just began ([startImpl] restarts a live client).
      */
-    suspend fun startIfDisconnected(reason: String): Unit =
-        lifecycleMutex.withLock {
-            if (released || state != State.DISCONNECTED) {
-                logInfo("[USB] $reason — state=$state, not starting", tag = Logger.Tags.USB)
-            } else {
-                logInfo("[USB] $reason — connecting", tag = Logger.Tags.USB)
-                cancelReconnect()
-                undoCancelledStart(
-                    stuck = { startNeedsUndo(state == State.CONNECTING, startSubscribed) },
-                    undo = {
-                        logInfo("[LIFECYCLE] the start was cancelled before SUBSCRIBE: back to DISCONNECTED", tag = Logger.Tags.USB)
-                        stopImpl()
-                        // Only after a display OFF cut the wake's own start ([wakeCut]): the display may be on again already (a
-                        // quick off/on), and its ON found CONNECTING and did nothing. Never after Close app or a handover.
-                        val again = restartAfterUndo(wakeCut, displayOn, released)
-                        wakeCut = false
-                        if (again) scope.launch { startIfDisconnected("Display on, after a cancelled start") }
-                    },
-                ) { withContext(Dispatchers.IO) { startImpl() } }
-            }
-        }
+    suspend fun startIfDisconnected(reason: String): Unit = starts.startIfDisconnected(reason)
 
     /**
      * Find the adapter and open it through the USB bridge, or null if we should abandon the start.
@@ -1457,7 +1445,7 @@ class CarlinkManager(
     private val handover =
         AdapterHandover(
             // On the manager's scope: a pane left mid-handover can't skip the stop after the start was cancelled.
-            stopSession = { scope.async { lifecycleMutex.withLock { withContext(Dispatchers.IO) { stopImpl() } } }.await() },
+            stopSession = { lifecycleMutex.withLock { withContext(Dispatchers.IO) { stopImpl() } } },
             bridgeHandOver = { BridgeAccessHub.handOver(context, it) },
             bridgeTakeBack = { BridgeAccessHub.takeBack(context) },
             // On this manager's scope, never the caller's: a UI scope cancelled mid-start would strand CONNECTING.
@@ -1466,12 +1454,15 @@ class CarlinkManager(
 
     /**
      * Settings › Bridge Configuration › Hand over: Carlink's session ends (CarPlay stops), then the bridge hands the
-     * adapter to [packageName]. Null when it did; otherwise the bridge's refusal, and Carlink connects again.
+     * adapter to [packageName]. Null when it did; otherwise the bridge's refusal, and Carlink connects again. The whole
+     * handover runs on the manager's scope, the pane only awaiting it: a pane left while the stop waited for the lock ended
+     * with no session, no handover and no reconnect (the Mac's 14 Nov review, W3).
      */
-    suspend fun handOverAdapter(packageName: String): String? {
+    suspend fun handOverAdapter(packageName: String): String? = detached("the handover") { handOverImpl(packageName) }
+
+    private suspend fun handOverImpl(packageName: String): String? {
         cancelReconnect()
-        wakeCut = false
-        wakeConnectJob?.cancel()
+        starts.closing() // no wake may start a session after the handover, nor arm a cut
         startingJob?.let { if (it.isActive) it.cancel() }
         logInfo("[BRIDGE_ACCESS] handing the adapter to $packageName", tag = Logger.Tags.USB)
         val refusal = handover.handOver(packageName)
@@ -1482,6 +1473,26 @@ class CarlinkManager(
         }
         return refusal
     }
+
+    /**
+     * [block] on the manager's own scope, the caller only awaiting it: a pane left mid-way cancels the wait, not the work
+     * (release() still does). A failure is logged here as well, since once the caller is gone nothing else would (W4).
+     */
+    private suspend fun <T> detached(
+        what: String,
+        block: suspend () -> T,
+    ): T =
+        scope
+            .async {
+                try {
+                    block()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logError("[LIFECYCLE] $what failed: $e", tag = Logger.Tags.ADAPTR)
+                    throw e
+                }
+            }.await()
 
     /** Take back (Settings, or the connecting screen): the bridge ends the handover, then Carlink connects as usual. */
     suspend fun takeBackAdapter(): String? = handover.takeBack()
@@ -1668,7 +1679,7 @@ class CarlinkManager(
         return t
     }
 
-    private suspend fun startImpl() {
+    private suspend fun startImpl(helloMs: Long = OcbmClient.HELLO_TIMEOUT_MS) {
         if (released) {
             logWarn("[LIFECYCLE] start() on a released manager — ignoring", tag = Logger.Tags.ADAPTR)
             return
@@ -1679,7 +1690,6 @@ class CarlinkManager(
         }
         // The coroutine running this start, for [disconnect] to cancel: it may sit ~30 s looking for the adapter.
         startingJob = currentCoroutineContext()[Job]
-        startSubscribed = false
 
         // Tear down any existing session BEFORE entering CONNECTING, so the FGS started at
         // CONNECTING isn't immediately stopped by the teardown's DISCONNECTED transition.
@@ -1703,8 +1713,15 @@ class CarlinkManager(
         // CT_HELLO, retransmitted until ACK. Failure here is Pattern A's trigger — keep the
         // "no initial response" substring, which remote log filters match on.
         setStatusText("Connecting to adapter...")
-        if (!c.hello(DisplayOff.helloMs(wakeOpen))) {
-            if (wakeOpen) wakeHow = DisplayOff.WakePath.HELLO_MISSED
+        // A stop of Carlink's own seconds ago: the box is still tearing that session down, and a HELLO into it lost wireless
+        // on OCBM before 251b590 (the Mac's 14 Nov review, W1). Cancellable: an OFF, Close app or a handover ends it.
+        val hold = holdBeforeHello(BoxTeardown.nowMs(), BoxTeardown.stoppedAtMs, CleanSlateReset.BOX_TEARDOWN_SETTLE_MS)
+        if (hold > 0) {
+            logInfo("[LIFECYCLE] waiting $hold ms for the box to finish tearing down the session stopped before", tag = Logger.Tags.USB)
+            delay(hold)
+        }
+        if (!c.hello(helloMs)) {
+            starts.helloMissed(helloMs)
             handleError("no initial response — no CT_HELLO_ACK from the adapter")
             return
         }
@@ -1725,8 +1742,7 @@ class CarlinkManager(
             handleError("usb — CT_SUBSCRIBE write failed")
             return
         }
-        startSubscribed = true
-        wakeCut = false
+        starts.subscribed()
         ColdStart.process.subscribed(SystemClock.elapsedRealtime())?.let { logInfo(it, tag = Logger.Tags.USB) }
         c.startHeartbeat()
         armBoxLogStream(c)
@@ -1898,22 +1914,20 @@ class CarlinkManager(
      */
     suspend fun disconnect() {
         cancelReconnect()
-        wakeCut = false
-        wakeConnectJob?.cancel() // nor may the wake start a session after Close app, or arm wakeCut again
+        starts.closing() // nor may the wake start a session after Close app, or arm a cut again
         startingJob?.let { job ->
             if (job.isActive) logInfo("[LIFECYCLE] disconnect(): cancelling the start in flight", tag = Logger.Tags.ADAPTR)
             job.cancel()
         }
         // On the manager's scope, awaited: a caller cancelled now (a pane left) can't skip the stop after the start was cut.
-        scope
-            .async {
-                lifecycleMutex.withLock {
-                    withContext(Dispatchers.IO) {
-                        logInfo("[LIFECYCLE] disconnect() — user-initiated", tag = Logger.Tags.ADAPTR)
-                        stopImpl()
-                    }
+        detached("Close app's stop") {
+            lifecycleMutex.withLock {
+                withContext(Dispatchers.IO) {
+                    logInfo("[LIFECYCLE] disconnect() — user-initiated", tag = Logger.Tags.ADAPTR)
+                    stopImpl()
                 }
-            }.await()
+            }
+        }
     }
 
     /**
@@ -2257,7 +2271,7 @@ class CarlinkManager(
         if (released) return false
         // On the manager's scope, the caller only awaiting it: a Troubleshoot pane left mid-reset cancelled the reset's
         // own coroutine, so the session it ended never came back (the 13 Nov lifecycle review). release() still stops it.
-        return scope.async { lifecycleMutex.withLock { withContext(Dispatchers.IO) { cleanSlate.run() } } }.await()
+        return detached("Reset connection") { lifecycleMutex.withLock { withContext(Dispatchers.IO) { cleanSlate.run() } } }
     }
 
     /**
@@ -2671,11 +2685,7 @@ class CarlinkManager(
     fun onDisplayOff(source: String) {
         if (released || !displayOn) return
         displayOn = false
-        // Only ever set here: a second OFF while the cut start still runs (its job then reads inactive) must not clear it,
-        // or the undo never restarts (the 13 Nov lifecycle review). The undo, SUBSCRIBE, Close app and a handover clear it.
-        if (wakeConnectJob?.isActive == true) wakeCut = true
-        wakeConnectJob?.cancel()
-        wakeAtMs = 0L
+        starts.displayOff()
         logInfo(
             "[POWER] display OFF ($source): state=$state driving=$isDriving call=${callActive()}; the session ends in " +
                 "${DisplayOff.GRACE_MS / 1000} s unless the display comes back",
@@ -2716,7 +2726,7 @@ class CarlinkManager(
 
     /**
      * The head unit's display came on. Within the wait the session was never touched; after it, Carlink wakes and
-     * connects ([wakeConnect]).
+     * connects ([WakeStarts.displayOn]).
      */
     fun onDisplayOn(source: String) {
         if (released || displayOn) return
@@ -2726,41 +2736,7 @@ class CarlinkManager(
         dormantForDisplayOff = false
         reconnects.reset()
         logInfo("[POWER] display ON ($source): state=$state dormant=$wasDormant", tag = Logger.Tags.USB)
-        if (state != State.DISCONNECTED) {
-            // A display OFF cut the wake (its start or its settle), or the display-off teardown is still ending the session:
-            // queue a start behind it on lifecycleMutex. It starts only from DISCONNECTED, so a session that came up is left
-            // alone; another OFF cancels it while it waits (the 13 Nov lifecycle review).
-            if (queueStartOnDisplayOn(disconnected = false, wakeCut = wakeCut, wasDormant = wasDormant)) {
-                wakeConnectJob?.cancel()
-                wakeConnectJob = scope.launch { startIfDisconnected("Display on, after a cut wake or the display-off teardown") }
-            }
-            return
-        }
-        wakeConnectJob?.cancel()
-        wakeAtMs = SystemClock.elapsedRealtime()
-        wakeConnectJob = scope.launch { wakeConnect() }
-    }
-
-    /**
-     * About 90% of the truck's connects are a wake, the adapter powered throughout (Scott, 13 Nov), and each waited
-     * [DisplayOff.WAKE_SETTLE_MS] for a USB port that never lost power. So connect at once while the adapter is still
-     * listed, and settle first only when it is not, or when that open failed. The first video logs the wake's time.
-     */
-    private suspend fun wakeConnect() {
-        wakeHow = DisplayOff.firstPath(adapterListed = BridgeBulkTransport.findAdapter(context) != null)
-        if (wakeHow == DisplayOff.WakePath.AT_ONCE) {
-            wakeOpen = true
-            try {
-                startIfDisconnected("Display on, the adapter still listed")
-            } finally {
-                wakeOpen = false
-            }
-            if (state != State.DISCONNECTED) return
-            logInfo("[POWER] the wake connect did not open the adapter: again after the USB settle", tag = Logger.Tags.USB)
-            wakeHow = DisplayOff.WakePath.OPEN_FAILED
-        }
-        delay(DisplayOff.WAKE_SETTLE_MS)
-        startIfDisconnected("Display on")
+        starts.displayOn(wasDormant, SystemClock.elapsedRealtime())
     }
 
     private fun rebootAdapterImpl() {
@@ -4407,8 +4383,7 @@ class CarlinkManager(
     private fun markStreaming() {
         lastStreamingStartMs = SystemClock.elapsedRealtime()
         // At STREAMING, about 1 s after the picture; not for a wake with no phone for minutes, which times nothing.
-        if (wakeAtMs != 0L) DisplayOff.wakeLine(lastStreamingStartMs - wakeAtMs, wakeHow)?.let { logInfo(it, tag = Logger.Tags.USB) }
-        wakeAtMs = 0L
+        starts.streaming(lastStreamingStartMs)?.let { logInfo(it, tag = Logger.Tags.USB) }
         setState(State.STREAMING)
         noteCarPlaySession()
     }

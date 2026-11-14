@@ -21,12 +21,6 @@ class WakeConnectTest {
     }
 
     @Test
-    fun `only the wake's open at once waits 3 s for the first reply`() {
-        assertEquals(3_000L, DisplayOff.helloMs(wakeOpen = true))
-        assertEquals(20_000L, DisplayOff.helloMs(wakeOpen = false))
-    }
-
-    @Test
     fun `the wake line names how it connected, and none for a wake with no phone for minutes`() {
         assertEquals(
             "[startup] wake: display on to STREAMING 14915 ms (at once, the adapter listed)",
@@ -49,7 +43,7 @@ class WakeConnectTest {
             val started = CompletableDeferred<Unit>()
             val start =
                 async {
-                    val undo = {
+                    val undo: suspend () -> Unit = {
                         undone = true
                         connecting = false
                     }
@@ -110,10 +104,9 @@ class WakeConnectTest {
 
     @Test
     fun `a display ON behind a cut wake or the display-off teardown queues a start, else nothing`() {
-        assertTrue(queueStartOnDisplayOn(disconnected = false, wakeCut = true, wasDormant = false))
-        assertTrue("the grace's teardown still running", queueStartOnDisplayOn(disconnected = false, wakeCut = false, wasDormant = true))
-        assertFalse("a session that is just up", queueStartOnDisplayOn(disconnected = false, wakeCut = false, wasDormant = false))
-        assertFalse("DISCONNECTED takes the wake path itself", queueStartOnDisplayOn(disconnected = true, wakeCut = true, wasDormant = true))
+        assertTrue(queueStartOnDisplayOn(wakeCut = true, wasDormant = false))
+        assertTrue("the grace's teardown still running", queueStartOnDisplayOn(wakeCut = false, wasDormant = true))
+        assertFalse("a session that is just up", queueStartOnDisplayOn(wakeCut = false, wasDormant = false))
     }
 
     @Test

@@ -1384,6 +1384,7 @@ class OcbmClient(
             if (sendStop) {
                 log.i(">> CT_STOP")
                 send(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_STOP))
+                com.carlink.BoxTeardown.stoppedAtMs = com.carlink.BoxTeardown.nowMs()
             } else {
                 log.i("-- CT_STOP skipped (dead pipe)")
             }
