@@ -349,7 +349,34 @@ class AdapterUpdateSession(
     }
 
     private suspend fun run(to: String) {
-        val bytes = fetch(to) ?: return
+        install(fetch(to) ?: return, to)
+    }
+
+    /**
+     * Bench only (debug builds, the Mac's bench hooks of 13 Nov): install the package in [bytes] whatever the offer says,
+     * reported as any update is. A bench package keeps its VERSION with new code, which the adapter takes only while its
+     * own bench flag is set (/tmp/bench_update_any_version, ocbm_update.sh).
+     */
+    fun benchUpdate(bytes: ByteArray) {
+        val pkg =
+            UpdatePackageFile.read(bytes) ?: run {
+                logWarn("[bench] the bench file is not an update package: nothing sent", tag = Logger.Tags.ADAPTR)
+                return
+            }
+        synchronized(lock) {
+            if (phaseState.value is UpdatePhase.Updating) return
+            logWarn("[bench] update to ${pkg.version} from a bench file", tag = Logger.Tags.ADAPTR)
+            phaseState.value = UpdatePhase.Downloading(pkg.version, 0, 0)
+            job?.cancel()
+            job = scope.launch(Dispatchers.IO) { install(bytes, pkg.version) }
+        }
+    }
+
+    /** Send [bytes], start it, and poll for the outcome. */
+    private suspend fun install(
+        bytes: ByteArray,
+        to: String,
+    ) {
         if (!sendAndStart(bytes, to) || !step(UpdatePhase.Installing(to))) return
         startDeadline(to)
         while (phaseState.value is UpdatePhase.Updating) {
