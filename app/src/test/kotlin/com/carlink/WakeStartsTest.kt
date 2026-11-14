@@ -48,6 +48,14 @@ class WakeStartsTest {
         val stops = AtomicInteger()
         val hellos = CopyOnWriteArrayList<Long>()
 
+        // The class under test, told of each SUBSCRIBE as CarlinkManager.startImpl tells it.
+        @Volatile var starts: WakeStarts? = null
+
+        fun subscribe() {
+            subscribedNow = true
+            starts?.sessionUp()
+        }
+
         override fun stateName() = state.name
 
         override fun disconnected() = state == S.DISCONNECTED
@@ -71,11 +79,11 @@ class WakeStartsTest {
             hellos += helloMs
             subscribedNow = false
             state = S.CONNECTING
-            if (s.subscribeFirst) subscribedNow = true
+            if (s.subscribeFirst) subscribe()
             s.block?.await() // not cancellable, as a blocking HELLO isn't
             s.suspendAt?.await() // cancellable
             if (!s.answers) return // no reply: the session stays CONNECTING until its error is handled
-            subscribedNow = true
+            subscribe()
             state = S.STREAMING
         }
 
@@ -90,7 +98,7 @@ class WakeStartsTest {
 
     private val session = FakeSession()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val starts = WakeStarts(scope, Mutex(), session, settleMs = 50)
+    private val starts = WakeStarts(scope, Mutex(), session, settleMs = 50).also { session.starts = it }
 
     @After
     fun end() = scope.cancel()
@@ -158,6 +166,7 @@ class WakeStartsTest {
         settled()
         assertEquals(1, session.begun.get())
         assertEquals(S.DISCONNECTED, session.state)
+        assertNull("no wake is timed after Close app", starts.streaming(5_000))
     }
 
     @Test
@@ -221,7 +230,7 @@ class WakeStartsTest {
     fun an_on_behind_the_display_off_teardown_queues_the_start_that_follows_it() {
         // The grace end's stop holds the lifecycle lock while the display comes back (wasDormant): only the queue starts.
         val lock = Mutex()
-        val queued = WakeStarts(scope, lock, session, settleMs = 50)
+        val queued = WakeStarts(scope, lock, session, settleMs = 50).also { session.starts = it }
         session.state = S.STREAMING
         runBlocking { lock.lock() }
         queued.displayOn(wasDormant = true, nowMs = 1)
@@ -262,7 +271,7 @@ class WakeStartsTest {
     fun an_off_against_a_wake_queued_behind_the_grace_end_stop_still_cuts_it() {
         // The stop holds the lock, and its old client reads subscribed until its CT_STOP: not this class's start (round 3).
         val lock = Mutex()
-        val queued = WakeStarts(scope, lock, session, settleMs = 50)
+        val queued = WakeStarts(scope, lock, session, settleMs = 50).also { session.starts = it }
         session.state = S.STREAMING
         session.subscribedNow = true
         runBlocking { lock.lock() }
@@ -281,7 +290,7 @@ class WakeStartsTest {
 
     @Test
     fun a_start_that_comes_up_clears_an_older_cut() {
-        val slow = WakeStarts(scope, Mutex(), session, settleMs = 1_000)
+        val slow = WakeStarts(scope, Mutex(), session, settleMs = 1_000).also { session.starts = it }
         session.listed = false
         session.on = true
         slow.displayOn(wasDormant = false, nowMs = 1) // not listed: the settle first
@@ -298,6 +307,47 @@ class WakeStartsTest {
         settled()
         assertEquals("no stale cut queues a start", 1, session.begun.get())
         assertNull("nor times a wake", slow.streaming(9_000))
+    }
+
+    @Test
+    fun a_reconnect_or_reset_start_that_comes_up_clears_a_cut() {
+        val slow = WakeStarts(scope, Mutex(), session, settleMs = 1_000).also { session.starts = it }
+        session.listed = false
+        session.on = true
+        slow.displayOn(wasDormant = false, nowMs = 1) // not listed: the settle first
+        session.on = false
+        slow.displayOff() // cut during the settle: no start to undo
+        runBlocking { session.start(helloMs = 20_000) } // a reconnect's or a Reset's start, not this class's, comes up
+        session.on = true
+        slow.displayOn(wasDormant = false, nowMs = 4)
+        settled()
+        assertEquals("no stale cut queues a start", 1, session.begun.get())
+        assertNull("nor times a wake", slow.streaming(9_000))
+    }
+
+    @Test
+    fun after_a_wake_that_came_up_an_off_against_a_wake_queued_behind_the_grace_end_stop_still_cuts_it() {
+        // The wake's own start is over: its client reading subscribed later is the old session's, during the stop.
+        val lock = Mutex()
+        val queued = WakeStarts(scope, lock, session, settleMs = 50).also { session.starts = it }
+        session.on = true
+        queued.displayOn(wasDormant = false, nowMs = 1)
+        eventually("the wake streams") { session.state == S.STREAMING }
+        settled()
+        queued.streaming(1_000)
+        session.on = false
+        queued.displayOff() // streaming: nothing in flight
+        runBlocking { lock.lock() } // the display-off wait's stop
+        session.on = true
+        queued.displayOn(wasDormant = true, nowMs = 2) // queued behind the stop
+        session.on = false
+        queued.displayOff() // cut
+        session.on = true
+        queued.displayOn(wasDormant = false, nowMs = 3) // still not DISCONNECTED: queued again only for the cut
+        session.state = S.DISCONNECTED // the stop ends
+        session.subscribedNow = false
+        lock.unlock()
+        eventually("the start after the stop") { session.begun.get() == 2 && session.state == S.STREAMING }
     }
 
     @Test
