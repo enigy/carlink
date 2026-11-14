@@ -1343,9 +1343,11 @@ class OcbmClient(
      *
      * @param sendStop false on a DEAD pipe (the error path): the write could only block for the
      *   bulk timeout, and the box's heartbeat watchdog declares the host gone on its own.
+     * @return whether CT_STOP went to the box: the box then tears that session down (CarlinkManager stamps it, BoxTeardown).
      */
-    fun stop(sendStop: Boolean = true) {
-        if (!running.compareAndSet(true, false)) return
+    fun stop(sendStop: Boolean = true): Boolean {
+        if (!running.compareAndSet(true, false)) return false
+        var sentStop = false
         // Latch the single-use flag HERE, not at the end of teardown. Set late, a start() racing
         // an in-progress stop() passes its `stopped` check and re-CASes running false->true
         // mid-teardown, yielding a "running" client whose transport is then closed underneath it.
@@ -1384,6 +1386,7 @@ class OcbmClient(
             if (sendStop) {
                 log.i(">> CT_STOP")
                 send(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_STOP))
+                sentStop = true
             } else {
                 log.i("-- CT_STOP skipped (dead pipe)")
             }
@@ -1391,6 +1394,7 @@ class OcbmClient(
         }
         transport.stop()
         stopped = true
+        return sentStop
     }
 
     fun statsLine(): String =

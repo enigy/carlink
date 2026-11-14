@@ -2,7 +2,6 @@ package com.carlink
 
 import com.carlink.DisplayOff.WakePath
 import com.carlink.ocbm.OcbmClient
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,6 +72,9 @@ class WakeStarts(
 
     @Volatile private var job: Job? = null
 
+    // A start of this class's is running ([startIfDisconnected], under the lock): host.subscribed() is about its client.
+    @Volatile private var ownStart = false
+
     // When the display came on, for the wake's line at STREAMING; 0 when no wake is being timed.
     @Volatile private var wakeAtMs = 0L
 
@@ -98,15 +100,17 @@ class WakeStarts(
             }
             host.log("[USB] $reason — connecting")
             host.cancelReconnect()
+            // From here the client is this start's own: subscribed() means its SUBSCRIBE, not an older session's being torn down.
+            ownStart = true
             try {
                 undoCancelledStart(
                     stuck = { startNeedsUndo(host.connecting(), host.subscribed()) },
                     undo = { undo() },
                 ) { withContext(Dispatchers.IO) { host.start(helloMs) } }
-            } catch (e: CancellationException) {
-                // Cut after SUBSCRIBE: the session came up and is kept, and the cut is no longer one to start again for.
+            } finally {
+                ownStart = false
+                // Reached SUBSCRIBE, returned or cut: the session came up, and any cut is no longer one to start again for.
                 if (host.subscribed()) cut = false
-                throw e
             }
         }
 
@@ -124,7 +128,9 @@ class WakeStarts(
 
     /** The display went off: a wake in flight is cut, if it hasn't sent SUBSCRIBE (a session that came up is kept). */
     fun displayOff() {
-        if (job?.isActive == true && !host.subscribed()) cut = true
+        // Only this class's own start counts as subscribed: during the grace-end stop the old session's client still reads
+        // subscribed until its CT_STOP, and a queued wake waiting behind that stop must still be cut (round 3 review).
+        if (job?.isActive == true && !(ownStart && host.subscribed())) cut = true
         job?.cancel()
         wakeAtMs = 0L
     }

@@ -259,6 +259,48 @@ class WakeStartsTest {
     }
 
     @Test
+    fun an_off_against_a_wake_queued_behind_the_grace_end_stop_still_cuts_it() {
+        // The stop holds the lock, and its old client reads subscribed until its CT_STOP: not this class's start (round 3).
+        val lock = Mutex()
+        val queued = WakeStarts(scope, lock, session, settleMs = 50)
+        session.state = S.STREAMING
+        session.subscribedNow = true
+        runBlocking { lock.lock() }
+        session.on = true
+        queued.displayOn(wasDormant = true, nowMs = 1) // queued behind the stop
+        session.on = false
+        queued.displayOff() // cut, though the old client reads subscribed
+        session.on = true
+        queued.displayOn(wasDormant = false, nowMs = 2) // still not DISCONNECTED: queued again only for the cut
+        session.state = S.DISCONNECTED // the stop ends
+        session.subscribedNow = false
+        lock.unlock()
+        eventually("the start after the stop") { session.state == S.STREAMING }
+        assertEquals(1, session.begun.get())
+    }
+
+    @Test
+    fun a_start_that_comes_up_clears_an_older_cut() {
+        val slow = WakeStarts(scope, Mutex(), session, settleMs = 1_000)
+        session.listed = false
+        session.on = true
+        slow.displayOn(wasDormant = false, nowMs = 1) // not listed: the settle first
+        session.on = false
+        slow.displayOff() // cut during the settle: no start to undo
+        session.on = true
+        slow.displayOn(wasDormant = false, nowMs = 2)
+        eventually("streaming") { session.state == S.STREAMING }
+        slow.streaming(3_000)
+        session.on = false
+        slow.displayOff() // streaming: nothing in flight
+        session.on = true
+        slow.displayOn(wasDormant = false, nowMs = 4)
+        settled()
+        assertEquals("no stale cut queues a start", 1, session.begun.get())
+        assertNull("nor times a wake", slow.streaming(9_000))
+    }
+
+    @Test
     fun the_hold_runs_on_the_injected_clock_and_a_sleep_ends_it() {
         var now = 10_000L
         val box = BoxTeardown({ now }, settleMs = 6_000)

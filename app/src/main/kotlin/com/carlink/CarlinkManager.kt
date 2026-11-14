@@ -1895,11 +1895,9 @@ class CarlinkManager(
 
         // CT_STOP is a session-end indicator: the box goes idle IMMEDIATELY (ocbmd `go_idle`;
         // STOP_GRACE was removed 2026-09-03, docs/ops/06_CORRECTIONS_LEDGER.md). Nothing is reused
-        // by a relaunch — the next SUBSCRIBE is a fresh session. A subscribed client's stop sends CT_STOP: stamped, so the next
-        // HELLO waits out the box's teardown (BoxTeardown, W1).
-        val sentStop = client?.subscribed == true
-        client?.stop()
-        if (sentStop) BoxTeardown.process.stopped()
+        // by a relaunch — the next SUBSCRIBE is a fresh session. A stop that sent CT_STOP is stamped, so the next HELLO waits
+        // out the box's teardown (BoxTeardown, W1); decided by the stop itself, so a SUBSCRIBE still in flight counts.
+        if (client?.stop() == true) BoxTeardown.process.stopped()
         client = null
         transport?.stop()
         transport = null
