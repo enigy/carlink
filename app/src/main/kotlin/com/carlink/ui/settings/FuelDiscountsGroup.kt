@@ -125,8 +125,9 @@ private fun DiscountDialog(
     var allFuels by remember { mutableStateOf(start.allFuels) }
     val amount = cents.toIntOrNull()
     // Another station needs a name, and not the placeholder for an unnamed station, which would match every one (round 3).
+    // A blank amount removes the program, whatever its name: one saved under the placeholder before must stay removable.
     val named = name.isNotBlank() && !name.trim().equals(FuelDiscounts.UNNAMED, ignoreCase = true)
-    val valid = (cents.isEmpty() || (amount != null && amount in 1..FuelDiscounts.MAX_CENTS)) && (start.brand != null || named)
+    val valid = cents.isEmpty() || (amount != null && amount in 1..FuelDiscounts.MAX_CENTS && (start.brand != null || named))
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(start.brand?.label ?: "Another station") },

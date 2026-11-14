@@ -5,14 +5,21 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextClearance
 import androidx.test.core.app.ApplicationProvider
 import com.carlink.car.DrivingState
+import com.carlink.fuel.DiscountBrand
+import com.carlink.fuel.FuelDiscount
+import com.carlink.fuel.FuelDiscounts
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -44,6 +51,23 @@ class FuelDiscountsGroupTest {
         DrivingState.setParked(false)
         compose.waitForIdle()
         compose.onNodeWithText("Cents off per gallon (blank: not a member)").assertDoesNotExist()
+    }
+
+    @Test
+    fun a_program_saved_under_the_placeholder_name_can_still_be_removed() {
+        // Saved before "Fuel station" was refused as a name: blanking its amount must still remove it (round 3 review).
+        val store = VehicleStore.get(ApplicationProvider.getApplicationContext())
+        store.setFuelDiscounts(listOf(FuelDiscount(null, FuelDiscounts.UNNAMED, 5)))
+        DrivingState.setParked(true)
+        show()
+        val rows = compose.onAllNodesWithText("Set")
+        // The first row after the listed brands: the saved one, below the window, so scrolled to first.
+        rows[DiscountBrand.entries.size].performScrollTo().performClick()
+        compose.onNodeWithText("Cents off per gallon (blank: not a member)").performTextClearance()
+        compose.onNodeWithText("Save").assertIsEnabled().performClick()
+        compose.waitForIdle()
+        assertTrue(store.fuelDiscounts.value.isEmpty())
+        store.setFuelDiscounts(emptyList())
     }
 
     @Test
