@@ -18,3 +18,13 @@ suspend fun <T> undoCancelledStart(
         if (stuck()) undo()
         throw e
     }
+
+/**
+ * Whether a cancelled start left nothing behind but CONNECTING: it never sent SUBSCRIBE. CONNECTING alone also holds
+ * after a start that finished (SUBSCRIBE sent, waiting for the phone), and undoing that ended a session that had come
+ * up (the Mac's 13 Nov review, C1).
+ */
+fun startNeedsUndo(
+    connecting: Boolean,
+    subscribed: Boolean,
+): Boolean = connecting && !subscribed

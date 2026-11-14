@@ -960,6 +960,9 @@ class CarlinkManager(
     /** How [wakeConnect] connected, for that line. */
     @Volatile private var wakeHow = DisplayOff.WakePath.AT_ONCE
 
+    /** This start sent SUBSCRIBE: a cancel after it leaves a session that came up ([startNeedsUndo]). */
+    @Volatile private var startSubscribed = false
+
     /** The open [wakeConnect] makes at once: it waits [DisplayOff.WAKE_HELLO_MS] for the adapter's first reply. */
     @Volatile private var wakeOpen = false
 
@@ -1364,7 +1367,7 @@ class CarlinkManager(
      * triggers for the same attach (the broadcast and an attach intent, or the reboot fallback) can't
      * tear down the session the first one just began ([startImpl] restarts a live client).
      */
-    suspend fun startIfDisconnected(reason: String) =
+    suspend fun startIfDisconnected(reason: String): Unit =
         lifecycleMutex.withLock {
             if (released || state != State.DISCONNECTED) {
                 logInfo("[USB] $reason — state=$state, not starting", tag = Logger.Tags.USB)
@@ -1372,10 +1375,12 @@ class CarlinkManager(
                 logInfo("[USB] $reason — connecting", tag = Logger.Tags.USB)
                 cancelReconnect()
                 undoCancelledStart(
-                    stuck = { state == State.CONNECTING },
+                    stuck = { startNeedsUndo(state == State.CONNECTING, startSubscribed) },
                     undo = {
-                        logInfo("[LIFECYCLE] the start was cancelled before the session came up: back to DISCONNECTED", tag = Logger.Tags.USB)
+                        logInfo("[LIFECYCLE] the start was cancelled before SUBSCRIBE: back to DISCONNECTED", tag = Logger.Tags.USB)
                         stopImpl()
+                        // The display may be on again already (a quick off/on), and its ON found CONNECTING and did nothing.
+                        if (displayOn && !released) scope.launch { startIfDisconnected("Display on, after a cancelled start") }
                     },
                 ) { withContext(Dispatchers.IO) { startImpl() } }
             }
@@ -1661,6 +1666,7 @@ class CarlinkManager(
         }
         // The coroutine running this start, for [disconnect] to cancel: it may sit ~30 s looking for the adapter.
         startingJob = currentCoroutineContext()[Job]
+        startSubscribed = false
 
         // Tear down any existing session BEFORE entering CONNECTING, so the FGS started at
         // CONNECTING isn't immediately stopped by the teardown's DISCONNECTED transition.
@@ -1706,6 +1712,7 @@ class CarlinkManager(
             handleError("usb — CT_SUBSCRIBE write failed")
             return
         }
+        startSubscribed = true
         ColdStart.process.subscribed(SystemClock.elapsedRealtime())?.let { logInfo(it, tag = Logger.Tags.USB) }
         c.startHeartbeat()
         armBoxLogStream(c)

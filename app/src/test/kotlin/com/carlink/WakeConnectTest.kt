@@ -70,10 +70,21 @@ class WakeConnectTest {
         }
 
     @Test
-    fun `a start cancelled after the session came up is left alone`() =
+    fun `a start cancelled after it sent SUBSCRIBE is left alone`() =
         runBlocking {
             var undone = false
-            val start = async { undoCancelledStart(stuck = { false }, undo = { undone = true }) { awaitCancellation() } }
+            var subscribed = false
+            val started = CompletableDeferred<Unit>()
+            val start =
+                async {
+                    undoCancelledStart(stuck = { startNeedsUndo(connecting = true, subscribed = subscribed) }, undo = { undone = true }) {
+                        subscribed = true
+                        started.complete(Unit)
+                        awaitCancellation()
+                    }
+                }
+            // Cancelled only once it is running, so the undo is really asked (the Mac's 13 Nov review, C2).
+            started.await()
             start.cancel()
             try {
                 start.await()
@@ -81,6 +92,13 @@ class WakeConnectTest {
             }
             assertFalse(undone)
         }
+
+    @Test
+    fun `only a start that never sent SUBSCRIBE is undone`() {
+        assertTrue(startNeedsUndo(connecting = true, subscribed = false))
+        assertFalse("CONNECTING after SUBSCRIBE: the session came up", startNeedsUndo(connecting = true, subscribed = true))
+        assertFalse(startNeedsUndo(connecting = false, subscribed = false))
+    }
 
     @Test
     fun `the preload line is logged once per session, and on a change`() {
