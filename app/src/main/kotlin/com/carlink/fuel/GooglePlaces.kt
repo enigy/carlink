@@ -10,8 +10,9 @@ import java.time.Instant
  * `POST https://places.googleapis.com/v1/places:searchNearby`, gas stations within the radius ranked by distance, and
  * for each the field mask's id, name, address and its parts (the street, for "Shell on Hwy 123"), location and
  * `fuelOptions` (the last known price per fuel type, with its `updateTime`). Asking for `fuelOptions` bills the call at
- * the Nearby Search Enterprise + Atmosphere rate, so the card counts every lookup ([MonthlyBudget]). Nothing Google sends is kept past the session; the card shows "Google
- * Maps" with it. Plain Kotlin: the request and the answer are tested without a network.
+ * the Nearby Search Enterprise + Atmosphere rate, so the card counts every lookup ([MonthlyBudget]). Nothing Google sends is kept past the session (one exception,
+ * Scott's, 14 Nov: a station name the driver picks for a fuel discount program is kept as that program's label, never
+ * logged); the card shows "Google Maps" with it. Plain Kotlin: the request and the answer are tested without a network.
  */
 object GooglePlaces {
     const val ENDPOINT = "https://places.googleapis.com/v1/places:searchNearby"
@@ -46,7 +47,7 @@ object GooglePlaces {
     private fun station(p: JSONObject): Station? {
         val loc = p.optJSONObject("location") ?: return null
         if (!loc.has("latitude") || !loc.has("longitude")) return null
-        val name = p.optJSONObject("displayName")?.optString("text")?.ifBlank { null } ?: "Fuel station"
+        val name = p.optJSONObject("displayName")?.optString("text")?.ifBlank { null } ?: FuelDiscounts.UNNAMED
         val prices = p.optJSONObject("fuelOptions")?.optJSONArray("fuelPrices")
         return Station(
             id = "google:${p.optString("id")}",

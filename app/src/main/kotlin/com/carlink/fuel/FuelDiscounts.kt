@@ -57,8 +57,8 @@ enum class DiscountBrand(
 }
 
 /**
- * One program the driver is in: a listed [brand], or another station by [name] (the station's name, or the card's
- * "<name> on <street>", contains it), with [cents] off each US gallon and whether diesel gets it too ([allFuels], on
+ * One program the driver is in: a listed [brand], or another station by [name] (found in the station's name, or the
+ * card's whole "<name> on <street>" typed from its start; [matches]), with [cents] off each US gallon and whether diesel gets it too ([allFuels], on
  * unless the driver turns it off: Scott, 13 Nov). No membership number or account: only that the driver is in it, and
  * how much it takes off.
  */
@@ -68,7 +68,7 @@ data class FuelDiscount(
     val cents: Int,
     val allFuels: Boolean = true,
 ) {
-    /** What the settings row and the logs call it. */
+    /** What the settings row calls it. The logs name a listed brand only: another station's name can pin a place. */
     val label: String get() = brand?.label ?: name
 
     /**
@@ -79,6 +79,8 @@ data class FuelDiscount(
      */
     fun matches(station: Station): Boolean {
         if (brand != null) return brand.matches(station.name)
+        // The placeholder for an unnamed station is no name: typed, it would match every "… Fuel Station" (round 3).
+        if (name.trim().equals(FuelDiscounts.UNNAMED, ignoreCase = true)) return false
         val typed = Regex.escape(apostrophes(name.trim()))
         if (name.isBlank()) return false
         val inName = Regex("""(?<![\p{L}\p{N}])$typed(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE)
@@ -109,13 +111,14 @@ object FuelDiscounts {
     /**
      * The names the "Another station" dialog offers from the stations around: not a listed brand, not the placeholder
      * for an unnamed station (which would match every one of them), not without a letter, and at most [MAX_NAME] long
-     * (the Mac's 14 Nov review, E4).
+     * (the Mac's 14 Nov review, E4). A longer name is left out rather than cut: cut inside a word or number it no longer
+     * matches its own station (round 3).
      */
     fun pickable(stations: List<Station>): List<String> =
         stations
             .map { it.name.trim() }
-            .filter { n -> n.any(Char::isLetter) && !n.equals(UNNAMED, ignoreCase = true) && DiscountBrand.entries.none { it.matches(n) } }
-            .map { it.take(MAX_NAME).trim() }
+            .filter { n -> n.length <= MAX_NAME && n.any(Char::isLetter) && !n.equals(UNNAMED, ignoreCase = true) }
+            .filter { n -> DiscountBrand.entries.none { it.matches(n) } }
             .distinct()
 
     /**

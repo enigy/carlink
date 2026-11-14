@@ -170,7 +170,13 @@ class FuelDiscountsTest {
         // Never in a street alone (E1).
         assertFalse(FuelDiscount(null, "76", 5).matches(st("Shell", 1.0, 3.0, street = "CA-76")))
         assertFalse(FuelDiscount(null, "Speedway", 5).matches(st("Circle K", 1.0, 3.0, street = "E Speedway Blvd")))
-        assertTrue("both apostrophes", FuelDiscount(null, "Casey's", 5).matches(st("Casey’s", 1.0, 3.0)))
+        // The two apostrophes as one, whichever is typed, in the name and in the title (round 3).
+        assertTrue(FuelDiscount(null, "Casey's", 5).matches(st("Casey’s", 1.0, 3.0)))
+        assertTrue(FuelDiscount(null, "Casey’s", 5).matches(st("Casey's #12", 1.0, 3.0)))
+        assertTrue(FuelDiscount(null, "Casey’s on Main St", 5).matches(st("Casey's", 1.0, 3.0, street = "Main St")))
+        // The placeholder for an unnamed station is never a name (round 3).
+        assertFalse(FuelDiscount(null, "Fuel station", 5).matches(st("Downtown Fuel Station", 1.0, 3.0)))
+        assertFalse(FuelDiscount(null, "fuel station", 5).matches(st("Fuel station", 1.0, 3.0)))
         assertNull(FuelDiscounts.forStation(st("Kum & Go", 1.0, 3.0), regular, listOf(local.copy(cents = 0))))
     }
 
@@ -179,7 +185,14 @@ class FuelDiscountsTest {
         val around =
             listOf(st("Fuel station", 1.0, 3.0), st("QuikTrip", 1.0, 3.0), st("123", 1.0, 3.0), st("Kum & Go", 1.0, 3.0), st("Kum & Go", 2.0, 3.0))
         assertEquals(listOf("Kum & Go"), FuelDiscounts.pickable(around))
-        assertEquals(FuelDiscounts.MAX_NAME, FuelDiscounts.pickable(listOf(st("A".repeat(60), 1.0, 3.0))).single().length)
+        // A name over the cap is left out, not cut (cut inside a word or number it misses its own station: round 3).
+        val long = st("Speedy Gas & Go Travel Center Number 41237 Hwy 9", 1.0, 3.0)
+        assertTrue(FuelDiscounts.pickable(listOf(long)).isEmpty())
+        // Every pick matches the station it came from.
+        val named = listOf(st("Kum & Go", 1.0, 3.0), st("Gas (Main St)", 1.0, 3.0), st("Casey’s #12", 1.0, 3.0), long)
+        for (pick in FuelDiscounts.pickable(named)) {
+            assertTrue(pick, named.any { FuelDiscount(null, pick, 5).matches(it) && it.name.trim() == pick })
+        }
     }
 
     @Test

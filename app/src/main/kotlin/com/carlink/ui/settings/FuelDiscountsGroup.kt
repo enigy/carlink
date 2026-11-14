@@ -90,7 +90,10 @@ internal fun FuelDiscountsGroup(store: VehicleStore) {
 }
 
 private fun FuelDiscount.sameProgram(other: FuelDiscount): Boolean =
-    if (brand != null) brand == other.brand else other.brand == null && name.trim().equals(other.name.trim(), ignoreCase = true)
+    if (brand != null) brand == other.brand else other.brand == null && folded(name).equals(folded(other.name), ignoreCase = true)
+
+/** A typed name as it compares: trimmed, the two apostrophes as one. */
+private fun folded(name: String) = name.trim().replace('’', '\'')
 
 /** One program: not a member, or its amount; Set, parked only. */
 @Composable
@@ -121,7 +124,9 @@ private fun DiscountDialog(
     var cents by remember { mutableStateOf(if (start.cents > 0) start.cents.toString() else "") }
     var allFuels by remember { mutableStateOf(start.allFuels) }
     val amount = cents.toIntOrNull()
-    val valid = (cents.isEmpty() || (amount != null && amount in 1..FuelDiscounts.MAX_CENTS)) && (start.brand != null || name.isNotBlank())
+    // Another station needs a name, and not the placeholder for an unnamed station, which would match every one (round 3).
+    val named = name.isNotBlank() && !name.trim().equals(FuelDiscounts.UNNAMED, ignoreCase = true)
+    val valid = (cents.isEmpty() || (amount != null && amount in 1..FuelDiscounts.MAX_CENTS)) && (start.brand != null || named)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(start.brand?.label ?: "Another station") },
