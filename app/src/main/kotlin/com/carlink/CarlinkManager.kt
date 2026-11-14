@@ -965,6 +965,8 @@ class CarlinkManager(
 
                 override fun connecting(): Boolean = state == State.CONNECTING
 
+                override fun subscribed(): Boolean = client?.subscribed == true
+
                 override fun released(): Boolean = released
 
                 override fun displayOn(): Boolean = displayOn
@@ -1713,9 +1715,10 @@ class CarlinkManager(
         // CT_HELLO, retransmitted until ACK. Failure here is Pattern A's trigger — keep the
         // "no initial response" substring, which remote log filters match on.
         setStatusText("Connecting to adapter...")
-        // A stop of Carlink's own seconds ago: the box is still tearing that session down, and a HELLO into it lost wireless
-        // on OCBM before 251b590 (the Mac's 14 Nov review, W1). Cancellable: an OFF, Close app or a handover ends it.
-        val hold = holdBeforeHello(BoxTeardown.nowMs(), BoxTeardown.stoppedAtMs, CleanSlateReset.BOX_TEARDOWN_SETTLE_MS)
+        // A stop of Carlink's own seconds ago: the box is still tearing that session down, which OCBM before 251b590 doesn't
+        // wait for (the Mac's 14 Nov review, W1). Cancellable: Close app and a handover cancel any start; an OFF only the
+        // wake's own.
+        val hold = BoxTeardown.process.holdMs()
         if (hold > 0) {
             logInfo("[LIFECYCLE] waiting $hold ms for the box to finish tearing down the session stopped before", tag = Logger.Tags.USB)
             delay(hold)
@@ -1742,7 +1745,6 @@ class CarlinkManager(
             handleError("usb — CT_SUBSCRIBE write failed")
             return
         }
-        starts.subscribed()
         ColdStart.process.subscribed(SystemClock.elapsedRealtime())?.let { logInfo(it, tag = Logger.Tags.USB) }
         c.startHeartbeat()
         armBoxLogStream(c)
@@ -1893,8 +1895,11 @@ class CarlinkManager(
 
         // CT_STOP is a session-end indicator: the box goes idle IMMEDIATELY (ocbmd `go_idle`;
         // STOP_GRACE was removed 2026-09-03, docs/ops/06_CORRECTIONS_LEDGER.md). Nothing is reused
-        // by a relaunch — the next SUBSCRIBE is a fresh session.
+        // by a relaunch — the next SUBSCRIBE is a fresh session. A subscribed client's stop sends CT_STOP: stamped, so the next
+        // HELLO waits out the box's teardown (BoxTeardown, W1).
+        val sentStop = client?.subscribed == true
         client?.stop()
+        if (sentStop) BoxTeardown.process.stopped()
         client = null
         transport?.stop()
         transport = null

@@ -2,6 +2,7 @@ package com.carlink
 
 import com.carlink.DisplayOff.WakePath
 import com.carlink.ocbm.OcbmClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,6 +32,7 @@ class WakeStarts(
     private val settleMs: Long = DisplayOff.WAKE_SETTLE_MS,
 ) {
     /** CarlinkManager's side. */
+    @Suppress("TooManyFunctions") // one call each into the session; a holder would only rename them
     interface Host {
         /** The state's name, for the log lines. */
         fun stateName(): String
@@ -41,6 +43,12 @@ class WakeStarts(
         /** CONNECTING. */
         fun connecting(): Boolean
 
+        /**
+         * The start in flight has sent SUBSCRIBE: read from the live client (OcbmClient.subscribed), so the undo's check
+         * (the 13 Nov C1) needs no call that could be dropped from CarlinkManager.
+         */
+        fun subscribed(): Boolean
+
         fun released(): Boolean
 
         fun displayOn(): Boolean
@@ -50,7 +58,7 @@ class WakeStarts(
 
         fun cancelReconnect()
 
-        /** The session's start (CarlinkManager.startImpl): open, HELLO within [helloMs], SUBSCRIBE ([subscribed]). */
+        /** The session's start (CarlinkManager.startImpl): open, HELLO within [helloMs], SUBSCRIBE. */
         suspend fun start(helloMs: Long)
 
         /** What a start cut short left behind (CarlinkManager.stopImpl). Blocking. */
@@ -59,11 +67,8 @@ class WakeStarts(
         fun log(line: String)
     }
 
-    // This start sent SUBSCRIBE: a cancel after it leaves a session that came up ([startNeedsUndo]).
-    @Volatile private var subscribedThisStart = false
-
-    // A display OFF cut the wake in flight: the one cancel after which the undo starts again ([restartAfterUndo]). Set only
-    // by [displayOff]; a second OFF while the cut start still runs must not clear it (13 Nov lifecycle review).
+    // A display OFF cut the wake in flight before SUBSCRIBE: the one cancel after which the undo starts again
+    // ([restartAfterUndo]). Set only by [displayOff]; a second OFF while the cut start still runs must not clear it.
     @Volatile private var cut = false
 
     @Volatile private var job: Job? = null
@@ -72,12 +77,6 @@ class WakeStarts(
     @Volatile private var wakeAtMs = 0L
 
     @Volatile private var path = WakePath.AT_ONCE
-
-    /** The start in flight reached SUBSCRIBE (CarlinkManager.startImpl). */
-    fun subscribed() {
-        subscribedThisStart = true
-        cut = false
-    }
 
     /** A start got no reply to HELLO within [helloMs]: the wake's short wait says so in its line. */
     fun helloMissed(helloMs: Long) {
@@ -99,11 +98,16 @@ class WakeStarts(
             }
             host.log("[USB] $reason — connecting")
             host.cancelReconnect()
-            subscribedThisStart = false
-            undoCancelledStart(
-                stuck = { startNeedsUndo(host.connecting(), subscribedThisStart) },
-                undo = { undo() },
-            ) { withContext(Dispatchers.IO) { host.start(helloMs) } }
+            try {
+                undoCancelledStart(
+                    stuck = { startNeedsUndo(host.connecting(), host.subscribed()) },
+                    undo = { undo() },
+                ) { withContext(Dispatchers.IO) { host.start(helloMs) } }
+            } catch (e: CancellationException) {
+                // Cut after SUBSCRIBE: the session came up and is kept, and the cut is no longer one to start again for.
+                if (host.subscribed()) cut = false
+                throw e
+            }
         }
 
     private suspend fun undo() {
@@ -118,9 +122,9 @@ class WakeStarts(
         }
     }
 
-    /** The display went off: a wake in flight is cut. */
+    /** The display went off: a wake in flight is cut, if it hasn't sent SUBSCRIBE (a session that came up is kept). */
     fun displayOff() {
-        if (job?.isActive == true) cut = true
+        if (job?.isActive == true && !host.subscribed()) cut = true
         job?.cancel()
         wakeAtMs = 0L
     }
@@ -133,10 +137,12 @@ class WakeStarts(
         wasDormant: Boolean,
         nowMs: Long,
     ) {
-        wakeAtMs = nowMs
+        // The wake is timed only when a start is launched: an ON that starts nothing must not time the next STREAMING.
         if (host.disconnected()) {
+            wakeAtMs = nowMs
             launch(null)
         } else if (queueStartOnDisplayOn(wakeCut = cut, wasDormant = wasDormant)) {
+            wakeAtMs = nowMs
             launch(WakePath.QUEUED)
         }
     }
@@ -169,7 +175,13 @@ class WakeStarts(
         val first = DisplayOff.firstPath(adapterListed = host.adapterListed())
         path = origin ?: first
         if (first == WakePath.AT_ONCE) {
-            startIfDisconnected("Display on, the adapter still listed", DisplayOff.WAKE_HELLO_MS)
+            val why =
+                when (origin) {
+                    WakePath.QUEUED -> "Display on, after the start or stop in flight"
+                    WakePath.AFTER_UNDO -> "Display on, again after a display OFF undid its start"
+                    else -> "Display on, the adapter still listed"
+                }
+            startIfDisconnected(why, DisplayOff.WAKE_HELLO_MS)
             if (!host.disconnected()) return
             host.log("[POWER] the wake connect did not open the adapter: again after the USB settle")
             path = WakePath.OPEN_FAILED

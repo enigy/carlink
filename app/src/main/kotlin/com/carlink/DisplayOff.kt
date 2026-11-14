@@ -15,7 +15,7 @@ object DisplayOff {
 
     /**
      * After the display comes back: let a re-powered USB port settle before connecting (Carlink2's WAKE_SETTLE_MS). Only
-     * when the adapter is not listed, or opening it at once failed (CarlinkManager.wakeConnect).
+     * when the adapter is not listed, or opening it at once failed (WakeStarts).
      */
     const val WAKE_SETTLE_MS = 2_500L
 
@@ -55,7 +55,7 @@ object DisplayOff {
             else -> Decision.END_SESSION
         }
 
-    /** How a wake connected, for its `[startup]` line (CarlinkManager.wakeConnect). */
+    /** How a wake connected, for its `[startup]` line (WakeStarts). */
     enum class WakePath(
         val words: String,
     ) {

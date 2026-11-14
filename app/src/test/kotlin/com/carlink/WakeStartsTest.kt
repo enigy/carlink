@@ -8,9 +8,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CopyOnWriteArrayList
@@ -33,13 +35,13 @@ class WakeStartsTest {
     )
 
     private class FakeSession : WakeStarts.Host {
-        lateinit var starts: WakeStarts
-
         @Volatile var state = S.DISCONNECTED
 
         @Volatile var on = true
 
         @Volatile var listed = true
+
+        @Volatile var subscribedNow = false
 
         val scripts = ConcurrentLinkedQueue<Script>()
         val begun = AtomicInteger()
@@ -51,6 +53,8 @@ class WakeStartsTest {
         override fun disconnected() = state == S.DISCONNECTED
 
         override fun connecting() = state == S.CONNECTING
+
+        override fun subscribed() = subscribedNow
 
         override fun released() = false
 
@@ -65,17 +69,19 @@ class WakeStartsTest {
             checkNotNull(currentCoroutineContext()[Job])
             begun.incrementAndGet()
             hellos += helloMs
+            subscribedNow = false
             state = S.CONNECTING
-            if (s.subscribeFirst) starts.subscribed()
+            if (s.subscribeFirst) subscribedNow = true
             s.block?.await() // not cancellable, as a blocking HELLO isn't
             s.suspendAt?.await() // cancellable
             if (!s.answers) return // no reply: the session stays CONNECTING until its error is handled
-            starts.subscribed()
+            subscribedNow = true
             state = S.STREAMING
         }
 
         override fun stop() {
             stops.incrementAndGet()
+            subscribedNow = false
             state = S.DISCONNECTED
         }
 
@@ -84,7 +90,7 @@ class WakeStartsTest {
 
     private val session = FakeSession()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val starts = WakeStarts(scope, Mutex(), session, settleMs = 50).also { session.starts = it }
+    private val starts = WakeStarts(scope, Mutex(), session, settleMs = 50)
 
     @After
     fun end() = scope.cancel()
@@ -139,6 +145,7 @@ class WakeStartsTest {
         on()
         settled()
         assertEquals("the ON queues nothing that starts over it", 1, session.begun.get())
+        assertNull("the ON started nothing: no wake is timed", starts.streaming(5_000))
     }
 
     @Test
@@ -208,6 +215,59 @@ class WakeStartsTest {
         on(nowMs = 3)
         eventually("the settled start") { session.hellos.size == 3 }
         assertEquals("not listed: after the settle, the usual wait", 20_000L, session.hellos[2])
+    }
+
+    @Test
+    fun an_on_behind_the_display_off_teardown_queues_the_start_that_follows_it() {
+        // The grace end's stop holds the lifecycle lock while the display comes back (wasDormant): only the queue starts.
+        val lock = Mutex()
+        val queued = WakeStarts(scope, lock, session, settleMs = 50)
+        session.state = S.STREAMING
+        runBlocking { lock.lock() }
+        queued.displayOn(wasDormant = true, nowMs = 1)
+        session.state = S.DISCONNECTED // the stop ends
+        lock.unlock()
+        eventually("the queued start") { session.state == S.STREAMING }
+        assertEquals(1, session.begun.get())
+        assertEquals("[startup] wake: display on to STREAMING 4999 ms (after the start or stop in flight)", queued.streaming(5_000))
+    }
+
+    @Test
+    fun close_app_clears_a_cut_so_nothing_starts_after_it() {
+        val hello = CountDownLatch(1)
+        session.scripts += Script(block = hello, answers = false)
+        on(nowMs = 1)
+        eventually("the wake's start") { session.begun.get() == 1 }
+        off() // cut
+        starts.closing() // Close app: the cut no longer counts
+        on(nowMs = 2) // CONNECTING: without the cut, nothing is queued
+        hello.countDown()
+        eventually("the undo") { session.stops.get() == 1 }
+        settled()
+        assertEquals("no start after Close app", 1, session.begun.get())
+    }
+
+    @Test
+    fun an_on_while_streaming_times_no_wake() {
+        on(nowMs = 1)
+        eventually("streaming") { session.state == S.STREAMING }
+        assertEquals("[startup] wake: display on to STREAMING 999 ms (at once, the adapter listed)", starts.streaming(1_000))
+        off()
+        on(nowMs = 2) // streaming already: nothing starts
+        settled()
+        assertNull(starts.streaming(5_000))
+    }
+
+    @Test
+    fun the_hold_runs_on_the_injected_clock_and_a_sleep_ends_it() {
+        var now = 10_000L
+        val box = BoxTeardown({ now }, settleMs = 6_000)
+        assertEquals("nothing stopped", 0L, box.holdMs())
+        box.stopped()
+        now = 11_200
+        assertEquals(4_800L, box.holdMs())
+        now += 8 * 3_600_000L // the head unit slept the night: elapsedRealtime kept counting
+        assertEquals(0L, box.holdMs())
     }
 
     @Test

@@ -50,22 +50,36 @@ fun queueStartOnDisplayOn(
 ): Boolean = wakeCut || wasDormant
 
 /**
- * When Carlink last sent CT_STOP to a subscribed adapter (OcbmClient.stop), on the monotonic clock: the box tears that
- * session down for about [CleanSlateReset.BOX_TEARDOWN_SETTLE_MS] after it. Process-wide: a new manager meets the same box.
+ * When Carlink last stopped a subscribed adapter (CarlinkManager.stopImpl, which sends CT_STOP), on [clock]: the box tears
+ * that session down for about [settleMs] after it. On the head unit [clock] is SystemClock.elapsedRealtime, which keeps
+ * counting while it sleeps: System.nanoTime stops, so a head unit suspended soon after the grace-end stop held the next
+ * morning's wake for up to 5 s (the Mac's 14 Nov review). One per process ([process]): a new manager meets the same box.
  */
-object BoxTeardown {
-    @Volatile var stoppedAtMs = 0L
+class BoxTeardown(
+    private val clock: () -> Long,
+    private val settleMs: Long = CleanSlateReset.BOX_TEARDOWN_SETTLE_MS,
+) {
+    @Volatile private var stoppedAtMs = 0L
 
-    fun nowMs(): Long = System.nanoTime() / NANOS_PER_MS
+    /** A subscribed client was just stopped: CT_STOP went to the box. */
+    fun stopped() {
+        stoppedAtMs = clock()
+    }
 
-    private const val NANOS_PER_MS = 1_000_000L
+    /** How long a start about to send HELLO waits now ([holdBeforeHello]). */
+    fun holdMs(): Long = holdBeforeHello(clock(), stoppedAtMs, settleMs)
+
+    companion object {
+        /** The head unit's. */
+        val process: BoxTeardown by lazy { BoxTeardown({ android.os.SystemClock.elapsedRealtime() }) }
+    }
 }
 
 /**
  * How long a start about to send HELLO at [nowMs] waits for the box to finish tearing down the session stopped at
- * [stoppedAtMs] (0: none): what is left of [settleMs] from that CT_STOP. A display ON within seconds of Carlink's own stop
- * (the grace end, or a wake) re-subscribed into the teardown, and on any OCBM before 251b590 the box then lost wireless
- * until a reset (the Mac's 14 Nov review, W1). Measured as the start reaches HELLO, not when it was asked for, so an ON
+ * [stoppedAtMs] (0: none): what is left of [settleMs] from that CT_STOP. Any connect within seconds of Carlink's own stop
+ * (the grace end, a wake, a reopen) re-subscribed into the box's teardown, which OCBM before 251b590 doesn't wait for
+ * (the Mac's 14 Nov review, W1). Measured as the start reaches HELLO, not when it was asked for, so an ON
  * that lands while the stop still runs counts from that stop's CT_STOP.
  */
 fun holdBeforeHello(
