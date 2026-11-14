@@ -963,6 +963,12 @@ class CarlinkManager(
     /** This start sent SUBSCRIBE: a cancel after it leaves a session that came up ([startNeedsUndo]). */
     @Volatile private var startSubscribed = false
 
+    /**
+     * A display OFF cut the wake's start in flight ([onDisplayOff]): the one cancel after which the undo starts again if the
+     * display is on by then. Close app and a handover cancel a start too, and clear it first.
+     */
+    @Volatile private var wakeCut = false
+
     /** The open [wakeConnect] makes at once: it waits [DisplayOff.WAKE_HELLO_MS] for the adapter's first reply. */
     @Volatile private var wakeOpen = false
 
@@ -1379,8 +1385,11 @@ class CarlinkManager(
                     undo = {
                         logInfo("[LIFECYCLE] the start was cancelled before SUBSCRIBE: back to DISCONNECTED", tag = Logger.Tags.USB)
                         stopImpl()
-                        // The display may be on again already (a quick off/on), and its ON found CONNECTING and did nothing.
-                        if (displayOn && !released) scope.launch { startIfDisconnected("Display on, after a cancelled start") }
+                        // Only after a display OFF cut the wake's own start ([wakeCut]): the display may be on again already (a
+                        // quick off/on), and its ON found CONNECTING and did nothing. Never after Close app or a handover.
+                        val again = wakeCut && displayOn && !released
+                        wakeCut = false
+                        if (again) scope.launch { startIfDisconnected("Display on, after a cancelled start") }
                     },
                 ) { withContext(Dispatchers.IO) { startImpl() } }
             }
@@ -1459,6 +1468,7 @@ class CarlinkManager(
      */
     suspend fun handOverAdapter(packageName: String): String? {
         cancelReconnect()
+        wakeCut = false
         startingJob?.let { if (it.isActive) it.cancel() }
         logInfo("[BRIDGE_ACCESS] handing the adapter to $packageName", tag = Logger.Tags.USB)
         val refusal = handover.handOver(packageName)
@@ -1713,6 +1723,7 @@ class CarlinkManager(
             return
         }
         startSubscribed = true
+        wakeCut = false
         ColdStart.process.subscribed(SystemClock.elapsedRealtime())?.let { logInfo(it, tag = Logger.Tags.USB) }
         c.startHeartbeat()
         armBoxLogStream(c)
@@ -1884,6 +1895,7 @@ class CarlinkManager(
      */
     suspend fun disconnect() {
         cancelReconnect()
+        wakeCut = false
         startingJob?.let { job ->
             if (job.isActive) logInfo("[LIFECYCLE] disconnect(): cancelling the start in flight", tag = Logger.Tags.ADAPTR)
             job.cancel()
@@ -2651,6 +2663,7 @@ class CarlinkManager(
     fun onDisplayOff(source: String) {
         if (released || !displayOn) return
         displayOn = false
+        wakeCut = wakeConnectJob?.isActive == true
         wakeConnectJob?.cancel()
         wakeAtMs = 0L
         logInfo(
