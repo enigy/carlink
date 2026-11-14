@@ -7,7 +7,8 @@ import kotlin.math.roundToInt
 
 /**
  * One row of the Fuel card's list: the station, its [price] for the card's fuel, how far, whether the range reaches it,
- * its tags, and whether the driver [starred] it.
+ * its tags, and whether the driver [starred] it. With a discount program the driver is in ([discount]), [price] is what
+ * the driver pays and [posted] the station's own price.
  */
 data class StationRow(
     val station: Station,
@@ -17,6 +18,8 @@ data class StationRow(
     val cheapest: Boolean = false,
     val nearest: Boolean = false,
     val starred: Boolean = false,
+    val posted: FuelPrice? = null,
+    val discount: FuelDiscount? = null,
 )
 
 /**
@@ -24,22 +27,33 @@ data class StationRow(
  * station that says it doesn't sell it. [cheapestFirst] (parked, the fuel not low): cheapest first with the cheapest and
  * the nearest tagged, and stations without a price last; otherwise (low fuel, moving) nearest first, for diesel the ones
  * known to sell it ahead ([Station.sells]). A station out of reach is marked for greying ([Geo.outOfReach]). The card
- * shows the first few.
+ * shows the first few. A station in one of the driver's [discounts] is priced, and ranked, at what the driver pays.
  */
 object StationList {
+    @Suppress("LongParameterList") // The card's inputs as they are, each one of its rules; a holder would only rename them.
     fun rows(
         stations: List<Station>,
         fuel: CarFuel,
         here: GeoPoint?,
         rangeM: Float?,
         cheapestFirst: Boolean,
+        discounts: List<FuelDiscount> = emptyList(),
     ): List<StationRow> {
         val all =
             stations
                 .filter { it.sells(fuel) != false }
                 .map { s ->
                     val d = here?.let { Geo.metres(it, s.at) }
-                    StationRow(s, s.priceFor(fuel), d, d != null && Geo.outOfReach(d, rangeM))
+                    val posted = s.priceFor(fuel)
+                    val discount = posted?.let { FuelDiscounts.forStation(s, fuel, discounts) }
+                    StationRow(
+                        s,
+                        posted?.let { FuelDiscounts.apply(it, discount) },
+                        d,
+                        d != null && Geo.outOfReach(d, rangeM),
+                        posted = posted,
+                        discount = discount,
+                    )
                 }
         val byPrice = cheapestFirst && all.any { it.price != null }
         val ordered =
@@ -92,6 +106,9 @@ object StationText {
         f.maximumFractionDigits = 3
         return f.format(price)
     }
+
+    /** A discounted row's station price: "$2.989 posted". */
+    fun posted(price: FuelPrice): String = "${price(price.amount, price.currency)} posted"
 
     /** How old a price is: "just now", "12 min ago", "2 h ago", "3 days ago". */
     fun age(

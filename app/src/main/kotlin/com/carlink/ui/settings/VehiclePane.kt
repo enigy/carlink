@@ -231,7 +231,10 @@ private fun NearbyGroup(
             },
         )
     }
-    if (nearby) PriceSourceGroup(store, imperial)
+    if (nearby) {
+        PriceSourceGroup(store, imperial)
+        FuelDiscountsGroup(store)
+    }
 }
 
 /** Low fuel warning at: the range, in the car's [unit], at which the Fuel card warns ([LowFuel], default 25). */
