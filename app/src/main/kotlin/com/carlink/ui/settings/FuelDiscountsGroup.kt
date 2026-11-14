@@ -12,6 +12,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +26,7 @@ import com.carlink.car.DrivingState
 import com.carlink.fuel.DiscountBrand
 import com.carlink.fuel.FuelDiscount
 import com.carlink.fuel.FuelDiscounts
+import com.carlink.fuel.FuelStations
 import com.carlink.logging.logWarn
 
 /**
@@ -32,6 +34,8 @@ import com.carlink.logging.logWarn
  * cents off. Every listed station starts as not a member, with no amount; another station can be added by name. Only
  * that the driver is in a program and its amount are kept, never a membership number. Entered parked, as the Google key
  * is. The Fuel card then prices and ranks those stations at what the driver pays.
+ * A dialog open when the truck moves closes, and Save works only parked (the Mac's 13 Nov review, item 2). Diesel too
+ * starts on (Scott, 13 Nov).
  */
 @Composable
 internal fun FuelDiscountsGroup(store: VehicleStore) {
@@ -39,6 +43,9 @@ internal fun FuelDiscountsGroup(store: VehicleStore) {
     val parked by DrivingState.parked.collectAsState()
     var editing by remember { mutableStateOf<FuelDiscount?>(null) }
     val others = discounts.filter { it.brand == null }
+    // Moving: whatever was open closes, so nothing is typed or saved while driving.
+    LaunchedEffect(parked) { if (!parked) editing = null }
+    SectionLabel("Fuel discounts", modifier = Modifier.padding(top = 8.dp))
     SettingsGroup {
         DiscountBrand.entries.forEachIndexed { i, brand ->
             if (i > 0) GroupDivider()
@@ -56,7 +63,8 @@ internal fun FuelDiscountsGroup(store: VehicleStore) {
     }
     Text(
         "Cents off each gallon at a station whose program you're in, as the program gives it. The Fuel card shows what you " +
-            "pay there, with the station's own price beside it.",
+            "pay there, with the station's own price beside it. Kroger counts at King Soopers, Fry's, Dillons, Ralphs, Smith's, " +
+            "Fred Meyer, Harris Teeter and QFC fuel centers too. US prices only.",
         style = SettingsStyle.Body,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 88.dp, end = 32.dp, bottom = 24.dp),
@@ -64,6 +72,8 @@ internal fun FuelDiscountsGroup(store: VehicleStore) {
     editing?.let { start ->
         DiscountDialog(
             start = start,
+            parked = parked,
+            nearby = nearbyNames(),
             onSave = { saved ->
                 // Keyed by the brand, or the name for another station; 0 cents is "not a member" and drops it.
                 val rest = discounts.filterNot { it.sameProgram(start) || it.sameProgram(saved) }
@@ -92,10 +102,15 @@ private fun DiscountRow(
     }
 }
 
-/** The amount (blank: not a member), diesel too or not, and for another station its name. */
+/**
+ * The amount (blank: not a member), diesel too or not, and for another station its name: typed, or picked from the
+ * stations around (the Mac's 13 Nov review, item 5).
+ */
 @Composable
 private fun DiscountDialog(
     start: FuelDiscount,
+    parked: Boolean,
+    nearby: List<String>,
     onSave: (FuelDiscount) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -114,8 +129,9 @@ private fun DiscountDialog(
                         value = name,
                         onValueChange = { name = it.take(MAX_NAME) },
                         singleLine = true,
-                        label = { Text("Station name, as the card shows it") },
+                        label = { Text("The station's name, without the street") },
                     )
+                    nearby.take(MAX_PICKS).forEach { n -> TextButton(onClick = { name = n }) { Text(n) } }
                 }
                 OutlinedTextField(
                     value = cents,
@@ -131,10 +147,21 @@ private fun DiscountDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(FuelDiscount(start.brand, name.trim(), amount ?: 0, allFuels)) }, enabled = valid) { Text("Save") }
+            TextButton(onClick = { onSave(FuelDiscount(start.brand, name.trim(), amount ?: 0, allFuels)) }, enabled = valid && parked) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
 private const val MAX_NAME = 40
+private const val MAX_PICKS = 4
+
+/** The names of the stations around, from the Fuel card's last lookup, not already a listed brand: the picks for another station. */
+@Composable
+private fun nearbyNames(): List<String> {
+    val view by FuelStations.view.collectAsState()
+    return view.stations
+        .map { it.name.trim() }
+        .filter { n -> n.isNotEmpty() && DiscountBrand.entries.none { it.matches(n) } }
+        .distinct()
+}

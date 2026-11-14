@@ -4,6 +4,7 @@ import java.text.NumberFormat
 import java.util.Currency
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
  * One row of the Fuel card's list: the station, its [price] for the card's fuel, how far, whether the range reaches it,
@@ -30,6 +31,8 @@ data class StationRow(
  * shows the first few. A station in one of the driver's [discounts] is priced, and ranked, at what the driver pays.
  */
 object StationList {
+    private const val MILLS = 1000.0
+
     @Suppress("LongParameterList") // The card's inputs as they are, each one of its rules; a holder would only rename them.
     fun rows(
         stations: List<Station>,
@@ -58,7 +61,9 @@ object StationList {
         val byPrice = cheapestFirst && all.any { it.price != null }
         val ordered =
             when {
-                byPrice -> all.sortedWith(compareBy({ it.price == null }, { it.price?.amount }, { it.distanceM }))
+                // In tenths of a cent, as the card shows prices: a discounted price (posted less cents/100) and an equal posted
+                // one differ in floating-point noise, which ranked a far station first at the same price (the Mac, 13 Nov).
+                byPrice -> all.sortedWith(compareBy({ it.price == null }, { it.price?.let { p -> (p.amount * MILLS).roundToLong() } }, { it.distanceM }))
                 here != null -> all.sortedWith(compareBy({ it.station.sells(fuel) != true }, { it.distanceM }))
                 else -> all
             }

@@ -2,25 +2,43 @@ package com.carlink.fuel
 
 import java.util.Locale
 
+/** What may follow a brand at the start of a station's name: the end, a number or sign, or a word stations add to it. */
+private const val BRAND_TAIL =
+    """(?=\s*$|\s*[^\p{L}\s]|\s+(?:gas|gasoline|station|food|mart|store|express|fuel|center|centre|select|stop|travel|plaza|truck|connect)\b)"""
+
+/**
+ * A brand's [names] (alternatives), matched at the start of a station's name and followed by [BRAND_TAIL]. File-level, not
+ * in the enum's companion: the entries are built before a companion is.
+ */
+private fun brand(names: String) = Regex("""^\s*(?:$names)$BRAND_TAIL""", RegexOption.IGNORE_CASE)
+
 /**
  * The stations whose discount program Settings › Vehicle › Fuel discounts lists (Scott, 14 Nov): a station of the brand
- * gets the driver's own amount off each unit of fuel. Costco and Sam's Club are not here: their posted price is already
- * the member price. Matched on the source's station name, the only brand the sources give.
+ * gets the driver's own amount off each gallon. Costco and Sam's Club are not here: their posted price is already the
+ * member price. Matched on the source's station name, the only brand the sources give: the brand must START the name and
+ * be followed by nothing, a number or sign, or a word stations add ("Gas", "Station", "Food Mart", "Express"), so an
+ * ordinary word never takes a discount the pump won't give ("Murphy's Market", "Sea Shell Market", "Shell Rock Fuel";
+ * the Mac's 13 Nov review). Kroger counts at its banners' fuel centers too (Scott, 13 Nov), matched as "<banner> Fuel"
+ * so a surname ("Smith's Auto Service", "Fry's Electronics") never does.
  */
 enum class DiscountBrand(
     val label: String,
     val code: String,
     private val names: Regex,
 ) {
-    QUIKTRIP("QuikTrip", "quiktrip", Regex("""\bquik\s*trip\b|\bQT\b""", RegexOption.IGNORE_CASE)),
-    KROGER("Kroger", "kroger", Regex("""\bkroger\b""", RegexOption.IGNORE_CASE)),
-    SHELL("Shell", "shell", Regex("""\bshell\b""", RegexOption.IGNORE_CASE)),
-    EXXON_MOBIL("Exxon and Mobil", "exxon_mobil", Regex("""\bexxon\b|\bmobil\b""", RegexOption.IGNORE_CASE)),
-    BP("BP and Amoco", "bp", Regex("""\bbp\b|\bamoco\b""", RegexOption.IGNORE_CASE)),
-    CHEVRON_TEXACO("Chevron and Texaco", "chevron_texaco", Regex("""\bchevron\b|\btexaco\b""", RegexOption.IGNORE_CASE)),
-    CIRCLE_K("Circle K", "circle_k", Regex("""\bcircle\s*k\b""", RegexOption.IGNORE_CASE)),
-    MURPHY_USA("Murphy USA", "murphy_usa", Regex("""\bmurphy\b""", RegexOption.IGNORE_CASE)),
-    RACETRAC("RaceTrac", "racetrac", Regex("""\bracetrac\b""", RegexOption.IGNORE_CASE)),
+    QUIKTRIP("QuikTrip", "quiktrip", brand("""quik\s*trip|qt""")),
+    KROGER(
+        "Kroger",
+        "kroger",
+        brand("""kroger(?:\s+marketplace)?|(?:king\s+soopers|fry['’]?s|dillons|ralphs|smith['’]?s|fred\s+meyer|harris\s+teeter|qfc)\s+fuel"""),
+    ),
+    SHELL("Shell", "shell", brand("""shell""")),
+    EXXON_MOBIL("Exxon and Mobil", "exxon_mobil", brand("""exxon\s*mobil|exxon|mobil""")),
+    BP("BP and Amoco", "bp", brand("""bp|amoco""")),
+    CHEVRON_TEXACO("Chevron and Texaco", "chevron_texaco", brand("""chevron\s*texaco|chevron|texaco""")),
+    CIRCLE_K("Circle K", "circle_k", brand("""circle[\s-]*k""")),
+    MURPHY_USA("Murphy USA", "murphy_usa", brand("""murphy\s+(?:usa|express)""")),
+    RACETRAC("RaceTrac", "racetrac", brand("""race\s*trac""")),
     ;
 
     fun matches(stationName: String): Boolean = names.containsMatchIn(stationName)
@@ -31,23 +49,32 @@ enum class DiscountBrand(
 }
 
 /**
- * One program the driver is in: a listed [brand], or another station by [name] (the station's name contains it), with
- * [cents] off each gallon (each litre outside the US: the unit the price is in) and whether diesel gets it too
- * ([allFuels]). No membership number or account: only that the driver is in it, and how much it takes off.
+ * One program the driver is in: a listed [brand], or another station by [name] (the station's name, or the card's
+ * "<name> on <street>", contains it), with [cents] off each US gallon and whether diesel gets it too ([allFuels], on
+ * unless the driver turns it off: Scott, 13 Nov). No membership number or account: only that the driver is in it, and
+ * how much it takes off.
  */
 data class FuelDiscount(
     val brand: DiscountBrand?,
     val name: String,
     val cents: Int,
-    val allFuels: Boolean = false,
+    val allFuels: Boolean = true,
 ) {
     /** What the settings row and the logs call it. */
     val label: String get() = brand?.label ?: name
 
-    /** Whether a station of this name is in the program. */
-    fun matches(stationName: String): Boolean =
-        brand?.matches(stationName)
-            ?: (name.isNotBlank() && Regex("""\b${Regex.escape(name.trim())}\b""", RegexOption.IGNORE_CASE).containsMatchIn(stationName))
+    /**
+     * Whether [station] is in the program: a listed brand by its name, another station by the name typed, found in the
+     * station's name or the card's title with punctuation-tolerant edges, so "Gas (Main St)" or a name typed with its
+     * street both match (the Mac's 13 Nov review, item 5).
+     */
+    fun matches(station: Station): Boolean {
+        if (brand != null) return brand.matches(station.name)
+        val typed = name.trim()
+        if (typed.isEmpty()) return false
+        val word = Regex("""(?<![\p{L}\p{N}])${Regex.escape(typed)}(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE)
+        return word.containsMatchIn(station.name) || word.containsMatchIn(StationText.title(station))
+    }
 }
 
 /** Taking the driver's discounts off a station's posted price, and keeping them as one preference string. */
@@ -56,17 +83,25 @@ object FuelDiscounts {
     private const val SEP_ITEM = '\n'
     private const val SEP_FIELD = '\t'
 
+    private const val US_DOLLARS = "USD"
+
     /** The largest amount a program takes off, in cents: a typo of more is refused by the settings row. */
     const val MAX_CENTS = 200
 
-    /** The program [station] is in for [fuel], the largest if more than one names it; null when none. */
+    /**
+     * The program [station] is in for [fuel], the largest if more than one names it; null when none. Only on a US price per
+     * gallon (USD): the programs are cents off a US gallon, and a Canadian station's price per litre would show a discount
+     * it doesn't honour (the Mac's 13 Nov review, item 6).
+     */
     fun forStation(
         station: Station,
         fuel: CarFuel,
         discounts: List<FuelDiscount>,
     ): FuelDiscount? =
         discounts
-            .filter { it.cents > 0 && (it.allFuels || fuel.kind == CarFuel.Kind.GASOLINE) && it.matches(station.name) }
+            .takeIf { station.priceFor(fuel)?.currency == US_DOLLARS }
+            .orEmpty()
+            .filter { it.cents > 0 && (it.allFuels || fuel.kind == CarFuel.Kind.GASOLINE) && it.matches(station) }
             .maxByOrNull { it.cents }
 
     /** [posted] less [discount], never below zero; [posted] itself without one. */
