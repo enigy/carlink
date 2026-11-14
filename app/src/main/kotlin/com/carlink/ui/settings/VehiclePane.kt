@@ -125,7 +125,7 @@ private fun GpsGroup(
 
 /** The engine type the iPhone always gets: the car's own, or the driver's pick for a car that reports none or the wrong one. */
 @Composable
-private fun EngineGroup(
+internal fun EngineGroup(
     store: VehicleStore,
     engine: EngineChoice,
     readings: VehicleState,

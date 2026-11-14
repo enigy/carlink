@@ -68,7 +68,7 @@ internal fun PhonesPane(
         Column {
             PaneHeader(title = "Phones")
             AdapterNameLine(adapterName)
-            if (live.devices.size >= 2) CallOrderLine()
+            if (live.devices.size >= CALL_ORDER_FROM) CallOrderLine()
         }
         if (connected != null) {
             ConnectedPhoneCard(
@@ -152,12 +152,15 @@ private fun profileOpener(
         }
     }
 
+/** The Phones page explains the call order ([CallOrderLine]) only with an order to explain: two phones or more. */
+internal const val CALL_ORDER_FROM = 2
+
 /**
  * The call order, from two phones (Scott, 13 Nov). No number: the first round gives each phone about 3.75 s on an adapter
  * with OCBM's connect-speed change, and 5.12 s on 2.0.0 (the Mac, 13 Nov).
  */
 @Composable
-private fun CallOrderLine() {
+internal fun CallOrderLine() {
     Text(
         "Phones are tried in this order. If the first phone isn’t available, the adapter waits a few seconds " +
             "for it before trying the next phone.",

@@ -13,6 +13,9 @@ object DisplayOff {
     /** How long the display stays off before the session ends. */
     const val GRACE_MS = 30_000L
 
+    /** The wait in use: [GRACE_MS], or a debug build's bench override (the Mac's bench hooks of 13 Nov: fast wakes). */
+    @Volatile var graceMs = GRACE_MS
+
     /**
      * After the display comes back: let a re-powered USB port settle before connecting (Carlink2's WAKE_SETTLE_MS). Only
      * when the adapter is not listed, or opening it at once failed (CarlinkManager.wakeConnect).

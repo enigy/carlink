@@ -1948,6 +1948,15 @@ class CarlinkManager(
             Result.success(saved.joinToString(" and "))
         }
 
+    /** The last [lines] of the box's `/tmp/box.log`, over the live link as Save Logs pulls it; null with no adapter. Blocks. */
+    fun boxLogTail(lines: Int): List<String>? =
+        client
+            ?.pullFile(BOX_LOG_PATH)
+            ?.getOrNull()
+            ?.toString(Charsets.UTF_8)
+            ?.lines()
+            ?.takeLast(lines)
+
     /** The box's logs into [saved]: box.log (a failure fails Save Logs), then each daemon's, best effort. */
     private fun saveBoxLogs(
         c: OcbmClient,
@@ -2678,16 +2687,16 @@ class CarlinkManager(
         wakeAtMs = 0L
         logInfo(
             "[POWER] display OFF ($source): state=$state driving=$isDriving call=${callActive()}; the session ends in " +
-                "${DisplayOff.GRACE_MS / 1000} s unless the display comes back",
+                "${DisplayOff.graceMs / 1000} s unless the display comes back",
             tag = Logger.Tags.USB,
         )
         displayOffJob?.cancel()
         displayOffJob =
             scope.launch {
                 while (true) {
-                    delay(DisplayOff.GRACE_MS)
+                    delay(DisplayOff.graceMs)
                     val decision = DisplayOff.atGraceEnd(displayOn, isDriving, callActive())
-                    logInfo("[POWER] display off ${DisplayOff.GRACE_MS / 1000} s: state=$state driving=$isDriving call=${callActive()} -> $decision", tag = Logger.Tags.USB)
+                    logInfo("[POWER] display off ${DisplayOff.graceMs / 1000} s: state=$state driving=$isDriving call=${callActive()} -> $decision", tag = Logger.Tags.USB)
                     when (decision) {
                         DisplayOff.Decision.DISPLAY_ON -> return@launch
                         DisplayOff.Decision.KEEP_DRIVING, DisplayOff.Decision.KEEP_CALL -> continue
@@ -4004,6 +4013,12 @@ class CarlinkManager(
         val j = i + delta
         if (i < 0 || j !in order.indices) return
         order[i] = order[j].also { order[j] = order[i] }
+        setPhoneOrder(order)
+    }
+
+    /** The whole reconnect order, as the Phones page shows it and the box is told ([movePhone]; the bench's order hook). */
+    fun setPhoneOrder(order: List<String>) {
+        if (order.isEmpty()) return
         logInfo("[DEVICE_MGMT] Priority -> ${order.joinToString()}", tag = Logger.Tags.ADAPTR)
         knownStore?.update { it.copy(priority = order, preferredMac = order.first()) }
         rebuildDeviceList()
