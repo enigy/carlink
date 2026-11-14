@@ -1387,7 +1387,7 @@ class CarlinkManager(
                         stopImpl()
                         // Only after a display OFF cut the wake's own start ([wakeCut]): the display may be on again already (a
                         // quick off/on), and its ON found CONNECTING and did nothing. Never after Close app or a handover.
-                        val again = wakeCut && displayOn && !released
+                        val again = restartAfterUndo(wakeCut, displayOn, released)
                         wakeCut = false
                         if (again) scope.launch { startIfDisconnected("Display on, after a cancelled start") }
                     },

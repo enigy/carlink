@@ -101,6 +101,14 @@ class WakeConnectTest {
     }
 
     @Test
+    fun `an undone start starts again only after a display OFF cut the wake, with the display back on`() {
+        assertTrue(restartAfterUndo(wakeCut = true, displayOn = true, released = false))
+        assertFalse("Close app or a handover cancelled it", restartAfterUndo(wakeCut = false, displayOn = true, released = false))
+        assertFalse("the display is still off", restartAfterUndo(wakeCut = true, displayOn = false, released = false))
+        assertFalse("a released manager", restartAfterUndo(wakeCut = true, displayOn = true, released = true))
+    }
+
+    @Test
     fun `the preload line is logged once per session, and on a change`() {
         val note = PreloadNote()
         assertEquals("[ADAPTER] boot radio preload on", note.line("on"))

@@ -28,3 +28,13 @@ fun startNeedsUndo(
     connecting: Boolean,
     subscribed: Boolean,
 ): Boolean = connecting && !subscribed
+
+/**
+ * Whether an undone start starts again: only when a display OFF cut the wake's own start ([wakeCut]) and the display is
+ * on again by now, never after Close app or a handover (which also cancel a start), and never on a released manager.
+ */
+fun restartAfterUndo(
+    wakeCut: Boolean,
+    displayOn: Boolean,
+    released: Boolean,
+): Boolean = wakeCut && displayOn && !released
