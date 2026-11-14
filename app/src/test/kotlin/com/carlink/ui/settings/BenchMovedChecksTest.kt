@@ -54,7 +54,7 @@ class BenchMovedChecksTest {
 
     @Test
     fun the_call_order_line_from_two_phones_with_no_fixed_wait() {
-        // The page's own header, rendered with the phone count the page passes it (the Mac's 13 Nov review, CB-9).
+        // PhonesHeader as the page uses it, with a count this test sets: the page's own count (live.devices.size) isn't rendered here.
         var phones by mutableIntStateOf(1)
         compose.setContent { MaterialTheme { PhonesHeader("CarLink-FD6C", phones) } }
         compose.onNodeWithText(CALL_ORDER).assertDoesNotExist()
