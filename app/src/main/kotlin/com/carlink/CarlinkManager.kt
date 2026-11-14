@@ -140,6 +140,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -1455,7 +1456,8 @@ class CarlinkManager(
 
     private val handover =
         AdapterHandover(
-            stopSession = { lifecycleMutex.withLock { withContext(Dispatchers.IO) { stopImpl() } } },
+            // On the manager's scope: a pane left mid-handover can't skip the stop after the start was cancelled.
+            stopSession = { scope.async { lifecycleMutex.withLock { withContext(Dispatchers.IO) { stopImpl() } } }.await() },
             bridgeHandOver = { BridgeAccessHub.handOver(context, it) },
             bridgeTakeBack = { BridgeAccessHub.takeBack(context) },
             // On this manager's scope, never the caller's: a UI scope cancelled mid-start would strand CONNECTING.
@@ -1469,6 +1471,7 @@ class CarlinkManager(
     suspend fun handOverAdapter(packageName: String): String? {
         cancelReconnect()
         wakeCut = false
+        wakeConnectJob?.cancel()
         startingJob?.let { if (it.isActive) it.cancel() }
         logInfo("[BRIDGE_ACCESS] handing the adapter to $packageName", tag = Logger.Tags.USB)
         val refusal = handover.handOver(packageName)
@@ -1896,16 +1899,21 @@ class CarlinkManager(
     suspend fun disconnect() {
         cancelReconnect()
         wakeCut = false
+        wakeConnectJob?.cancel() // nor may the wake start a session after Close app, or arm wakeCut again
         startingJob?.let { job ->
             if (job.isActive) logInfo("[LIFECYCLE] disconnect(): cancelling the start in flight", tag = Logger.Tags.ADAPTR)
             job.cancel()
         }
-        lifecycleMutex.withLock {
-            withContext(Dispatchers.IO) {
-                logInfo("[LIFECYCLE] disconnect() — user-initiated", tag = Logger.Tags.ADAPTR)
-                stopImpl()
-            }
-        }
+        // On the manager's scope, awaited: a caller cancelled now (a pane left) can't skip the stop after the start was cut.
+        scope
+            .async {
+                lifecycleMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        logInfo("[LIFECYCLE] disconnect() — user-initiated", tag = Logger.Tags.ADAPTR)
+                        stopImpl()
+                    }
+                }
+            }.await()
     }
 
     /**
@@ -2247,9 +2255,9 @@ class CarlinkManager(
      */
     suspend fun cleanSlateReset(): Boolean {
         if (released) return false
-        return lifecycleMutex.withLock {
-            withContext(Dispatchers.IO) { cleanSlate.run() }
-        }
+        // On the manager's scope, the caller only awaiting it: a Troubleshoot pane left mid-reset cancelled the reset's
+        // own coroutine, so the session it ended never came back (the 13 Nov lifecycle review). release() still stops it.
+        return scope.async { lifecycleMutex.withLock { withContext(Dispatchers.IO) { cleanSlate.run() } } }.await()
     }
 
     /**
@@ -2663,7 +2671,9 @@ class CarlinkManager(
     fun onDisplayOff(source: String) {
         if (released || !displayOn) return
         displayOn = false
-        wakeCut = wakeConnectJob?.isActive == true
+        // Only ever set here: a second OFF while the cut start still runs (its job then reads inactive) must not clear it,
+        // or the undo never restarts (the 13 Nov lifecycle review). The undo, SUBSCRIBE, Close app and a handover clear it.
+        if (wakeConnectJob?.isActive == true) wakeCut = true
         wakeConnectJob?.cancel()
         wakeAtMs = 0L
         logInfo(
@@ -2716,7 +2726,16 @@ class CarlinkManager(
         dormantForDisplayOff = false
         reconnects.reset()
         logInfo("[POWER] display ON ($source): state=$state dormant=$wasDormant", tag = Logger.Tags.USB)
-        if (state != State.DISCONNECTED) return
+        if (state != State.DISCONNECTED) {
+            // A display OFF cut the wake (its start or its settle), or the display-off teardown is still ending the session:
+            // queue a start behind it on lifecycleMutex. It starts only from DISCONNECTED, so a session that came up is left
+            // alone; another OFF cancels it while it waits (the 13 Nov lifecycle review).
+            if (queueStartOnDisplayOn(disconnected = false, wakeCut = wakeCut, wasDormant = wasDormant)) {
+                wakeConnectJob?.cancel()
+                wakeConnectJob = scope.launch { startIfDisconnected("Display on, after a cut wake or the display-off teardown") }
+            }
+            return
+        }
         wakeConnectJob?.cancel()
         wakeAtMs = SystemClock.elapsedRealtime()
         wakeConnectJob = scope.launch { wakeConnect() }

@@ -109,6 +109,14 @@ class WakeConnectTest {
     }
 
     @Test
+    fun `a display ON behind a cut wake or the display-off teardown queues a start, else nothing`() {
+        assertTrue(queueStartOnDisplayOn(disconnected = false, wakeCut = true, wasDormant = false))
+        assertTrue("the grace's teardown still running", queueStartOnDisplayOn(disconnected = false, wakeCut = false, wasDormant = true))
+        assertFalse("a session that is just up", queueStartOnDisplayOn(disconnected = false, wakeCut = false, wasDormant = false))
+        assertFalse("DISCONNECTED takes the wake path itself", queueStartOnDisplayOn(disconnected = true, wakeCut = true, wasDormant = true))
+    }
+
+    @Test
     fun `the preload line is logged once per session, and on a change`() {
         val note = PreloadNote()
         assertEquals("[ADAPTER] boot radio preload on", note.line("on"))

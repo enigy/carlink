@@ -22,6 +22,9 @@ class DisplayPowerWatcher(
 ) {
     private var lastOn = true
 
+    /** Whether the display is on, as last seen: a manager built while it is off is told so (MainActivity). */
+    val isOn: Boolean get() = lastOn
+
     private val listener =
         object : DisplayManager.DisplayListener {
             override fun onDisplayAdded(displayId: Int) = Unit
@@ -68,6 +71,8 @@ class DisplayPowerWatcher(
             context.registerReceiver(receiver, filter)
         }
         logInfo("[POWER] watching the head unit's display (on=$lastOn)", tag = "MAIN")
+        // Off already: say so once, as the listener would have, so a manager never starts out believing it is on.
+        if (!lastOn) onOff("display off at start")
     }
 
     fun unregister() {

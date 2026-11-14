@@ -38,3 +38,14 @@ fun restartAfterUndo(
     displayOn: Boolean,
     released: Boolean,
 ): Boolean = wakeCut && displayOn && !released
+
+/**
+ * Whether a display ON that finds Carlink not DISCONNECTED queues a start behind what is running: only when a display OFF
+ * cut the wake ([wakeCut]) or the display-off teardown is still ending the session ([wasDormant]). The queued start runs
+ * only from DISCONNECTED, so a session that came up is left alone (the 13 Nov lifecycle review).
+ */
+fun queueStartOnDisplayOn(
+    disconnected: Boolean,
+    wakeCut: Boolean,
+    wasDormant: Boolean,
+): Boolean = !disconnected && (wakeCut || wasDormant)
