@@ -953,6 +953,9 @@ class CarlinkManager(
 
     @Volatile private var dormantForDisplayOff = false
 
+    /** Dormant since the display stayed off ([endForDisplayOff]) until it is on again: the bench's flicker starts from here. */
+    val dormant: Boolean get() = dormantForDisplayOff
+
     @Volatile private var wakeConnectJob: Job? = null
 
     /** When the display came on, for the first video's wake line ([markStreaming]); 0 when no wake is being timed. */
@@ -1948,14 +1951,23 @@ class CarlinkManager(
             Result.success(saved.joinToString(" and "))
         }
 
-    /** The last [lines] of the box's `/tmp/box.log`, over the live link as Save Logs pulls it; null with no adapter. Blocks. */
-    fun boxLogTail(lines: Int): List<String>? =
-        client
-            ?.pullFile(BOX_LOG_PATH)
-            ?.getOrNull()
-            ?.toString(Charsets.UTF_8)
-            ?.lines()
-            ?.takeLast(lines)
+    /**
+     * The last [lines] of a file on the box ([path], e.g. `/tmp/box.log`), over the live link as Save Logs pulls it. A
+     * failure says why: no adapter connected, or the pull's own error. Blocks. Debug builds' bench hooks.
+     */
+    fun boxFileTail(
+        path: String,
+        lines: Int,
+    ): Result<List<String>> {
+        val c = client ?: return Result.failure(java.io.IOException("no adapter connected"))
+        return c.pullFile(path).map { it.toString(Charsets.UTF_8).lines().takeLast(lines) }
+    }
+
+    /** Write [bytes] to [path] on the box over CH_FILE; a failure says why. Blocks. Debug builds' bench hooks. */
+    fun pushToBox(
+        path: String,
+        bytes: ByteArray,
+    ): Result<Unit> = client?.pushFile(path, bytes) ?: Result.failure(java.io.IOException("no adapter connected"))
 
     /** The box's logs into [saved]: box.log (a failure fails Save Logs), then each daemon's, best effort. */
     private fun saveBoxLogs(
@@ -2687,7 +2699,7 @@ class CarlinkManager(
         wakeAtMs = 0L
         logInfo(
             "[POWER] display OFF ($source): state=$state driving=$isDriving call=${callActive()}; the session ends in " +
-                "${DisplayOff.graceMs / 1000} s unless the display comes back",
+                "${DisplayOff.graceMs} ms unless the display comes back",
             tag = Logger.Tags.USB,
         )
         displayOffJob?.cancel()
@@ -2696,7 +2708,7 @@ class CarlinkManager(
                 while (true) {
                     delay(DisplayOff.graceMs)
                     val decision = DisplayOff.atGraceEnd(displayOn, isDriving, callActive())
-                    logInfo("[POWER] display off ${DisplayOff.graceMs / 1000} s: state=$state driving=$isDriving call=${callActive()} -> $decision", tag = Logger.Tags.USB)
+                    logInfo("[POWER] display off ${DisplayOff.graceMs} ms: state=$state driving=$isDriving call=${callActive()} -> $decision", tag = Logger.Tags.USB)
                     when (decision) {
                         DisplayOff.Decision.DISPLAY_ON -> return@launch
                         DisplayOff.Decision.KEEP_DRIVING, DisplayOff.Decision.KEEP_CALL -> continue

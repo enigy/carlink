@@ -364,7 +364,10 @@ class AdapterUpdateSession(
                 return
             }
         synchronized(lock) {
-            if (phaseState.value is UpdatePhase.Updating) return
+            if (phaseState.value is UpdatePhase.Updating) {
+                logWarn("[bench] update refused: an update is already in flight (${phaseState.value})", tag = Logger.Tags.ADAPTR)
+                return
+            }
             logWarn("[bench] update to ${pkg.version} from a bench file", tag = Logger.Tags.ADAPTR)
             phaseState.value = UpdatePhase.Downloading(pkg.version, 0, 0)
             job?.cancel()

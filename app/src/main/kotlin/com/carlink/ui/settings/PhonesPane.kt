@@ -65,11 +65,7 @@ internal fun PhonesPane(
     val adapterName = live.adapterName.ifEmpty { carlinkManager.adapterName }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        Column {
-            PaneHeader(title = "Phones")
-            AdapterNameLine(adapterName)
-            if (live.devices.size >= CALL_ORDER_FROM) CallOrderLine()
-        }
+        PhonesHeader(adapterName, phones = live.devices.size)
         if (connected != null) {
             ConnectedPhoneCard(
                 phone = connected,
@@ -152,22 +148,32 @@ private fun profileOpener(
         }
     }
 
-/** The Phones page explains the call order ([CallOrderLine]) only with an order to explain: two phones or more. */
+/** The Phones page explains the call order ([PhonesHeader]) only with an order to explain: two phones or more. */
 internal const val CALL_ORDER_FROM = 2
 
 /**
- * The call order, from two phones (Scott, 13 Nov). No number: the first round gives each phone about 3.75 s on an adapter
- * with OCBM's connect-speed change, and 5.12 s on 2.0.0 (the Mac, 13 Nov).
+ * The page's title, the name to pair with and, from two [phones] ([CALL_ORDER_FROM]), the call order (Scott, 13 Nov). No
+ * number of seconds: the first round gives each phone about 3.75 s on an adapter with OCBM's connect-speed change, and
+ * 5.12 s on 2.0.0 (the Mac, 13 Nov).
  */
 @Composable
-internal fun CallOrderLine() {
-    Text(
-        "Phones are tried in this order. If the first phone isn’t available, the adapter waits a few seconds " +
-            "for it before trying the next phone.",
-        style = SettingsStyle.RowSubtitle,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 8.dp),
-    )
+internal fun PhonesHeader(
+    adapterName: String,
+    phones: Int,
+) {
+    Column {
+        PaneHeader(title = "Phones")
+        AdapterNameLine(adapterName)
+        if (phones >= CALL_ORDER_FROM) {
+            Text(
+                "Phones are tried in this order. If the first phone isn’t available, the adapter waits a few seconds " +
+                    "for it before trying the next phone.",
+                style = SettingsStyle.RowSubtitle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+    }
 }
 
 @Composable

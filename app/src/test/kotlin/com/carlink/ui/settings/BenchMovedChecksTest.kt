@@ -2,6 +2,9 @@ package com.carlink.ui.settings
 
 import android.content.Context
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -51,12 +54,18 @@ class BenchMovedChecksTest {
 
     @Test
     fun the_call_order_line_from_two_phones_with_no_fixed_wait() {
-        assertEquals("one phone has no order to explain", 2, CALL_ORDER_FROM)
-        compose.setContent { MaterialTheme { CallOrderLine() } }
-        compose
-            .onNodeWithText(
-                "Phones are tried in this order. If the first phone isn’t available, the adapter waits a few seconds for it " +
-                    "before trying the next phone.",
-            ).assertExists()
+        // The page's own header, rendered with the phone count the page passes it (the Mac's 13 Nov review, CB-9).
+        var phones by mutableIntStateOf(1)
+        compose.setContent { MaterialTheme { PhonesHeader("CarLink-FD6C", phones) } }
+        compose.onNodeWithText(CALL_ORDER).assertDoesNotExist()
+        phones = 2
+        compose.waitForIdle()
+        compose.onNodeWithText(CALL_ORDER).assertExists()
+    }
+
+    private companion object {
+        const val CALL_ORDER =
+            "Phones are tried in this order. If the first phone isn’t available, the adapter waits a few seconds for it before " +
+                "trying the next phone."
     }
 }
