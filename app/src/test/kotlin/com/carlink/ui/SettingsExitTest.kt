@@ -57,7 +57,7 @@ class SettingsExitTest {
     @Test
     fun `the question names the settings and what a reset costs`() {
         assertEquals(
-            "Driver's seat takes effect at a new connection. Reset now to apply it (CarPlay is gone for about 10 seconds), " +
+            "Driver's seat takes effect at a new connection. Reset now to apply it (CarPlay is gone for about 20 seconds), " +
                 "or keep it saved for the next connection.",
             SettingsExit.question(listOf(SessionSettings.DRIVER_SEAT)),
         )
