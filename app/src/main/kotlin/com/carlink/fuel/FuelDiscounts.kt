@@ -2,9 +2,12 @@ package com.carlink.fuel
 
 import java.util.Locale
 
-/** What may follow a brand at the start of a station's name: the end, a number or sign, or a word stations add to it. */
+/**
+ * What may follow a brand at the start of a station's name: the end, a number or sign, or a word stations add to it. Not an
+ * apostrophe: "Shell's Garage" is someone's garage (the Mac's 14 Nov review, E2).
+ */
 private const val BRAND_TAIL =
-    """(?=\s*$|\s*[^\p{L}\s]|\s+(?:gas|gasoline|station|food|mart|store|express|fuel|center|centre|select|stop|travel|plaza|truck|connect)\b)"""
+    """(?=\s*$|\s*[^\p{L}\s'’]|\s+(?:gas|gasoline|station|food|mart|store|express|fuel|center|centre|select|stop|travel|plaza|truck|connect)\b)"""
 
 /**
  * A brand's [names] (alternatives), matched at the start of a station's name and followed by [BRAND_TAIL]. File-level, not
@@ -18,19 +21,24 @@ private fun brand(names: String) = Regex("""^\s*(?:$names)$BRAND_TAIL""", RegexO
  * member price. Matched on the source's station name, the only brand the sources give: the brand must START the name and
  * be followed by nothing, a number or sign, or a word stations add ("Gas", "Station", "Food Mart", "Express"), so an
  * ordinary word never takes a discount the pump won't give ("Murphy's Market", "Sea Shell Market", "Shell Rock Fuel";
- * the Mac's 13 Nov review). Kroger counts at its banners' fuel centers too (Scott, 13 Nov), matched as "<banner> Fuel"
- * so a surname ("Smith's Auto Service", "Fry's Electronics") never does.
+ * the Mac's 13 Nov review). Kroger counts at its banners' fuel centers too (Scott, 13 Nov), matched only as "<banner> Fuel
+ * Center" (or "<banner> Marketplace Fuel Center"), so a surname ("Smith's Auto Service", "Fry's Fuel & Food") never does.
+ * "QT" alone counts only as the whole name or with a store number: "QT Mart" may be anyone's (the Mac's 14 Nov review).
  */
 enum class DiscountBrand(
     val label: String,
     val code: String,
     private val names: Regex,
 ) {
-    QUIKTRIP("QuikTrip", "quiktrip", brand("""quik\s*trip|qt""")),
+    QUIKTRIP("QuikTrip", "quiktrip", Regex("""^\s*(?:quik\s*trip$BRAND_TAIL|qt\s*(?:#\s*)?\d*\s*$)""", RegexOption.IGNORE_CASE)),
     KROGER(
         "Kroger",
         "kroger",
-        brand("""kroger(?:\s+marketplace)?|(?:king\s+soopers|fry['’]?s|dillons|ralphs|smith['’]?s|fred\s+meyer|harris\s+teeter|qfc)\s+fuel"""),
+        brand(
+            """kroger(?:\s+marketplace)?|""" +
+                """(?:king\s+soopers|fry['’]?s|dillon['’]?s|ralph['’]?s|smith['’]?s|fred\s+meyer|harris\s+teeter|qfc)""" +
+                """(?:\s+marketplace)?\s+fuel\s+cent(?:er|re)""",
+        ),
     ),
     SHELL("Shell", "shell", brand("""shell""")),
     EXXON_MOBIL("Exxon and Mobil", "exxon_mobil", brand("""exxon\s*mobil|exxon|mobil""")),
@@ -64,17 +72,21 @@ data class FuelDiscount(
     val label: String get() = brand?.label ?: name
 
     /**
-     * Whether [station] is in the program: a listed brand by its name, another station by the name typed, found in the
-     * station's name or the card's title with punctuation-tolerant edges, so "Gas (Main St)" or a name typed with its
-     * street both match (the Mac's 13 Nov review, item 5).
+     * Whether [station] is in the program: a listed brand by its name; another station by the name typed, found in the
+     * station's name with punctuation-tolerant edges ("Gas (Main St)"), or the card's whole "<name> on <street>" typed
+     * from its start. Never in a street alone: "76" would match "Shell on CA-76" (the Mac's 14 Nov review, E1). The two
+     * apostrophes count as one ("Casey's", "Casey’s").
      */
     fun matches(station: Station): Boolean {
         if (brand != null) return brand.matches(station.name)
-        val typed = name.trim()
-        if (typed.isEmpty()) return false
-        val word = Regex("""(?<![\p{L}\p{N}])${Regex.escape(typed)}(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE)
-        return word.containsMatchIn(station.name) || word.containsMatchIn(StationText.title(station))
+        val typed = Regex.escape(apostrophes(name.trim()))
+        if (name.isBlank()) return false
+        val inName = Regex("""(?<![\p{L}\p{N}])$typed(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE)
+        val asTitle = Regex("""^\s*$typed(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE)
+        return inName.containsMatchIn(apostrophes(station.name)) || asTitle.containsMatchIn(apostrophes(StationText.title(station)))
     }
+
+    private fun apostrophes(s: String) = s.replace('’', '\'')
 }
 
 /** Taking the driver's discounts off a station's posted price, and keeping them as one preference string. */
@@ -87,6 +99,24 @@ object FuelDiscounts {
 
     /** The largest amount a program takes off, in cents: a typo of more is refused by the settings row. */
     const val MAX_CENTS = 200
+
+    /** The longest name another station may have, typed or picked. */
+    const val MAX_NAME = 40
+
+    /** What a source calls a station with no name (GooglePlaces, OverpassSource): never a program's name. */
+    const val UNNAMED = "Fuel station"
+
+    /**
+     * The names the "Another station" dialog offers from the stations around: not a listed brand, not the placeholder
+     * for an unnamed station (which would match every one of them), not without a letter, and at most [MAX_NAME] long
+     * (the Mac's 14 Nov review, E4).
+     */
+    fun pickable(stations: List<Station>): List<String> =
+        stations
+            .map { it.name.trim() }
+            .filter { n -> n.any(Char::isLetter) && !n.equals(UNNAMED, ignoreCase = true) && DiscountBrand.entries.none { it.matches(n) } }
+            .map { it.take(MAX_NAME).trim() }
+            .distinct()
 
     /**
      * The program [station] is in for [fuel], the largest if more than one names it; null when none. Only on a US price per

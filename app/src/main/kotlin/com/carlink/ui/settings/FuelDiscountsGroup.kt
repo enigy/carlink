@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -78,7 +80,8 @@ internal fun FuelDiscountsGroup(store: VehicleStore) {
                 // Keyed by the brand, or the name for another station; 0 cents is "not a member" and drops it.
                 val rest = discounts.filterNot { it.sameProgram(start) || it.sameProgram(saved) }
                 store.setFuelDiscounts(if (saved.cents > 0) rest + saved else rest)
-                logWarn("[UI_ACTION] Fuel discount ${saved.label} -> ${if (saved.cents > 0) FuelDiscounts.describe(saved) else "none"}", tag = "UI")
+                // A listed brand by name; another station without its name, which can pin a place (the Mac's 14 Nov review, E5).
+                logWarn("[UI_ACTION] Fuel discount ${saved.brand?.label ?: "another station"} -> ${if (saved.cents > 0) FuelDiscounts.describe(saved) else "none"}", tag = "UI")
                 editing = null
             },
             onDismiss = { editing = null },
@@ -123,11 +126,12 @@ private fun DiscountDialog(
         onDismissRequest = onDismiss,
         title = { Text(start.brand?.label ?: "Another station") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Scrolls: with the picks, the cents and Diesel too could fall off a short head-unit screen (E6).
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (start.brand == null) {
                     OutlinedTextField(
                         value = name,
-                        onValueChange = { name = it.take(MAX_NAME) },
+                        onValueChange = { name = it.take(FuelDiscounts.MAX_NAME) },
                         singleLine = true,
                         label = { Text("The station's name, without the street") },
                     )
@@ -153,15 +157,11 @@ private fun DiscountDialog(
     )
 }
 
-private const val MAX_NAME = 40
 private const val MAX_PICKS = 4
 
 /** The names of the stations around, from the Fuel card's last lookup, not already a listed brand: the picks for another station. */
 @Composable
 private fun nearbyNames(): List<String> {
     val view by FuelStations.view.collectAsState()
-    return view.stations
-        .map { it.name.trim() }
-        .filter { n -> n.isNotEmpty() && DiscountBrand.entries.none { it.matches(n) } }
-        .distinct()
+    return FuelDiscounts.pickable(view.stations)
 }

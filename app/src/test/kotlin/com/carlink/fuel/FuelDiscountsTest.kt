@@ -35,7 +35,7 @@ class FuelDiscountsTest {
 
     @Test
     fun `each listed brand matches its own station names, joined and hyphenated ones too`() {
-        assertEquals(5, matches(DiscountBrand.QUIKTRIP, "QuikTrip", "QuikTrip #712", "QT", "QT 1023", "Quik Trip").size)
+        assertEquals(6, matches(DiscountBrand.QUIKTRIP, "QuikTrip", "QuikTrip #712", "QT", "QT 1023", "QT #45", "Quik Trip").size)
         assertEquals(4, matches(DiscountBrand.SHELL, "Shell", "Shell #42", "Shell Gas Station", "Shell (Main St)").size)
         assertEquals(4, matches(DiscountBrand.EXXON_MOBIL, "Exxon", "Mobil", "ExxonMobil", "Exxon Mobil Food Mart").size)
         assertEquals(3, matches(DiscountBrand.BP, "BP", "BP Connect", "Amoco").size)
@@ -52,6 +52,9 @@ class FuelDiscountsTest {
         assertEquals(emptyList<String>(), matches(DiscountBrand.QUIKTRIP, "Kwik Trip", "QT Kitchens", "Cutie's Gas"))
         assertEquals(emptyList<String>(), matches(DiscountBrand.EXXON_MOBIL, "Automobile Service", "Mobile Gas"))
         assertEquals(emptyList<String>(), matches(DiscountBrand.BP, "BPX Fuel"))
+        // The 14 Nov review, E2: a possessive is someone's, and "QT" plus a word may be anyone's.
+        assertEquals(emptyList<String>(), matches(DiscountBrand.SHELL, "Shell's Garage", "Shell’s Garage"))
+        assertEquals(emptyList<String>(), matches(DiscountBrand.QUIKTRIP, "QT's Liquor", "QT Mart", "QT Food Mart", "QT Express", "QT Gas"))
         assertFalse(
             "not listed: the posted price is the member price",
             DiscountBrand.entries.any { it.matches("Costco Gasoline") || it.matches("Sam's Club") },
@@ -71,14 +74,34 @@ class FuelDiscountsTest {
                 "Dillons Fuel Center",
                 "Ralphs Fuel Center",
                 "Smith's Fuel Center",
-                "Fred Meyer Fuel",
+                "Fred Meyer Fuel Center",
+                "Fry's Marketplace Fuel Center",
+                "Ralph's Fuel Center",
+                "Dillon's Fuel Center",
                 "Harris Teeter Fuel Center",
                 "QFC Fuel Center",
             )
         assertEquals(fuel, matches(DiscountBrand.KROGER, *fuel.toTypedArray()))
         assertEquals(
             emptyList<String>(),
-            matches(DiscountBrand.KROGER, "Smith's Auto Service", "Fry's Electronics", "Ralphs", "Dillons Towing", "Fred Meyer Jewelers"),
+            matches(
+                DiscountBrand.KROGER,
+                "Smith's Auto Service",
+                "Fry's Electronics",
+                "Ralphs",
+                "Dillons Towing",
+                "Fred Meyer Jewelers",
+                // Not "<banner> Fuel Center", as decided (E2).
+                "Smith's Fuel",
+                "Smith's Fuel Stop",
+                "Smith's Fuel & Food",
+                "Smiths Fuel Mart",
+                "Fry's Fuel Stop",
+                "Frys Fuel",
+                "Fry's Fuel & Food",
+                "Ralphs Fuel & Propane",
+                "Fred Meyer Fuel",
+            ),
         )
     }
 
@@ -97,8 +120,9 @@ class FuelDiscountsTest {
 
     @Test
     fun `a tie in the paid price goes to the nearer station (item 4)`() {
-        // Shell $2.889 at 0.5 mi, QuikTrip $2.989 less 10 cents at 4 mi: the same $2.889, so the nearer one first.
-        val stations = listOf(st("QuikTrip", 6.4, 2.989), st("Shell", 0.8, 2.889))
+        // QuikTrip $2.502 less 10 cents at 4 mi is 2.4019999999999997 as a double, Shell $2.402 at 0.5 mi is 2.402: the same
+        // price on the card, so the nearer one first (a pair the plain comparator orders the other way: E3).
+        val stations = listOf(st("QuikTrip", 6.4, 2.502), st("Shell", 0.8, 2.402))
         val rows =
             StationList.rows(stations, regular, GeoPoint(0.0, 0.0), null, cheapestFirst = true, discounts = listOf(FuelDiscount(DiscountBrand.QUIKTRIP, "", 10)))
         assertEquals(listOf("Shell", "QuikTrip"), rows.map { it.station.name })
@@ -131,6 +155,8 @@ class FuelDiscountsTest {
         val shell = FuelDiscount(DiscountBrand.SHELL, "", 10)
         assertNull("a Canadian price per litre", FuelDiscounts.forStation(st("Shell", 1.0, 1.459, currency = "CAD"), regular, listOf(shell)))
         assertEquals(shell, FuelDiscounts.forStation(st("Shell", 1.0, 2.989), regular, listOf(shell)))
+        val noCurrency = st("Shell", 1.0, 2.989).let { s -> s.copy(prices = s.prices.mapValues { (_, p) -> p.copy(currency = null) }) }
+        assertNull("a price with no currency", FuelDiscounts.forStation(noCurrency, regular, listOf(shell)))
     }
 
     @Test
@@ -141,7 +167,19 @@ class FuelDiscountsTest {
         val typedAsShown = FuelDiscount(null, "Demo Fuel North on Hwy 123", 26)
         assertTrue(typedAsShown.matches(st("Demo Fuel North", 1.0, 3.0, street = "Hwy 123")))
         assertTrue(FuelDiscount(null, "Gas (Main St)", 5).matches(st("Gas (Main St)", 1.0, 3.0)))
+        // Never in a street alone (E1).
+        assertFalse(FuelDiscount(null, "76", 5).matches(st("Shell", 1.0, 3.0, street = "CA-76")))
+        assertFalse(FuelDiscount(null, "Speedway", 5).matches(st("Circle K", 1.0, 3.0, street = "E Speedway Blvd")))
+        assertTrue("both apostrophes", FuelDiscount(null, "Casey's", 5).matches(st("Casey’s", 1.0, 3.0)))
         assertNull(FuelDiscounts.forStation(st("Kum & Go", 1.0, 3.0), regular, listOf(local.copy(cents = 0))))
+    }
+
+    @Test
+    fun `the dialog offers named stations that aren't a listed brand (E4)`() {
+        val around =
+            listOf(st("Fuel station", 1.0, 3.0), st("QuikTrip", 1.0, 3.0), st("123", 1.0, 3.0), st("Kum & Go", 1.0, 3.0), st("Kum & Go", 2.0, 3.0))
+        assertEquals(listOf("Kum & Go"), FuelDiscounts.pickable(around))
+        assertEquals(FuelDiscounts.MAX_NAME, FuelDiscounts.pickable(listOf(st("A".repeat(60), 1.0, 3.0))).single().length)
     }
 
     @Test
