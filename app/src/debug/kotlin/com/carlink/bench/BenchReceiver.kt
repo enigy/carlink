@@ -75,10 +75,11 @@ class BenchReceiver : BroadcastReceiver() {
         m: CarlinkManager,
         path: String,
     ) {
-        val bytes = runCatching { File(path).readBytes() }.getOrElse {
-            logWarn("[bench] update: can't read $path (${it.message}); push it to the app's files/ocbm folder", tag = Logger.Tags.ADAPTR)
-            return
-        }
+        val bytes =
+            runCatching { File(path).readBytes() }.getOrElse {
+                logWarn("[bench] update: can't read $path (${it.message}); push it to the app's files/ocbm folder", tag = Logger.Tags.ADAPTR)
+                return
+            }
         logInfo("[bench] update: ${bytes.size} bytes from $path", tag = Logger.Tags.ADAPTR)
         m.adapterUpdate.benchUpdate(bytes)
     }
