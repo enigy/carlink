@@ -78,7 +78,7 @@ class WakeStarts(
 
     // That start reached SUBSCRIBE ([sessionUp]): still true after [ownStart] goes false in its finally, so a display OFF
     // between there and the wake job's end doesn't take the session that came up for a cut wake (W, the 2.6.0 review).
-    // Cleared at each own start and each launch.
+    // Cleared at each own start, and at a launch while no own start runs (R3-3).
     @Volatile private var ownStartUp = false
 
     // When the display came on, for the wake's line at STREAMING; 0 when no wake is being timed.
@@ -185,7 +185,8 @@ class WakeStarts(
 
     private fun launch(origin: WakePath?) {
         job?.cancel()
-        ownStartUp = false
+        // A cut own start may still be running on IO, its SUBSCRIBE about to land: its came-up mark stays (R3-3).
+        if (!ownStart) ownStartUp = false
         job = scope.launch { connect(origin) }
     }
 
