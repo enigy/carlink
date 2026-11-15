@@ -8,7 +8,7 @@ import org.junit.Test
 class LogRedactorTest {
     @Test
     fun theBoxIdentityLineLosesTheNameAndMostOfTheMac() {
-        val box = """[ocbmd] phone identity -> host: {"name":"Scott’s iPhone","deviceID":"68:a7:29:00:25:10","model":"iPhone18,1"}"""
+        val box = """[ocbmd] phone identity -> host: {"name":"Alex’s iPhone","deviceID":"0a:00:00:00:25:10","model":"iPhone18,1"}"""
         assertEquals(
             """[ocbmd] phone identity -> host: {"name":"<phone>","deviceID":"..25:10","model":"iPhone18,1"}""",
             LogRedactor.line(box),
@@ -17,8 +17,8 @@ class LogRedactorTest {
 
     @Test
     fun macsKeepTheirLastTwoOctetsInAnyCase() {
-        assertEquals("policy order=[..29:69, ..EE:FF]", LogRedactor.line("policy order=[64:31:35:8C:29:69, AA:BB:CC:DD:EE:FF]"))
-        assertEquals("peer ..0a:0b connected", LogRedactor.line("peer 00-01-02-03-0a-0b connected"))
+        assertEquals("policy order=[..29:69, ..EE:FF]", LogRedactor.line("policy order=[02:00:00:00:29:69, AA:BB:CC:DD:EE:FF]"))
+        assertEquals("peer ..0a:0b connected", LogRedactor.line("peer 02-00-00-00-0a-0b connected"))
     }
 
     @Test
@@ -32,7 +32,7 @@ class LogRedactorTest {
 
     @Test
     fun wholeFilesAreRedactedLineByLine() {
-        val file = "a 68:a7:29:00:25:10\nb\n".toByteArray()
+        val file = "a 0a:00:00:00:25:10\nb\n".toByteArray()
         assertEquals("a ..25:10\nb\n", String(LogRedactor.text(file)))
     }
 

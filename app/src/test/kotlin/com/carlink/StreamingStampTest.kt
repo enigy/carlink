@@ -11,7 +11,7 @@ class StreamingStampTest {
 
     @Test
     fun `media before the key, then the key, is streaming`() {
-        // Yoda's iPhone (iOS 15): empty now-playing frames 1.7 s before its video key.
+        // The older bench iPhone (iOS 15): empty now-playing frames 1.7 s before its video key.
         assertNull("not before the session is keyed", stamp.onMedia(State.CONNECTING))
         assertEquals(State.STREAMING, stamp.onKeyed(State.CONNECTING))
     }

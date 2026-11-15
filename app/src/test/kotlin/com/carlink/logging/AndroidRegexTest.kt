@@ -31,6 +31,6 @@ class AndroidRegexTest {
 
     @Test
     fun theRedactorStillMatchesDashSeparatedAddresses() {
-        assertTrue(LogRedactor.line("peer 00-01-02-03-0a-0b").endsWith("..0a:0b"))
+        assertTrue(LogRedactor.line("peer 02-00-00-00-0a-0b").endsWith("..0a:0b"))
     }
 }

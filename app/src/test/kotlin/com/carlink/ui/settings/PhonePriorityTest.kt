@@ -27,23 +27,23 @@ class PhonePriorityTest {
 
     @Test
     fun `while a press works no other Connect does`() {
-        val working = PhoneRanking(enabled = true, connectedMac = null, phoneConnected = false, attempt = ConnectAttempt("68:a7:29:00:25:10"))
+        val working = PhoneRanking(enabled = true, connectedMac = null, phoneConnected = false, attempt = ConnectAttempt("0a:00:00:00:25:10"))
         assertFalse(connectEnabled(bonded = true, live = false, working))
-        val done = PhoneRanking(true, null, false, attempt = ConnectAttempt("68:a7:29:00:25:10", ConnectAttempt.Outcome.NOT_REACHED))
+        val done = PhoneRanking(true, null, false, attempt = ConnectAttempt("0a:00:00:00:25:10", ConnectAttempt.Outcome.NOT_REACHED))
         assertTrue("an outcome is not working", connectEnabled(bonded = true, live = false, done))
     }
 
     @Test
     fun `while a press for another phone works or has connected it, the old phone's row is not live`() {
-        val scott = "68:a7:29:00:25:10"
-        val yoda = "aa:bb:cc:00:6a:de"
+        val phoneA = "0a:00:00:00:25:10"
+        val phoneB = "aa:bb:cc:00:6a:de"
 
-        fun on(attempt: ConnectAttempt?) = PhoneRanking(true, scott, phoneConnected = true, switchable = true, attempt = attempt)
-        assertTrue("the phone the adapter names", on(null).isLive(scott))
-        assertFalse(on(null).isLive(yoda))
-        assertFalse("a switch to Yoda's is working (11-03 bench)", on(ConnectAttempt(yoda)).isLive(scott))
-        assertFalse("Yoda's has connected", on(ConnectAttempt(yoda, ConnectAttempt.Outcome.CONNECTED)).isLive(scott))
-        assertTrue("Yoda's was not reached", on(ConnectAttempt(yoda, ConnectAttempt.Outcome.NOT_REACHED)).isLive(scott))
+        fun on(attempt: ConnectAttempt?) = PhoneRanking(true, phoneA, phoneConnected = true, switchable = true, attempt = attempt)
+        assertTrue("the phone the adapter names", on(null).isLive(phoneA))
+        assertFalse(on(null).isLive(phoneB))
+        assertFalse("a switch to phone B is working (11-03 bench)", on(ConnectAttempt(phoneB)).isLive(phoneA))
+        assertFalse("phone B has connected", on(ConnectAttempt(phoneB, ConnectAttempt.Outcome.CONNECTED)).isLive(phoneA))
+        assertTrue("phone B was not reached", on(ConnectAttempt(phoneB, ConnectAttempt.Outcome.NOT_REACHED)).isLive(phoneA))
     }
 
     @Test
@@ -70,7 +70,7 @@ class PhonePriorityTest {
     }
 
     private companion object {
-        const val A = "68:a7:29:00:25:10"
+        const val A = "0a:00:00:00:25:10"
         const val B = "aa:bb:cc:00:6a:de"
     }
 }

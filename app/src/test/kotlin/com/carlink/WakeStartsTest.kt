@@ -58,7 +58,13 @@ class WakeStartsTest {
 
         override fun stateName() = state.name
 
-        override fun disconnected() = state == S.DISCONNECTED
+        // Run once by the first check that finds the session STREAMING: the wake job's own, after its start returned.
+        @Volatile var afterStart: (() -> Unit)? = null
+
+        override fun disconnected(): Boolean {
+            if (state == S.STREAMING) afterStart?.also { afterStart = null }?.invoke()
+            return state == S.DISCONNECTED
+        }
 
         override fun connecting() = state == S.CONNECTING
 
@@ -265,6 +271,19 @@ class WakeStartsTest {
         on(nowMs = 2) // streaming already: nothing starts
         settled()
         assertNull(starts.streaming(5_000))
+    }
+
+    @Test
+    fun an_off_after_the_wake_came_up_but_before_its_job_ended_is_no_cut() {
+        // W (the 2.6.0 review): the start has returned and its ownStart is cleared, but the wake's job still runs.
+        session.afterStart = { starts.displayOff() }
+        on(nowMs = 1)
+        eventually("streaming") { session.state == S.STREAMING }
+        settled()
+        on(nowMs = 2) // streaming: nothing starts, and no wake is timed
+        settled()
+        assertNull(starts.streaming(5_000))
+        assertEquals(1, session.begun.get())
     }
 
     @Test

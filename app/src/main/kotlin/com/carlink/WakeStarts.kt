@@ -76,6 +76,11 @@ class WakeStarts(
     // A start of this class's is running ([startIfDisconnected], under the lock): host.subscribed() is about its client.
     @Volatile private var ownStart = false
 
+    // That start reached SUBSCRIBE ([sessionUp]): still true after [ownStart] goes false in its finally, so a display OFF
+    // between there and the wake job's end doesn't take the session that came up for a cut wake (W, the 2.6.0 review).
+    // Cleared at each own start, and at a launch while no own start runs (R3-3).
+    @Volatile private var ownStartUp = false
+
     // When the display came on, for the wake's line at STREAMING; 0 when no wake is being timed.
     @Volatile private var wakeAtMs = 0L
 
@@ -103,6 +108,7 @@ class WakeStarts(
             host.cancelReconnect()
             // From here the client is this start's own: subscribed() means its SUBSCRIBE, not an older session's being torn down.
             ownStart = true
+            ownStartUp = false
             try {
                 undoCancelledStart(
                     stuck = { startNeedsUndo(host.connecting(), host.subscribed()) },
@@ -119,6 +125,7 @@ class WakeStarts(
      */
     fun sessionUp() {
         cut = false
+        if (ownStart) ownStartUp = true
     }
 
     private suspend fun undo() {
@@ -137,7 +144,9 @@ class WakeStarts(
     fun displayOff() {
         // Only this class's own start counts as subscribed: during the grace-end stop the old session's client still reads
         // subscribed until its CT_STOP, and a queued wake waiting behind that stop must still be cut (round 3 review).
-        if (job?.isActive == true && !(ownStart && host.subscribed())) cut = true
+        // Its start may have returned already, its job not yet ended: [ownStartUp] still says it came up (W).
+        val cameUp = ownStartUp || (ownStart && host.subscribed())
+        if (job?.isActive == true && !cameUp) cut = true
         job?.cancel()
         wakeAtMs = 0L
     }
@@ -176,6 +185,8 @@ class WakeStarts(
 
     private fun launch(origin: WakePath?) {
         job?.cancel()
+        // A cut own start may still be running on IO, its SUBSCRIBE about to land: its came-up mark stays (R3-3).
+        if (!ownStart) ownStartUp = false
         job = scope.launch { connect(origin) }
     }
 

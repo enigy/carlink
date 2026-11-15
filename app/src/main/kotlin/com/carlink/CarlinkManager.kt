@@ -953,6 +953,9 @@ class CarlinkManager(
 
     @Volatile private var dormantForDisplayOff = false
 
+    /** Dormant since the display stayed off ([endForDisplayOff]) until it is on again: the bench's flicker starts from here. */
+    val dormant: Boolean get() = dormantForDisplayOff
+
     /** The starts, the display wake's and the undo of one a display OFF cut short ([WakeStarts]). */
     private val starts =
         WakeStarts(
@@ -1966,6 +1969,24 @@ class CarlinkManager(
             Result.success(saved.joinToString(" and "))
         }
 
+    /**
+     * The last [lines] of a file on the box ([path], e.g. `/tmp/box.log`), over the live link as Save Logs pulls it. A
+     * failure says why: no adapter connected, or the pull's own error. Blocks. Debug builds' bench hooks.
+     */
+    fun boxFileTail(
+        path: String,
+        lines: Int,
+    ): Result<List<String>> {
+        val c = client ?: return Result.failure(java.io.IOException("no adapter connected"))
+        return c.pullFile(path).map { it.toString(Charsets.UTF_8).lines().takeLast(lines) }
+    }
+
+    /** Write [bytes] to [path] on the box over CH_FILE; a failure says why. Blocks. Debug builds' bench hooks. */
+    fun pushToBox(
+        path: String,
+        bytes: ByteArray,
+    ): Result<Unit> = client?.pushFile(path, bytes) ?: Result.failure(java.io.IOException("no adapter connected"))
+
     /** The box's logs into [saved]: box.log (a failure fails Save Logs), then each daemon's, best effort. */
     private fun saveBoxLogs(
         c: OcbmClient,
@@ -2692,16 +2713,16 @@ class CarlinkManager(
         starts.displayOff()
         logInfo(
             "[POWER] display OFF ($source): state=$state driving=$isDriving call=${callActive()}; the session ends in " +
-                "${DisplayOff.GRACE_MS / 1000} s unless the display comes back",
+                "${DisplayOff.waitText()} unless the display comes back",
             tag = Logger.Tags.USB,
         )
         displayOffJob?.cancel()
         displayOffJob =
             scope.launch {
                 while (true) {
-                    delay(DisplayOff.GRACE_MS)
+                    delay(DisplayOff.graceMs)
                     val decision = DisplayOff.atGraceEnd(displayOn, isDriving, callActive())
-                    logInfo("[POWER] display off ${DisplayOff.GRACE_MS / 1000} s: state=$state driving=$isDriving call=${callActive()} -> $decision", tag = Logger.Tags.USB)
+                    logInfo("[POWER] display off ${DisplayOff.waitText()}: state=$state driving=$isDriving call=${callActive()} -> $decision", tag = Logger.Tags.USB)
                     when (decision) {
                         DisplayOff.Decision.DISPLAY_ON -> return@launch
                         DisplayOff.Decision.KEEP_DRIVING, DisplayOff.Decision.KEEP_CALL -> continue
@@ -3984,6 +4005,12 @@ class CarlinkManager(
         val j = i + delta
         if (i < 0 || j !in order.indices) return
         order[i] = order[j].also { order[j] = order[i] }
+        setPhoneOrder(order)
+    }
+
+    /** The whole reconnect order, as the Phones page shows it and the box is told ([movePhone]; the bench's order hook). */
+    fun setPhoneOrder(order: List<String>) {
+        if (order.isEmpty()) return
         logInfo("[DEVICE_MGMT] Priority -> ${order.joinToString()}", tag = Logger.Tags.ADAPTR)
         knownStore?.update { it.copy(priority = order, preferredMac = order.first()) }
         rebuildDeviceList()
