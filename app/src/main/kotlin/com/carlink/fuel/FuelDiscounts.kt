@@ -75,12 +75,14 @@ data class FuelDiscount(
      * Whether [station] is in the program: a listed brand by its name; another station by the name typed, found in the
      * station's name with punctuation-tolerant edges ("Gas (Main St)"), or the card's whole "<name> on <street>" typed
      * from its start. Never in a street alone: "76" would match "Shell on CA-76" (the Mac's 14 Nov review, E1). The two
-     * apostrophes count as one ("Casey's", "Casey’s").
+     * apostrophes count as one ("Casey's", "Casey’s"). A listed brand typed here is matched as its row is, from the start
+     * of the name: "Shell" typed must not take "Sea Shell Market" (the Mac's 2.6.0 review, CL-3).
      */
     fun matches(station: Station): Boolean {
         if (brand != null) return brand.matches(station.name)
         // The placeholder for an unnamed station is no name: typed, it would match every "… Fuel Station" (round 3).
         if (name.trim().equals(FuelDiscounts.UNNAMED, ignoreCase = true)) return false
+        DiscountBrand.entries.firstOrNull { it.matches(name) }?.let { return it.matches(station.name) }
         val typed = Regex.escape(apostrophes(name.trim()))
         if (name.isBlank()) return false
         val inName = Regex("""(?<![\p{L}\p{N}])$typed(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE)
@@ -109,6 +111,16 @@ object FuelDiscounts {
     const val UNNAMED = "Fuel station"
 
     /**
+     * Why "Another station" won't take [name], for the dialog to say; null when it will. A listed brand has its own row
+     * (CL-3); the placeholder for an unnamed station would match every one of them (round 3, E9 and CL-7).
+     */
+    fun nameProblem(name: String): String? {
+        val n = name.trim()
+        if (n.equals(UNNAMED, ignoreCase = true)) return "That's the maps' word for a station with no name: type its own name"
+        return DiscountBrand.entries.firstOrNull { it.matches(n) }?.let { "${it.label} has its own row: set it there" }
+    }
+
+    /**
      * The names the "Another station" dialog offers from the stations around: not a listed brand, not the placeholder
      * for an unnamed station (which would match every one of them), not without a letter, and at most [MAX_NAME] long
      * (the Mac's 14 Nov review, E4). A longer name is left out rather than cut: cut inside a word or number it no longer
@@ -124,7 +136,8 @@ object FuelDiscounts {
     /**
      * The program [station] is in for [fuel], the largest if more than one names it; null when none. Only on a US price per
      * gallon (USD): the programs are cents off a US gallon, and a Canadian station's price per litre would show a discount
-     * it doesn't honour (the Mac's 13 Nov review, item 6).
+     * it doesn't honour (the Mac's 13 Nov review, item 6). Neither source gives the unit, so USD is taken as per gallon: a
+     * USD price per litre (Puerto Rico) would take the cents off each litre (CL-5, accepted).
      */
     fun forStation(
         station: Station,

@@ -124,9 +124,11 @@ private fun DiscountDialog(
     var cents by remember { mutableStateOf(if (start.cents > 0) start.cents.toString() else "") }
     var allFuels by remember { mutableStateOf(start.allFuels) }
     val amount = cents.toIntOrNull()
-    // Another station needs a name, and not the placeholder for an unnamed station, which would match every one (round 3).
-    // A blank amount removes the program, whatever its name: one saved under the placeholder before must stay removable.
-    val named = name.isNotBlank() && !name.trim().equals(FuelDiscounts.UNNAMED, ignoreCase = true)
+    // Another station needs a name, and not the placeholder for an unnamed station (round 3) or a listed brand (CL-3); the
+    // field says why Save is greyed (CL-7). A blank amount removes the program, whatever its name: one saved under the
+    // placeholder before must stay removable.
+    val problem = FuelDiscounts.nameProblem(name)
+    val named = name.isNotBlank() && problem == null
     val valid = cents.isEmpty() || (amount != null && amount in 1..FuelDiscounts.MAX_CENTS && (start.brand != null || named))
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -140,6 +142,8 @@ private fun DiscountDialog(
                         onValueChange = { name = it.take(FuelDiscounts.MAX_NAME) },
                         singleLine = true,
                         label = { Text("The station's name, without the street") },
+                        isError = problem != null,
+                        supportingText = problem?.let { { Text(it) } },
                     )
                     nearby.take(MAX_PICKS).forEach { n -> TextButton(onClick = { name = n }) { Text(n) } }
                 }

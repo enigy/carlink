@@ -3,6 +3,7 @@ package com.carlink.fuel
 import com.carlink.ui.settings.FuelGrade
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -174,10 +175,26 @@ class FuelDiscountsTest {
         assertTrue(FuelDiscount(null, "Casey's", 5).matches(st("Casey’s", 1.0, 3.0)))
         assertTrue(FuelDiscount(null, "Casey’s", 5).matches(st("Casey's #12", 1.0, 3.0)))
         assertTrue(FuelDiscount(null, "Casey’s on Main St", 5).matches(st("Casey's", 1.0, 3.0, street = "Main St")))
+        // Inside the name, where only the name's own fold finds it: the title doesn't start with it (CL-4).
+        assertTrue(FuelDiscount(null, "Casey's", 5).matches(st("Ames Casey’s", 1.0, 3.0)))
+        // A listed brand typed here matches as its row does, from the start (CL-3).
+        val typedShell = FuelDiscount(null, "Shell", 5)
+        assertTrue(typedShell.matches(st("Shell", 1.0, 3.0)))
+        assertFalse(typedShell.matches(st("Sea Shell Market", 1.0, 3.0)))
+        assertFalse(typedShell.matches(st("Shell Rock Fuel", 1.0, 3.0)))
         // The placeholder for an unnamed station is never a name (round 3).
         assertFalse(FuelDiscount(null, "Fuel station", 5).matches(st("Downtown Fuel Station", 1.0, 3.0)))
         assertFalse(FuelDiscount(null, "fuel station", 5).matches(st("Fuel station", 1.0, 3.0)))
         assertNull(FuelDiscounts.forStation(st("Kum & Go", 1.0, 3.0), regular, listOf(local.copy(cents = 0))))
+    }
+
+    @Test
+    fun `the dialog says why it won't take a listed brand or the unnamed placeholder (CL-3, CL-7)`() {
+        assertEquals("Shell has its own row: set it there", FuelDiscounts.nameProblem(" shell "))
+        assertEquals("Kroger has its own row: set it there", FuelDiscounts.nameProblem("Fry's Fuel Center"))
+        assertNotNull(FuelDiscounts.nameProblem("Fuel Station"))
+        assertNull(FuelDiscounts.nameProblem("Kum & Go"))
+        assertNull(FuelDiscounts.nameProblem("Shell Rock Fuel"))
     }
 
     @Test
