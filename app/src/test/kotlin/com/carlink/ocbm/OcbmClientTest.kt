@@ -390,21 +390,28 @@ class OcbmClientTest {
         assertArrayEquals(byteArrayOf(Ocbm.CT_PAIR_CONFIRM, 0), t.awaitFrameOn(Ocbm.CH_CTRL))
     }
 
-    /** The error path skips CT_STOP (dead pipe); the clean path still sends it. */
+    /** The error path skips CT_STOP (dead pipe); the clean path still sends it, and stop() says which (BoxTeardown's stamp). */
     @Test
     fun `stop sends CT_STOP only when asked to`() {
         val t1 = FakeTransport()
         val c1 = subscribedClient(t1)
         drainWritten(t1)
-        c1.stop(sendStop = false)
+        assertFalse("no CT_STOP on a dead pipe", c1.stop(sendStop = false))
         assertNull("dead-pipe stop must not write CT_STOP", t1.awaitFrameOn(Ocbm.CH_CTRL, ms = 300))
         assertFalse(c1.subscribed)
 
         val t2 = FakeTransport()
         val c2 = subscribedClient(t2)
         drainWritten(t2)
-        c2.stop()
+        assertTrue("a subscribed stop writes CT_STOP", c2.stop())
         assertArrayEquals(byteArrayOf(Ocbm.CT_STOP), t2.awaitFrameOn(Ocbm.CH_CTRL))
+        assertFalse("a second stop sends nothing", c2.stop())
+
+        val t3 = FakeTransport()
+        val c3 = newClient(t3)
+        drainWritten(t3)
+        assertFalse("a client that never subscribed sends no CT_STOP", c3.stop())
+        assertNull(t3.awaitFrameOn(Ocbm.CH_CTRL, ms = 300))
         client = null
     }
 

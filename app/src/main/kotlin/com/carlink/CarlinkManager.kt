@@ -1748,6 +1748,7 @@ class CarlinkManager(
             handleError("usb — CT_SUBSCRIBE write failed")
             return
         }
+        starts.sessionUp() // every start, not only a wake: the session is up, and a cut wake is no longer one to restart
         ColdStart.process.subscribed(SystemClock.elapsedRealtime())?.let { logInfo(it, tag = Logger.Tags.USB) }
         c.startHeartbeat()
         armBoxLogStream(c)

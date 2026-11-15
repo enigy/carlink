@@ -68,6 +68,7 @@ class WakeStarts(
 
     // A display OFF cut the wake in flight before SUBSCRIBE: the one cancel after which the undo starts again
     // ([restartAfterUndo]). Set only by [displayOff]; a second OFF while the cut start still runs must not clear it.
+    // Cleared by the undo, [closing] and any start reaching SUBSCRIBE ([sessionUp]).
     @Volatile private var cut = false
 
     @Volatile private var job: Job? = null
@@ -109,10 +110,16 @@ class WakeStarts(
                 ) { withContext(Dispatchers.IO) { host.start(helloMs) } }
             } finally {
                 ownStart = false
-                // Reached SUBSCRIBE, returned or cut: the session came up, and any cut is no longer one to start again for.
-                if (host.subscribed()) cut = false
             }
         }
+
+    /**
+     * A start reached SUBSCRIBE (CarlinkManager.startImpl): a wake's, a reconnect's or a Reset's. The session came up, and
+     * a cut is no longer one to start again for.
+     */
+    fun sessionUp() {
+        cut = false
+    }
 
     private suspend fun undo() {
         host.log("[LIFECYCLE] the start was cancelled before SUBSCRIBE: back to DISCONNECTED")
@@ -157,6 +164,7 @@ class WakeStarts(
     fun closing() {
         cut = false
         job?.cancel()
+        wakeAtMs = 0L
     }
 
     /** STREAMING at [nowMs]: the wake's line, once, while a wake is being timed. */
@@ -180,19 +188,19 @@ class WakeStarts(
         if (origin != null) lock.withLock { }
         val first = DisplayOff.firstPath(adapterListed = host.adapterListed())
         path = origin ?: first
+        val why =
+            when (origin) {
+                WakePath.QUEUED -> "Display on, after the start or stop in flight"
+                WakePath.AFTER_UNDO -> "Display on, again after a display OFF undid its start"
+                else -> "Display on"
+            }
         if (first == WakePath.AT_ONCE) {
-            val why =
-                when (origin) {
-                    WakePath.QUEUED -> "Display on, after the start or stop in flight"
-                    WakePath.AFTER_UNDO -> "Display on, again after a display OFF undid its start"
-                    else -> "Display on, the adapter still listed"
-                }
-            startIfDisconnected(why, DisplayOff.WAKE_HELLO_MS)
+            startIfDisconnected("$why, at once (the adapter listed)", DisplayOff.WAKE_HELLO_MS)
             if (!host.disconnected()) return
             host.log("[POWER] the wake connect did not open the adapter: again after the USB settle")
             path = WakePath.OPEN_FAILED
         }
         delay(settleMs)
-        startIfDisconnected("Display on")
+        startIfDisconnected("$why, after the USB settle")
     }
 }

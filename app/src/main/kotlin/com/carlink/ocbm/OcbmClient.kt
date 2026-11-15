@@ -1343,7 +1343,8 @@ class OcbmClient(
      *
      * @param sendStop false on a DEAD pipe (the error path): the write could only block for the
      *   bulk timeout, and the box's heartbeat watchdog declares the host gone on its own.
-     * @return whether CT_STOP went to the box: the box then tears that session down (CarlinkManager stamps it, BoxTeardown).
+     * @return whether CT_STOP was written to the box: the box then tears that session down (CarlinkManager stamps it,
+     *   BoxTeardown). False for a dead pipe, a client that never subscribed, a second stop, or a failed write.
      */
     fun stop(sendStop: Boolean = true): Boolean {
         if (!running.compareAndSet(true, false)) return false
@@ -1385,8 +1386,8 @@ class OcbmClient(
         if (subscribed) {
             if (sendStop) {
                 log.i(">> CT_STOP")
-                send(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_STOP))
-                sentStop = true
+                sentStop = send(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_STOP))
+                if (!sentStop) log.w("-- CT_STOP write failed")
             } else {
                 log.i("-- CT_STOP skipped (dead pipe)")
             }
