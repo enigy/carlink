@@ -902,7 +902,7 @@ class OcbmClient(
      * Send CT_HELLO and wait for CT_HELLO_ACK, retransmitting on the reference cadence (500 ms for
      * the first 15 s, then 2 s). Every non-ACK frame arriving meanwhile is discarded by [dispatch].
      */
-    fun hello(timeoutMs: Long = 20_000): Boolean {
+    fun hello(timeoutMs: Long = HELLO_TIMEOUT_MS): Boolean {
         ctrlQ.clear()
         // The trailing 4 bytes are the HOST INSTANCE NONCE (u32 LE). See Ocbm.CT_HELLO: it is how the
         // box tells one host PROCESS from another. Without it, a host killed without CT_STOP leaves the
@@ -1343,9 +1343,12 @@ class OcbmClient(
      *
      * @param sendStop false on a DEAD pipe (the error path): the write could only block for the
      *   bulk timeout, and the box's heartbeat watchdog declares the host gone on its own.
+     * @return whether CT_STOP was written to the box: the box then tears that session down (CarlinkManager stamps it,
+     *   BoxTeardown). False for a dead pipe, a client that never subscribed, a second stop, or a failed write.
      */
-    fun stop(sendStop: Boolean = true) {
-        if (!running.compareAndSet(true, false)) return
+    fun stop(sendStop: Boolean = true): Boolean {
+        if (!running.compareAndSet(true, false)) return false
+        var sentStop = false
         // Latch the single-use flag HERE, not at the end of teardown. Set late, a start() racing
         // an in-progress stop() passes its `stopped` check and re-CASes running false->true
         // mid-teardown, yielding a "running" client whose transport is then closed underneath it.
@@ -1383,7 +1386,8 @@ class OcbmClient(
         if (subscribed) {
             if (sendStop) {
                 log.i(">> CT_STOP")
-                send(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_STOP))
+                sentStop = send(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_STOP))
+                if (!sentStop) log.w("-- CT_STOP write failed")
             } else {
                 log.i("-- CT_STOP skipped (dead pipe)")
             }
@@ -1391,6 +1395,7 @@ class OcbmClient(
         }
         transport.stop()
         stopped = true
+        return sentStop
     }
 
     fun statsLine(): String =
@@ -1399,6 +1404,11 @@ class OcbmClient(
             "btPhase=${Ocbm.btpName(lastBtPhase)} phone=$phonePresent txDrop=$txDropped " +
             "altVid=$altVideoFrames" +
             (lanes?.let { " ${it.statsLine()}" } ?: "")
+
+    companion object {
+        /** How long [hello] resends CT_HELLO for the adapter's first reply. */
+        const val HELLO_TIMEOUT_MS = 20_000L
+    }
 }
 
 /** `[FILE_ACK][status u8][crc32 u32 LE][size u32 LE]` — the terminal sub-frame of a pull, and the box's answer to a push's OPEN and CLOSE. */

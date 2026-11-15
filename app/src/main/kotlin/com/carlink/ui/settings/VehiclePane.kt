@@ -134,8 +134,14 @@ private fun EngineGroup(
         ChoiceSetting(
             title = "Engine type",
             subtitle = VehicleText.engine(engine, readings),
-            options = EngineChoice.entries,
-            selected = engine,
+            options = EngineChoice.choices,
+            // Nothing picked: the car's own, or Gasoline, the adapter's default, before the car has said.
+            selected =
+                if (engine == EngineChoice.CAR) {
+                    EngineChoice.reported(VehicleStatusValues.engines(readings.fuelTypes)) ?: EngineChoice.GASOLINE
+                } else {
+                    engine
+                },
             onSelect = {
                 logWarn("[UI_ACTION] Engine type -> ${it.code}", tag = "UI")
                 store.setEngineChoice(it)

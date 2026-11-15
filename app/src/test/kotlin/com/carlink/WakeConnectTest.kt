@@ -1,0 +1,125 @@
+package com.carlink
+
+import com.carlink.DisplayOff.WakePath
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** The wake path (the Mac's 13 Nov brief, item 7): its choice, its hello, its line, a cancelled start, the preload line. */
+class WakeConnectTest {
+    @Test
+    fun `a listed adapter is opened at once, otherwise after the settle`() {
+        assertEquals(WakePath.AT_ONCE, DisplayOff.firstPath(adapterListed = true))
+        assertEquals(WakePath.NOT_LISTED, DisplayOff.firstPath(adapterListed = false))
+    }
+
+    @Test
+    fun `the wake line names how it connected, and none for a wake with no phone for minutes`() {
+        assertEquals(
+            "[startup] wake: display on to STREAMING 14915 ms (at once, the adapter listed)",
+            DisplayOff.wakeLine(14_915, WakePath.AT_ONCE),
+        )
+        assertEquals(
+            "[startup] wake: display on to STREAMING 9000 ms (the open at once got no reply in 3 s, then the retry)",
+            DisplayOff.wakeLine(9_000, WakePath.HELLO_MISSED),
+        )
+        assertTrue(DisplayOff.wakeLine(20_000, WakePath.OPEN_FAILED)!!.endsWith("(after the settle, the open at once failed)"))
+        assertTrue(DisplayOff.wakeLine(20_000, WakePath.NOT_LISTED)!!.endsWith("(after the settle, the adapter not listed)"))
+        assertNull(DisplayOff.wakeLine(DisplayOff.WAKE_TIMED_MAX_MS, WakePath.AT_ONCE))
+    }
+
+    @Test
+    fun `a start cancelled while connecting goes back to DISCONNECTED`() =
+        runBlocking {
+            var connecting = false
+            var undone = false
+            val started = CompletableDeferred<Unit>()
+            val start =
+                async {
+                    val undo: suspend () -> Unit = {
+                        undone = true
+                        connecting = false
+                    }
+                    undoCancelledStart(stuck = { connecting }, undo = undo) {
+                        connecting = true
+                        started.complete(Unit)
+                        awaitCancellation()
+                    }
+                }
+            started.await()
+            start.cancel()
+            try {
+                start.await()
+            } catch (_: CancellationException) {
+            }
+            assertTrue("undone", undone)
+            assertFalse(connecting)
+        }
+
+    @Test
+    fun `a start cancelled after it sent SUBSCRIBE is left alone`() =
+        runBlocking {
+            var undone = false
+            var subscribed = false
+            val started = CompletableDeferred<Unit>()
+            val start =
+                async {
+                    undoCancelledStart(stuck = { startNeedsUndo(connecting = true, subscribed = subscribed) }, undo = { undone = true }) {
+                        subscribed = true
+                        started.complete(Unit)
+                        awaitCancellation()
+                    }
+                }
+            // Cancelled only once it is running, so the undo is really asked (the Mac's 13 Nov review, C2).
+            started.await()
+            start.cancel()
+            try {
+                start.await()
+            } catch (_: CancellationException) {
+            }
+            assertFalse(undone)
+        }
+
+    @Test
+    fun `only a start that never sent SUBSCRIBE is undone`() {
+        assertTrue(startNeedsUndo(connecting = true, subscribed = false))
+        assertFalse("CONNECTING after SUBSCRIBE: the session came up", startNeedsUndo(connecting = true, subscribed = true))
+        assertFalse(startNeedsUndo(connecting = false, subscribed = false))
+    }
+
+    @Test
+    fun `an undone start starts again only after a display OFF cut the wake, with the display back on`() {
+        assertTrue(restartAfterUndo(wakeCut = true, displayOn = true, released = false))
+        assertFalse("Close app or a handover cancelled it", restartAfterUndo(wakeCut = false, displayOn = true, released = false))
+        assertFalse("the display is still off", restartAfterUndo(wakeCut = true, displayOn = false, released = false))
+        assertFalse("a released manager", restartAfterUndo(wakeCut = true, displayOn = true, released = true))
+    }
+
+    @Test
+    fun `a display ON behind a cut wake or the display-off teardown queues a start, else nothing`() {
+        assertTrue(queueStartOnDisplayOn(wakeCut = true, wasDormant = false))
+        assertTrue("the grace's teardown still running", queueStartOnDisplayOn(wakeCut = false, wasDormant = true))
+        assertFalse("a session that is just up", queueStartOnDisplayOn(wakeCut = false, wasDormant = false))
+    }
+
+    @Test
+    fun `the preload line is logged once per session, and on a change`() {
+        val note = PreloadNote()
+        assertEquals("[ADAPTER] boot radio preload on", note.line("on"))
+        assertNull("polled again", note.line("on"))
+        assertNull("an older adapter says nothing", note.line(""))
+        assertEquals(
+            "[ADAPTER] boot radio preload off_guard: its guard switched it off after unfinished preloads",
+            note.line("off_guard"),
+        )
+        note.newSession()
+        assertEquals("[ADAPTER] boot radio preload off_guard: its guard switched it off after unfinished preloads", note.line("off_guard"))
+    }
+}

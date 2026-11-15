@@ -98,7 +98,7 @@ private fun FixLadder(
             onPick(Fix.RESTART_WIRELESS)
         }
         GroupDivider()
-        FixRow("Reset connection", "Fresh session. About 10 seconds without CarPlay.", Icons.Default.Sync, "Reset", enabled = connected && !resetting) {
+        FixRow("Reset connection", "Fresh session. About 20 seconds without CarPlay.", Icons.Default.Sync, "Reset", enabled = connected && !resetting) {
             onPick(Fix.RESET_CONNECTION)
         }
         GroupDivider()
@@ -234,7 +234,7 @@ private val RESET_CONNECTION_CONFIRM =
         text =
             "Ends the current phone session and the link to the adapter, waits for the adapter to " +
                 "finish shutting the session down, then reconnects and starts a new session. " +
-                "The phone reconnects on its own; expect about 10 seconds without projection.",
+                "The phone reconnects on its own; expect about 20 seconds without projection.",
         confirmLabel = "Reset",
         weight = DialogWeight.NORMAL,
     )

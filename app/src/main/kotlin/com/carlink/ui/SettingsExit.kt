@@ -56,7 +56,7 @@ internal class SettingsExit(
             val many = names.size > 1
             val list = if (many) names.dropLast(1).joinToString(", ") + " and " + names.last() else names.firstOrNull().orEmpty()
             val (verb, them) = if (many) "take" to "them" else "takes" to "it"
-            return "$list $verb effect at a new connection. Reset now to apply $them (CarPlay is gone for about 10 seconds), " +
+            return "$list $verb effect at a new connection. Reset now to apply $them (CarPlay is gone for about 20 seconds), " +
                 "or keep $them saved for the next connection."
         }
     }

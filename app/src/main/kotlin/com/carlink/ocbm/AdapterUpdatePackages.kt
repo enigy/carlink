@@ -28,25 +28,28 @@ data class PinnedPackage(
 object AdapterUpdates {
     /**
      * The published package this release offers; null until one is published (U4, which needs the owner's OK). Publishing,
-     * as for the installer image: build it with enigy/ocbm tools/make_ocbm_update.sh --from the SHA256SUMS of the version
-     * it updates from, attach it and its .sha256 to a draft release, publish, then pin its tag, asset URL, size, SHA-256
+     * as for the installer image: build it with enigy/ocbm tools/make_ocbm_update.sh, a --from for the SHA256SUMS of every
+     * published version from the oldest it updates, attach it and its .sha256 to a draft release, publish, then pin its tag, asset URL, size, SHA-256
      * and the VERSION, FROM_MIN and ROOM need_kb it carries here, in a commit and an app release. Pin the installer image
      * of the same version with it: a trial adapter it doesn't fit takes the round trip, and converts with that image.
      */
     val PINNED: PinnedPackage? =
         PinnedPackage(
-            tag = "v2.0.0",
-            url = "https://github.com/enigy/ocbm/releases/download/v2.0.0/ocbm-update-2.0.0.tgz",
-            sizeBytes = 2_030_373L,
-            sha256 = "26873931eb5807e7f4a45644f45129de6de0adbb357120d94698994d0d447d21",
-            // "2.0.0 ocbm c05d066" from 1.0.1: btd, carplayd, iap2d, iap_role_switch, ocbmd, 12 scripts and etc/ocbm/retired.list, built from c05d066.
+            tag = "v2.5.0",
+            url = "https://github.com/enigy/ocbm/releases/download/v2.5.0/ocbm-update-2.5.0.tgz",
+            sizeBytes = 2_096_750L,
+            sha256 = "b511432f3a2ac02d7c926692d630d2aacb195149847e2f5069fb4aa59a384ff8",
+            // 2.5.0 from 1.0.1: 18 files, all but four scripts the same in every version since. The Mac's build of rel-2.0.1
+            // at 92ab7a5 with the benched 2.0.1 set's program files (2.0.0's bytes for the unchanged iap2d and iap_role_switch).
             // ROOM trial=no: a trial adapter finishes its install first.
             pkg =
                 UpdatePackage(
-                    version = "2.0.0",
+                    version = "2.5.0",
                     fromMin = "1.0.1",
-                    needKb = 3043,
-                    notes = "Video from your iPhone on the car's screen while parked, and the car's GPS and status for your iPhone.",
+                    needKb = 3141,
+                    notes =
+                        "Faster wireless connects. From 1.0.x it also brings 2.0.0's video from your iPhone on the car's screen " +
+                            "while parked, and the car's GPS and status for your iPhone.",
                 ),
         )
 

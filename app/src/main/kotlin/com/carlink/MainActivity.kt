@@ -569,6 +569,9 @@ class MainActivity : ComponentActivity() {
             }
         carlinkManager = manager
         keeper.manager = manager
+        // A manager built while the display is off (a rebuild with new settings) starts out believing it is on, and the
+        // watcher never says OFF again: tell it, so its display-off wait and the wake run as usual (the 13 Nov review).
+        if (!displayPower.isOn) manager.onDisplayOff("display off at build")
         keeper.profile = profile
         keeper.layout = appliedLayout
         keeper.displayMode = appliedDisplayMode

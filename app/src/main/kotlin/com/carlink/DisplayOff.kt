@@ -13,8 +13,20 @@ object DisplayOff {
     /** How long the display stays off before the session ends. */
     const val GRACE_MS = 30_000L
 
-    /** After the display comes back: let the re-powered USB port settle before connecting (Carlink2's WAKE_SETTLE_MS). */
+    /**
+     * After the display comes back: let a re-powered USB port settle before connecting (Carlink2's WAKE_SETTLE_MS). Only
+     * when the adapter is not listed, or opening it at once failed (WakeStarts).
+     */
     const val WAKE_SETTLE_MS = 2_500L
+
+    /**
+     * The wake's open at once waits this long for the adapter's first reply, not 20 s: one wake in seven got none for
+     * 21 s, and the retry 2 s later connected at once (the Mac, 13 Nov). The adapter has been running all along.
+     */
+    const val WAKE_HELLO_MS = 3_000L
+
+    /** A wake whose first video comes later than this had no phone for a while: its line would time nothing. */
+    const val WAKE_TIMED_MAX_MS = 120_000L
 
     enum class Decision {
         /** The display came back: nothing to do. */
@@ -42,4 +54,25 @@ object DisplayOff {
             callActive -> Decision.KEEP_CALL
             else -> Decision.END_SESSION
         }
+
+    /** How a wake connected, for its `[startup]` line (WakeStarts). */
+    enum class WakePath(
+        val words: String,
+    ) {
+        AT_ONCE("at once, the adapter listed"),
+        HELLO_MISSED("the open at once got no reply in ${WAKE_HELLO_MS / 1000} s, then the retry"),
+        OPEN_FAILED("after the settle, the open at once failed"),
+        NOT_LISTED("after the settle, the adapter not listed"),
+        QUEUED("after the start or stop in flight"),
+        AFTER_UNDO("again after a display OFF undid its start"),
+    }
+
+    /** A wake opens at once while the adapter is still listed (powered throughout); else it settles first. */
+    fun firstPath(adapterListed: Boolean): WakePath = if (adapterListed) WakePath.AT_ONCE else WakePath.NOT_LISTED
+
+    /** The wake's line at STREAMING, `elapsedMs` after display on; none past [WAKE_TIMED_MAX_MS], which timed no phone. */
+    fun wakeLine(
+        elapsedMs: Long,
+        path: WakePath,
+    ): String? = if (elapsedMs < WAKE_TIMED_MAX_MS) "[startup] wake: display on to STREAMING $elapsedMs ms (${path.words})" else null
 }

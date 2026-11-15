@@ -22,6 +22,9 @@ class DisplayPowerWatcher(
 ) {
     private var lastOn = true
 
+    /** Whether the display is on, as last seen: a manager built while it is off is told so (MainActivity). */
+    val isOn: Boolean get() = lastOn
+
     private val listener =
         object : DisplayManager.DisplayListener {
             override fun onDisplayAdded(displayId: Int) = Unit
@@ -68,6 +71,9 @@ class DisplayPowerWatcher(
             context.registerReceiver(receiver, filter)
         }
         logInfo("[POWER] watching the head unit's display (on=$lastOn)", tag = "MAIN")
+        // As it is now, once, as the listener would have: a manager kept through a rebuild may have missed either edge, and
+        // one that missed the ON stayed dormant with the display on (the Mac's 14 Nov review, W5). Both are idempotent.
+        if (lastOn) onOn("display on at start") else onOff("display off at start")
     }
 
     fun unregister() {
