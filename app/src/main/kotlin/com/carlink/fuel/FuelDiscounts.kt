@@ -3,12 +3,14 @@ package com.carlink.fuel
 import com.carlink.ui.settings.FuelGrade
 import java.util.Locale
 
+/** The words stations add to a brand's name: "Shell Gas Station", "Circle K Food Mart". */
+private const val TAIL_WORDS = "gas|gasoline|station|food|mart|store|express|fuel|center|centre|select|stop|travel|plaza|truck|connect"
+
 /**
  * What may follow a brand at the start of a station's name: the end, a number or sign, or a word stations add to it. Not an
  * apostrophe: "Shell's Garage" is someone's garage (the Mac's 14 Nov review, E2).
  */
-private const val BRAND_TAIL =
-    """(?=\s*$|\s*[^\p{L}\s'’]|\s+(?:gas|gasoline|station|food|mart|store|express|fuel|center|centre|select|stop|travel|plaza|truck|connect)\b)"""
+private const val BRAND_TAIL = """(?=\s*$|\s*[^\p{L}\s'’]|\s+(?:$TAIL_WORDS)\b)"""
 
 /**
  * A brand's [names] (alternatives), matched at the start of a station's name and followed by [BRAND_TAIL]. File-level, not
@@ -29,28 +31,39 @@ private fun brand(names: String) = Regex("""^\s*(?:$names)$BRAND_TAIL""", RegexO
 enum class DiscountBrand(
     val label: String,
     val code: String,
-    private val names: Regex,
+    names: String,
+    private val match: Regex = brand(names),
 ) {
-    QUIKTRIP("QuikTrip", "quiktrip", Regex("""^\s*(?:quik\s*trip$BRAND_TAIL|qt\s*(?:#\s*)?\d*\s*$)""", RegexOption.IGNORE_CASE)),
+    QUIKTRIP(
+        "QuikTrip",
+        "quiktrip",
+        """quik\s*trip|qt""",
+        Regex("""^\s*(?:quik\s*trip$BRAND_TAIL|qt\s*(?:#\s*)?\d*\s*$)""", RegexOption.IGNORE_CASE),
+    ),
     KROGER(
         "Kroger",
         "kroger",
-        brand(
-            """kroger(?:\s+marketplace)?|""" +
-                """(?:king\s+soopers|fry['’]?s|dillon['’]?s|ralph['’]?s|smith['’]?s|fred\s+meyer|harris\s+teeter|qfc)""" +
-                """(?:\s+marketplace)?\s+fuel\s+cent(?:er|re)""",
-        ),
+        """kroger(?:\s+marketplace)?|""" +
+            """(?:king\s+soopers|fry['’]?s|dillon['’]?s|ralph['’]?s|smith['’]?s|fred\s+meyer|harris\s+teeter|qfc)""" +
+            """(?:\s+marketplace)?\s+fuel\s+cent(?:er|re)""",
     ),
-    SHELL("Shell", "shell", brand("""shell""")),
-    EXXON_MOBIL("Exxon and Mobil", "exxon_mobil", brand("""exxon\s*mobil|exxon|mobil""")),
-    BP("BP and Amoco", "bp", brand("""bp|amoco""")),
-    CHEVRON_TEXACO("Chevron and Texaco", "chevron_texaco", brand("""chevron\s*texaco|chevron|texaco""")),
-    CIRCLE_K("Circle K", "circle_k", brand("""circle[\s-]*k""")),
-    MURPHY_USA("Murphy USA", "murphy_usa", brand("""murphy\s+(?:usa|express)""")),
-    RACETRAC("RaceTrac", "racetrac", brand("""race\s*trac""")),
+    SHELL("Shell", "shell", """shell"""),
+    EXXON_MOBIL("Exxon and Mobil", "exxon_mobil", """exxon\s*mobil|exxon|mobil"""),
+    BP("BP and Amoco", "bp", """bp|amoco"""),
+    CHEVRON_TEXACO("Chevron and Texaco", "chevron_texaco", """chevron\s*texaco|chevron|texaco"""),
+    CIRCLE_K("Circle K", "circle_k", """circle[\s-]*k"""),
+    MURPHY_USA("Murphy USA", "murphy_usa", """murphy\s+(?:usa|express)"""),
+    RACETRAC("RaceTrac", "racetrac", """race\s*trac"""),
     ;
 
-    fun matches(stationName: String): Boolean = names.containsMatchIn(stationName)
+    // The brand alone, as a name typed for another station: its names and only words stations add, no number or street
+    // ("Shell Gas", not "Circle K #2715"; the Mac's round 2, R3-1).
+    private val bare = Regex("""^\s*(?:$names)(?:\s+(?:$TAIL_WORDS))*\s*$""", RegexOption.IGNORE_CASE)
+
+    fun matches(stationName: String): Boolean = match.containsMatchIn(stationName)
+
+    /** Whether [name], typed, is the brand alone ([bare]): its own row's program, not one store's. */
+    fun isBare(name: String): Boolean = bare.containsMatchIn(name)
 
     companion object {
         fun of(code: String): DiscountBrand? = entries.firstOrNull { it.code == code }
@@ -78,18 +91,21 @@ data class FuelDiscount(
      * Whether [station] is in the program: a listed brand by its name; another station by the name typed, found in the
      * station's name with punctuation-tolerant edges ("Gas (Main St)"), or the card's whole "<name> on <street>" typed
      * from its start. Never in a street alone: "76" would match "Shell on CA-76" (the Mac's 14 Nov review, E1). The two
-     * apostrophes count as one ("Casey's", "Casey’s"). A listed brand typed here is matched as its row is, from the start
-     * of the name: "Shell" typed must not take "Sea Shell Market" (the Mac's 2.6.0 review, CL-3).
+     * apostrophes count as one ("Casey's", "Casey’s"). A listed brand typed alone is matched as its row is, from the start
+     * of the name: "Shell" typed must not take "Sea Shell Market" (the Mac's 2.6.0 review, CL-3). One branded store typed
+     * ("Circle K #2715", "Shell Gas on Main St") is that store only, also from the start (round 2, R3-1).
      */
     fun matches(station: Station): Boolean {
         if (brand != null) return brand.matches(station.name)
         // The placeholder for an unnamed station is no name: typed, it would match every "… Fuel Station" (round 3).
         if (name.trim().equals(FuelDiscounts.UNNAMED, ignoreCase = true)) return false
-        DiscountBrand.entries.firstOrNull { it.matches(name) }?.let { return it.matches(station.name) }
+        DiscountBrand.entries.firstOrNull { it.isBare(name) }?.let { return it.matches(station.name) }
         val typed = Regex.escape(apostrophes(name.trim()))
         if (name.isBlank()) return false
-        val inName = Regex("""(?<![\p{L}\p{N}])$typed(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE)
         val asTitle = Regex("""^\s*$typed(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE)
+        // A branded store's name inside another's could be a different place: only from the start.
+        val branded = DiscountBrand.entries.any { it.matches(name) }
+        val inName = if (branded) asTitle else Regex("""(?<![\p{L}\p{N}])$typed(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE)
         return inName.containsMatchIn(apostrophes(station.name)) || asTitle.containsMatchIn(apostrophes(StationText.title(station)))
     }
 
@@ -114,13 +130,14 @@ object FuelDiscounts {
     const val UNNAMED = "Fuel station"
 
     /**
-     * Why "Another station" won't take [name], for the dialog to say; null when it will. A listed brand has its own row
-     * (CL-3); the placeholder for an unnamed station would match every one of them (round 3, E9 and CL-7).
+     * Why "Another station" won't take [name], for the dialog to say; null when it will. A listed brand alone has its own
+     * row (CL-3), but one store of it may be typed ("Circle K #2715", R3-1); the placeholder for an unnamed station would
+     * match every one of them (round 3, E9 and CL-7).
      */
     fun nameProblem(name: String): String? {
         val n = name.trim()
         if (n.equals(UNNAMED, ignoreCase = true)) return "That's the maps' word for a station with no name: type its own name"
-        return DiscountBrand.entries.firstOrNull { it.matches(n) }?.let { "${it.label} has its own row: set it there" }
+        return DiscountBrand.entries.firstOrNull { it.isBare(n) }?.let { "${it.label} has its own row: set it there" }
     }
 
     /**

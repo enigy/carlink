@@ -195,6 +195,15 @@ class FuelDiscountsTest {
         assertTrue(typedShell.matches(st("Shell", 1.0, 3.0)))
         assertFalse(typedShell.matches(st("Sea Shell Market", 1.0, 3.0)))
         assertFalse(typedShell.matches(st("Shell Rock Fuel", 1.0, 3.0)))
+        // One branded store typed is that store only, from the start of its name or title (R3-1).
+        val oneStore = FuelDiscount(null, "Circle K #2715", 5)
+        assertTrue(oneStore.matches(st("Circle K #2715", 1.0, 3.0)))
+        assertFalse(oneStore.matches(st("Circle K #1001", 1.0, 3.0)))
+        assertFalse(oneStore.matches(st("Circle K #27150", 1.0, 3.0)))
+        assertFalse(oneStore.matches(st("Circle K", 1.0, 3.0)))
+        val onMain = FuelDiscount(null, "Shell Gas on Main St", 5)
+        assertTrue(onMain.matches(st("Shell Gas", 1.0, 3.0, street = "Main St")))
+        assertFalse(onMain.matches(st("Shell Gas", 1.0, 3.0, street = "Elm St")))
         // The placeholder for an unnamed station is never a name (round 3).
         assertFalse(FuelDiscount(null, "Fuel station", 5).matches(st("Downtown Fuel Station", 1.0, 3.0)))
         assertFalse(FuelDiscount(null, "fuel station", 5).matches(st("Fuel station", 1.0, 3.0)))
@@ -208,6 +217,10 @@ class FuelDiscountsTest {
         assertNotNull(FuelDiscounts.nameProblem("Fuel Station"))
         assertNull(FuelDiscounts.nameProblem("Kum & Go"))
         assertNull(FuelDiscounts.nameProblem("Shell Rock Fuel"))
+        assertEquals("Shell has its own row: set it there", FuelDiscounts.nameProblem("Shell Gas Station"))
+        assertNull("one store of a brand (R3-1)", FuelDiscounts.nameProblem("Circle K #2715"))
+        assertNull(FuelDiscounts.nameProblem("Shell Gas on Main St"))
+        assertNull(FuelDiscounts.nameProblem("QT 1023"))
     }
 
     @Test
