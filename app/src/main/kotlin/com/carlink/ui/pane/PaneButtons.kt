@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
@@ -29,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -73,22 +75,34 @@ internal fun PaneControl(
             scaleX = scale
             scaleY = scale
         }
+    // The press scales what is drawn, never the touch target: scaled with it, the 72 dp target was ~62 dp under the
+    // finger, and a finger near the rim that moved a little (the truck shaking) left it and the press was cancelled
+    // (the Mac's round 6, UI-1). So the click is on the full-size box, the scale on the one inside.
     Box(
         modifier =
             modifier
                 .size(size)
-                .then(pressEffect)
                 .clip(CircleShape)
-                .background(fill)
-                .then(if (border != null) Modifier.border(2.dp, border, CircleShape) else Modifier)
-                .clickable(enabled = enabled, interactionSource = interaction, indication = ripple(), onClickLabel = label) {
+                .clickable(enabled = enabled, interactionSource = interaction, indication = null, role = Role.Button, onClickLabel = label) {
                     tappedAt = System.nanoTime()
                     onClick()
                 },
         contentAlignment = Alignment.Center,
     ) {
-        content()
-        Box(modifier = Modifier.fillMaxSize().background(content.copy(alpha = highlight)))
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .then(pressEffect)
+                    .clip(CircleShape)
+                    .background(fill)
+                    .then(if (border != null) Modifier.border(2.dp, border, CircleShape) else Modifier)
+                    .indication(interaction, ripple()),
+            contentAlignment = Alignment.Center,
+        ) {
+            content()
+            Box(modifier = Modifier.fillMaxSize().background(content.copy(alpha = highlight)))
+        }
     }
 }
 
