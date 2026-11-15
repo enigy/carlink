@@ -32,7 +32,7 @@ class ConnectFeedbackTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private val owner = CarlinkManager.DeviceInfo(btMac = "02:00:00:00:25:10", name = "Owner's iPhone", type = "iPhone")
+    private val owner = CarlinkManager.DeviceInfo(btMac = "0a:00:00:00:25:10", name = "Owner's iPhone", type = "iPhone")
     private val other = CarlinkManager.DeviceInfo(btMac = "aa:bb:cc:00:6a:de", name = "Second iPhone", type = "iPhone")
     private val attempt = mutableStateOf<ConnectAttempt?>(null)
     private var presses = 0

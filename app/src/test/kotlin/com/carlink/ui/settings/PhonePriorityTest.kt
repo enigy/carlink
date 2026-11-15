@@ -27,15 +27,15 @@ class PhonePriorityTest {
 
     @Test
     fun `while a press works no other Connect does`() {
-        val working = PhoneRanking(enabled = true, connectedMac = null, phoneConnected = false, attempt = ConnectAttempt("02:00:00:00:25:10"))
+        val working = PhoneRanking(enabled = true, connectedMac = null, phoneConnected = false, attempt = ConnectAttempt("0a:00:00:00:25:10"))
         assertFalse(connectEnabled(bonded = true, live = false, working))
-        val done = PhoneRanking(true, null, false, attempt = ConnectAttempt("02:00:00:00:25:10", ConnectAttempt.Outcome.NOT_REACHED))
+        val done = PhoneRanking(true, null, false, attempt = ConnectAttempt("0a:00:00:00:25:10", ConnectAttempt.Outcome.NOT_REACHED))
         assertTrue("an outcome is not working", connectEnabled(bonded = true, live = false, done))
     }
 
     @Test
     fun `while a press for another phone works or has connected it, the old phone's row is not live`() {
-        val scott = "02:00:00:00:25:10"
+        val scott = "0a:00:00:00:25:10"
         val yoda = "aa:bb:cc:00:6a:de"
 
         fun on(attempt: ConnectAttempt?) = PhoneRanking(true, scott, phoneConnected = true, switchable = true, attempt = attempt)
@@ -70,7 +70,7 @@ class PhonePriorityTest {
     }
 
     private companion object {
-        const val A = "02:00:00:00:25:10"
+        const val A = "0a:00:00:00:25:10"
         const val B = "aa:bb:cc:00:6a:de"
     }
 }
