@@ -1,5 +1,6 @@
 package com.carlink.fuel
 
+import com.carlink.ui.settings.FuelGrade
 import java.util.Locale
 
 /**
@@ -58,9 +59,11 @@ enum class DiscountBrand(
 
 /**
  * One program the driver is in: a listed [brand], or another station by [name] (found in the station's name, or the
- * card's whole "<name> on <street>" typed from its start; [matches]), with [cents] off each US gallon and whether diesel gets it too ([allFuels], on
- * unless the driver turns it off: Scott, 13 Nov). No membership number or account: only that the driver is in it, and
- * how much it takes off.
+ * card's whole "<name> on <street>" typed from its start; [matches]), with [cents] off each US gallon and whether diesel
+ * and E85 get it too ([allFuels], on unless the driver turns it off: Scott, 13 Nov). Off, it covers regular, midgrade and
+ * premium only: programs differ on alternative fuels, and a wrong discount sends the driver to the wrong station where a
+ * missed one only shows the posted price (Scott, CL-6). No membership number or account: only that the driver is in it,
+ * and how much it takes off.
  */
 data class FuelDiscount(
     val brand: DiscountBrand?,
@@ -147,7 +150,8 @@ object FuelDiscounts {
         discounts
             .takeIf { station.priceFor(fuel)?.currency == US_DOLLARS }
             .orEmpty()
-            .filter { it.cents > 0 && (it.allFuels || fuel.kind == CarFuel.Kind.GASOLINE) && it.matches(station) }
+            // With "Diesel and E85 too" off: regular, midgrade and premium only (CL-6).
+            .filter { it.cents > 0 && (it.allFuels || (fuel.kind == CarFuel.Kind.GASOLINE && fuel.grade != FuelGrade.E85)) && it.matches(station) }
             .maxByOrNull { it.cents }
 
     /** [posted] less [discount], never below zero; [posted] itself without one. */

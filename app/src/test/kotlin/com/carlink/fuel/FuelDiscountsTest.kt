@@ -139,6 +139,19 @@ class FuelDiscountsTest {
     }
 
     @Test
+    fun `an E85 car follows the diesel switch, the posted price with it off, the discount with it on (CL-6)`() {
+        val e85 = CarFuel(CarFuel.Kind.GASOLINE, FuelGrade.E85)
+        val station = st("Shell", 1.0, 3.00).let { it.copy(prices = it.prices + ("E85" to FuelPrice(2.50, "USD", null))) }
+        val off = FuelDiscount(DiscountBrand.SHELL, "", 10, allFuels = false)
+        assertNull(FuelDiscounts.forStation(station, e85, listOf(off)))
+        assertEquals(2.50, FuelDiscounts.apply(station.priceFor(e85)!!, null).amount, 1e-9)
+        val on = off.copy(allFuels = true)
+        assertEquals(on, FuelDiscounts.forStation(station, e85, listOf(on)))
+        assertEquals(2.40, FuelDiscounts.apply(station.priceFor(e85)!!, on).amount, 1e-9)
+        assertEquals(off, FuelDiscounts.forStation(station, regular, listOf(off)))
+    }
+
+    @Test
     fun `diesel too is on unless switched off, and the largest of two programs wins`() {
         val station = st("Shell", 1.0, 3.00)
         assertTrue("on for a new program", FuelDiscount(DiscountBrand.SHELL, "", 5).allFuels)

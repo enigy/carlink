@@ -134,7 +134,7 @@ private fun DiscountDialog(
         onDismissRequest = onDismiss,
         title = { Text(start.brand?.label ?: "Another station") },
         text = {
-            // Scrolls: with the picks, the cents and Diesel too could fall off a short head-unit screen (E6).
+            // Scrolls: with the picks, the cents and Diesel and E85 too could fall off a short head-unit screen (E6).
             Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (start.brand == null) {
                     OutlinedTextField(
@@ -156,7 +156,7 @@ private fun DiscountDialog(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Switch(checked = allFuels, onCheckedChange = { allFuels = it })
-                    Text("Diesel too", style = SettingsStyle.Body)
+                    Text("Diesel and E85 too", style = SettingsStyle.Body)
                 }
             }
         },
