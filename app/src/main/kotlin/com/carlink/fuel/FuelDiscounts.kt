@@ -160,8 +160,11 @@ object FuelDiscounts {
         discount: FuelDiscount?,
     ): FuelPrice = if (discount == null) posted else posted.copy(amount = (posted.amount - discount.cents / CENTS_PER_UNIT).coerceAtLeast(0.0))
 
-    /** The settings row's words: "10¢ off gasoline", "10¢ off every fuel". */
-    fun describe(discount: FuelDiscount): String = "${discount.cents}¢ off ${if (discount.allFuels) "every fuel" else "gasoline"}"
+    /**
+     * The settings row's words: "10¢ off regular to premium", "10¢ off every fuel". Not "gasoline" with the switch off: the
+     * vehicle settings offer E85 as a gasoline, and those programs don't cover it (CL-6, R3-2).
+     */
+    fun describe(discount: FuelDiscount): String = "${discount.cents}¢ off ${if (discount.allFuels) "every fuel" else "regular to premium"}"
 
     /** One line per program: brand code (or empty), name, cents, all fuels. Names lose any tab or newline. */
     fun encode(discounts: List<FuelDiscount>): String =

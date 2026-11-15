@@ -234,5 +234,6 @@ class FuelDiscountsTest {
         assertTrue("an unknown brand is left out", FuelDiscounts.decode("nosuch\t\t5\tfalse").isEmpty())
         assertEquals(FuelDiscounts.MAX_CENTS, FuelDiscounts.decode("shell\t\t999\tfalse").single().cents)
         assertEquals("10¢ off every fuel", FuelDiscounts.describe(list[0]))
+        assertEquals("7¢ off regular to premium", FuelDiscounts.describe(list[1]))
     }
 }
