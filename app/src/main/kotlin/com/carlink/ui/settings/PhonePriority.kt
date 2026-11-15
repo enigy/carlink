@@ -1,6 +1,5 @@
 package com.carlink.ui.settings
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,9 +16,7 @@ import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,6 +33,7 @@ import com.carlink.CarlinkManager
 import com.carlink.logging.logInfo
 import com.carlink.ocbm.ConnectAttempt
 import com.carlink.ui.components.WorkingDots
+import com.carlink.ui.pane.PaneButton
 import com.carlink.ui.theme.LocalCarlinkColors
 
 /** Whether the phone list shows ranking controls, and which phone is live. */
@@ -306,6 +304,10 @@ private fun RankBadge(
     }
 }
 
+/**
+ * Up or down a rank, with the pane controls' press ([PaneButton]): it snaps smaller and lights under the finger, and a
+ * quick tap still shows. As an outlined icon button it stayed the same colour when pressed (Scott, 15 Nov).
+ */
 @Composable
 private fun MoveButton(
     up: Boolean,
@@ -313,16 +315,13 @@ private fun MoveButton(
     name: String,
     onClick: () -> Unit,
 ) {
-    OutlinedIconButton(
+    PaneButton(
+        icon = if (up) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+        label = if (up) "Move $name up" else "Move $name down",
         onClick = onClick,
+        iconSize = 30.dp,
+        tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else LocalCarlinkColors.current.disabledText,
+        border = MaterialTheme.colorScheme.outlineVariant,
         enabled = enabled,
-        modifier = Modifier.size(72.dp),
-        border = BorderStroke(2.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Icon(
-            imageVector = if (up) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-            contentDescription = if (up) "Move $name up" else "Move $name down",
-            modifier = Modifier.size(30.dp),
-        )
-    }
+    )
 }

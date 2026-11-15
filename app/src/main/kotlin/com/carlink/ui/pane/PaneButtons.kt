@@ -38,7 +38,7 @@ import kotlinx.coroutines.delay
  * moment the finger lands, and it eases back over [RELEASE_MS] after the finger lifts — but never
  * sooner than [FLASH_MS] after the tap, so a quick tap in the car still shows. The first version
  * animated INTO the pressed look, and a tap released before the animation got anywhere (10-25:
- * mute and the keypad "did not show any presses").
+ * mute and the keypad "did not show any presses"). Not [enabled]: it takes no press, and the caller dims what it shows.
  */
 @Suppress("LongParameterList") // the words, the look and the content
 @Composable
@@ -49,6 +49,7 @@ internal fun PaneControl(
     size: Dp = 72.dp,
     fill: Color = Color.Transparent,
     border: Color? = null,
+    enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -80,7 +81,7 @@ internal fun PaneControl(
                 .clip(CircleShape)
                 .background(fill)
                 .then(if (border != null) Modifier.border(2.dp, border, CircleShape) else Modifier)
-                .clickable(interactionSource = interaction, indication = ripple(), onClickLabel = label) {
+                .clickable(enabled = enabled, interactionSource = interaction, indication = ripple(), onClickLabel = label) {
                     tappedAt = System.nanoTime()
                     onClick()
                 },
@@ -104,8 +105,9 @@ internal fun PaneButton(
     fill: Color = Color.Transparent,
     tint: Color = LocalContentColor.current,
     border: Color? = null,
+    enabled: Boolean = true,
 ) {
-    PaneControl(label = label, onClick = onClick, modifier = modifier, size = size, fill = fill, border = border) {
+    PaneControl(label = label, onClick = onClick, modifier = modifier, size = size, fill = fill, border = border, enabled = enabled) {
         Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(iconSize))
     }
 }
