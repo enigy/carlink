@@ -1,6 +1,10 @@
 package com.carlink.ui
 
 import android.view.MotionEvent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -193,8 +197,12 @@ fun MainScreen(
         if (ui.projecting) {
             SplitPane(carlinkManager, Modifier.fillMaxSize().windowInsetsPadding(surfaceInsets.asWindowInsets()))
         }
-        if (!ui.projecting) {
+        // The loading screen fades out over about a second as CarPlay starts streaming, not a hard cut (Scott, 15 Nov),
+        // and is back at once when the session ends. Its buttons go at once: no tap lands on one as it fades.
+        AnimatedVisibility(visible = !ui.projecting, enter = EnterTransition.None, exit = fadeOut(tween(LOADING_FADE_MS))) {
             LoadingOverlay(carlinkManager, ui.statusText, bridge)
+        }
+        if (!ui.projecting) {
             TopActions(
                 onNavigateToSettings = onNavigateToSettings,
                 onResetConnection = { showResetConfirm = true },
@@ -545,6 +553,9 @@ private fun ConnectingWords(
             }
     }
 }
+
+/** How long the loading screen takes to fade out as CarPlay starts streaming. */
+private const val LOADING_FADE_MS = 1_000
 
 /** The box status line is for the bench, not the driver: present, but dimmed. */
 private const val BOX_STATUS_ALPHA = 0.55f
