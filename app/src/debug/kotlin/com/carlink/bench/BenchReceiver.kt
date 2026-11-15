@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Process
 import com.carlink.CarlinkManager
 import com.carlink.DisplayOff
+import com.carlink.logging.LogRedactor
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
@@ -101,7 +102,8 @@ class BenchReceiver : BroadcastReceiver() {
                 return
             }
         logInfo("[bench] update: ${bytes.size} bytes from $path", tag = Logger.Tags.ADAPTR)
-        m.adapterUpdate.benchUpdate(bytes)
+        // Refused (not a package, or one already in flight): the phase is the earlier update's, so nothing to follow (CL-1).
+        if (!m.adapterUpdate.benchUpdate(bytes)) return
         // Each phase, until it is no longer updating: only the screen collects them otherwise, so a script waiting for an
         // outcome had nothing to wait on (D2). StateFlow conflates, so a quick step can be skipped, never the last.
         withTimeoutOrNull(UPDATE_FOLLOW_MS) {
@@ -162,7 +164,7 @@ class BenchReceiver : BroadcastReceiver() {
             }
         m
             .boxFileTail(path, lines.coerceIn(1, BenchGuards.MAX_LINES))
-            .onSuccess { tail -> tail.forEach { logInfo("[bench] $file: $it", tag = Logger.Tags.ADAPTR) } }
+            .onSuccess { tail -> tail.forEach { logInfo("[bench] $file: ${LogRedactor.line(it)}", tag = Logger.Tags.ADAPTR) } }
             .onFailure { logWarn("[bench] box_log $path: ${it.message}", tag = Logger.Tags.ADAPTR) }
     }
 

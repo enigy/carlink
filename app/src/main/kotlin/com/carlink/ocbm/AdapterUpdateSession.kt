@@ -355,23 +355,25 @@ class AdapterUpdateSession(
     /**
      * Bench only (debug builds, the Mac's bench hooks of 13 Nov): install the package in [bytes] whatever the offer says,
      * reported as any update is. A bench package keeps its VERSION with new code, which the adapter takes only while its
-     * own bench flag is set (/tmp/bench_update_any_version, ocbm_update.sh).
+     * own bench flag is set (/tmp/bench_update_any_version, ocbm_update.sh). Returns whether it started, so the bench follows
+     * only its own update, not the outcome of the one before (CL-1).
      */
-    fun benchUpdate(bytes: ByteArray) {
+    fun benchUpdate(bytes: ByteArray): Boolean {
         val pkg =
             UpdatePackageFile.read(bytes) ?: run {
                 logWarn("[bench] the bench file is not an update package: nothing sent", tag = Logger.Tags.ADAPTR)
-                return
+                return false
             }
         synchronized(lock) {
             if (phaseState.value is UpdatePhase.Updating) {
                 logWarn("[bench] update refused: an update is already in flight (${phaseState.value})", tag = Logger.Tags.ADAPTR)
-                return
+                return false
             }
             logWarn("[bench] update to ${pkg.version} from a bench file", tag = Logger.Tags.ADAPTR)
             phaseState.value = UpdatePhase.Downloading(pkg.version, 0, 0)
             job?.cancel()
             job = scope.launch(Dispatchers.IO) { install(bytes, pkg.version) }
+            return true
         }
     }
 

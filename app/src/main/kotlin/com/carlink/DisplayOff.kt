@@ -16,6 +16,9 @@ object DisplayOff {
     /** The wait in use: [GRACE_MS], or a debug build's bench override (the Mac's bench hooks of 13 Nov: fast wakes). */
     @Volatile var graceMs = GRACE_MS
 
+    /** [ms] for a log line: whole seconds as seconds ("30 s"), a bench override's odd value in ms (CL-8). */
+    fun waitText(ms: Long = graceMs): String = if (ms % 1_000 == 0L) "${ms / 1_000} s" else "$ms ms"
+
     /**
      * After the display comes back: let a re-powered USB port settle before connecting (Carlink2's WAKE_SETTLE_MS). Only
      * when the adapter is not listed, or opening it at once failed (WakeStarts).

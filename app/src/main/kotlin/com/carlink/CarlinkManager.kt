@@ -2713,7 +2713,7 @@ class CarlinkManager(
         starts.displayOff()
         logInfo(
             "[POWER] display OFF ($source): state=$state driving=$isDriving call=${callActive()}; the session ends in " +
-                "${DisplayOff.graceMs} ms unless the display comes back",
+                "${DisplayOff.waitText()} unless the display comes back",
             tag = Logger.Tags.USB,
         )
         displayOffJob?.cancel()
@@ -2722,7 +2722,7 @@ class CarlinkManager(
                 while (true) {
                     delay(DisplayOff.graceMs)
                     val decision = DisplayOff.atGraceEnd(displayOn, isDriving, callActive())
-                    logInfo("[POWER] display off ${DisplayOff.graceMs} ms: state=$state driving=$isDriving call=${callActive()} -> $decision", tag = Logger.Tags.USB)
+                    logInfo("[POWER] display off ${DisplayOff.waitText()}: state=$state driving=$isDriving call=${callActive()} -> $decision", tag = Logger.Tags.USB)
                     when (decision) {
                         DisplayOff.Decision.DISPLAY_ON -> return@launch
                         DisplayOff.Decision.KEEP_DRIVING, DisplayOff.Decision.KEEP_CALL -> continue

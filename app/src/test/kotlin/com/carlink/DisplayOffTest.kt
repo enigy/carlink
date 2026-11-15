@@ -20,6 +20,12 @@ class DisplayOffTest {
     }
 
     @Test
+    fun `the log gives the wait in seconds when it is whole seconds`() {
+        assertEquals("30 s", DisplayOff.waitText(30_000))
+        assertEquals("2500 ms", DisplayOff.waitText(2_500))
+    }
+
+    @Test
     fun `the wait is about half a minute`() {
         assertEquals(30_000L, DisplayOff.GRACE_MS)
         assertEquals(2_500L, DisplayOff.WAKE_SETTLE_MS)

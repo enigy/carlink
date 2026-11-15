@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -357,6 +358,18 @@ class AdapterUpdateSessionTest {
         start()
         Thread.sleep(200)
         assertEquals(UpdateOffer.None, session.offer.value)
+    }
+
+    @Test
+    fun `a bench update says whether it started, so the bench follows only its own`() {
+        start()
+        assertFalse("not a package", session.benchUpdate(byteArrayOf(1, 2, 3)))
+        assertEquals(UpdatePhase.Idle, session.phase.value)
+
+        assertTrue(session.benchUpdate(UpdateFixtures.PACKAGE_1_1_0))
+        waitUntil(2000) { session.phase.value is UpdatePhase.Installing }
+        assertFalse("one already in flight", session.benchUpdate(UpdateFixtures.PACKAGE_1_1_0))
+        assertEquals("only the first was sent", 1, box!!.pushed.size)
     }
 
     private fun waitUntil(
