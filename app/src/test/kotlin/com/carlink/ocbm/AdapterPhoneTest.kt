@@ -6,7 +6,7 @@ import org.junit.Test
 
 /** The phone Settings marks Connected follows the adapter, and nothing keeps the last one (11-03 bench: a switch). */
 class AdapterPhoneTest {
-    private val scott = "68:a7:29:00:25:10"
+    private val scott = "02:00:00:00:25:10"
     private val yoda = "aa:bb:cc:00:6a:de"
 
     @Test

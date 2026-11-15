@@ -8,7 +8,7 @@ import org.junit.Test
 class LogRedactorTest {
     @Test
     fun theBoxIdentityLineLosesTheNameAndMostOfTheMac() {
-        val box = """[ocbmd] phone identity -> host: {"name":"Scott’s iPhone","deviceID":"68:a7:29:00:25:10","model":"iPhone18,1"}"""
+        val box = """[ocbmd] phone identity -> host: {"name":"Scott’s iPhone","deviceID":"02:00:00:00:25:10","model":"iPhone18,1"}"""
         assertEquals(
             """[ocbmd] phone identity -> host: {"name":"<phone>","deviceID":"..25:10","model":"iPhone18,1"}""",
             LogRedactor.line(box),
@@ -32,7 +32,7 @@ class LogRedactorTest {
 
     @Test
     fun wholeFilesAreRedactedLineByLine() {
-        val file = "a 68:a7:29:00:25:10\nb\n".toByteArray()
+        val file = "a 02:00:00:00:25:10\nb\n".toByteArray()
         assertEquals("a ..25:10\nb\n", String(LogRedactor.text(file)))
     }
 
