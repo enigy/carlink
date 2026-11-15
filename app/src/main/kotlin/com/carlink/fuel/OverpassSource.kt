@@ -84,7 +84,7 @@ class OverpassSource(
             val lat = if (e.has("lat")) e.optDouble("lat") else centre?.optDouble("lat") ?: Double.NaN
             val lon = if (e.has("lon")) e.optDouble("lon") else centre?.optDouble("lon") ?: Double.NaN
             if (lat.isNaN() || lon.isNaN()) return null
-            val name = listOf("name", "brand", "operator").firstNotNullOfOrNull { tags.optString(it).ifBlank { null } } ?: "Fuel station"
+            val name = listOf("name", "brand", "operator").firstNotNullOfOrNull { tags.optString(it).ifBlank { null } } ?: FuelDiscounts.UNNAMED
             val street = tags.optString("addr:street").ifBlank { null }
             return Station("osm:${e.optString("type")}/${e.optLong("id")}", name, address(tags), GeoPoint(lat, lon), diesel = diesel(tags), street = street)
         }

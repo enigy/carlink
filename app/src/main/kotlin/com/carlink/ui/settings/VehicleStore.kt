@@ -3,6 +3,8 @@ package com.carlink.ui.settings
 import android.content.Context
 import android.content.SharedPreferences
 import com.carlink.car.VehicleStatusValues
+import com.carlink.fuel.FuelDiscount
+import com.carlink.fuel.FuelDiscounts
 import com.carlink.fuel.LowFuel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,9 +16,11 @@ import kotlinx.coroutines.flow.asStateFlow
  * driver picks one ([EngineChoice]). The data points (range, the low-fuel warning, the outside temperature) are shared
  * one by one ([VehicleStatusValues.Shares]), off by default. The truck's, not a driver's: one file for every iPhone.
  * Changes apply when the phone next connects, since the adapter declares them as the session starts.
- * The Fuel card's own settings ([fuelCard], [fuelOnLow], [lowFuelAt], [fuelGrade], [nearbyStations], [stationSource]) apply
+ * The Fuel card's own settings ([fuelCard], [fuelOnLow], [lowFuelAt], [fuelGrade], [nearbyStations], [stationSource],
+ * [fuelDiscounts]) apply
  * at once.
  */
+@Suppress("TooManyFunctions") // One setter per Vehicle setting, each persisted and published the same way.
 class VehicleStore private constructor(
     context: Context,
 ) {
@@ -38,6 +42,7 @@ class VehicleStore private constructor(
     private val nearbyState = MutableStateFlow(prefs.getBoolean(KEY_NEARBY, false))
     private val stationSourceState = MutableStateFlow(StationSource.of(prefs.getString(KEY_STATION_SOURCE, null)))
     private val radiusState = MutableStateFlow(prefs.getInt(KEY_RADIUS_MI, DEFAULT_RADIUS_MI))
+    private val discountsState = MutableStateFlow(FuelDiscounts.decode(prefs.getString(KEY_FUEL_DISCOUNTS, null)))
 
     /** Whether the head unit's GPS goes to the phone. */
     val carGps: StateFlow<Boolean> = gpsState.asStateFlow()
@@ -68,6 +73,9 @@ class VehicleStore private constructor(
 
     /** How far the card looks for stations, miles (default 5); shown in the car's unit. */
     val searchRadiusMi: StateFlow<Int> = radiusState.asStateFlow()
+
+    /** The discount programs the driver is in ([FuelDiscount]); none by default, and each amount the driver's own. */
+    val fuelDiscounts: StateFlow<List<FuelDiscount>> = discountsState.asStateFlow()
 
     fun setCarGps(on: Boolean) {
         prefs.edit().putBoolean(KEY_GPS, on).apply()
@@ -124,6 +132,11 @@ class VehicleStore private constructor(
         radiusState.value = miles
     }
 
+    fun setFuelDiscounts(discounts: List<FuelDiscount>) {
+        prefs.edit().putString(KEY_FUEL_DISCOUNTS, FuelDiscounts.encode(discounts)).apply()
+        discountsState.value = discounts
+    }
+
     companion object {
         // PERSISTENCE CONTRACT: renaming any of these orphans the stored choice.
         private const val PREFS_NAME = "carlink_vehicle"
@@ -136,6 +149,7 @@ class VehicleStore private constructor(
         private const val KEY_NEARBY = "fuel_nearby_stations"
         private const val KEY_STATION_SOURCE = "fuel_station_source"
         private const val KEY_RADIUS_MI = "fuel_search_radius_mi"
+        private const val KEY_FUEL_DISCOUNTS = "fuel_discounts"
         const val DEFAULT_RADIUS_MI = 5
 
         /** The radii Settings › Vehicle offers, miles. */

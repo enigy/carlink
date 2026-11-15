@@ -165,9 +165,11 @@ private fun Stations(
     val tab by stars.tab.collectAsState()
     val view by FuelStations.view.collectAsState()
     val here by FuelStations.here.collectAsState()
+    val store = remember(context) { VehicleStore.get(context) }
+    val discounts by store.fuelDiscounts.collectAsState()
     val rows =
         StationList
-            .rows(view.stations, fuel, here, vehicle.rangeM, cheapestFirst = !look.low)
+            .rows(view.stations, fuel, here, vehicle.rangeM, cheapestFirst = !look.low, discounts = discounts)
             // Starred: the starred ones among all, so CHEAPEST and NEAREST still mean of every station (the Mac's 12 Nov bench).
             .filter { tab != StationStars.Tab.STARRED || it.station.id in starred }
             .take(MAX_ROWS)

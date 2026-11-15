@@ -168,24 +168,31 @@ private fun StationRowView(
                 Text(words.joinToString(" · "), style = type.titleMedium, color = secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        row.price?.let { RowPrice(it) }
+        row.price?.let { RowPrice(it, row.posted.takeIf { row.discount != null }) }
     }
 }
 
 /** A row's CHEAPEST and NEAREST, or null. */
 private val StationRow.tags: String? get() = listOfNotNull("CHEAPEST".takeIf { cheapest }, "NEAREST".takeIf { nearest }).joinToString(" · ").ifEmpty { null }
 
-/** A row's price, and its age, amber once it is over a day old. */
+/**
+ * A row's price, and its age, amber once it is over a day old. With a discount program ([posted] not null) the price is
+ * what the driver pays, and the posted one goes before the age, so it is clear why the station ranks where it does.
+ */
 @Composable
-private fun RowPrice(price: FuelPrice) {
+private fun RowPrice(
+    price: FuelPrice,
+    posted: FuelPrice?,
+) {
     val now = System.currentTimeMillis()
     Column(horizontalAlignment = Alignment.End) {
         Text(StationText.price(price.amount, price.currency), style = MaterialTheme.typography.titleLarge)
         val at = price.atMs
-        if (at != null) {
-            val stale = StationText.stale(at, now)
+        val postedWords = posted?.let { StationText.posted(it) }
+        if (at != null || postedWords != null) {
+            val stale = at != null && StationText.stale(at, now)
             Text(
-                StationText.age(at, now),
+                listOfNotNull(postedWords, at?.let { StationText.age(it, now) }).joinToString(" · "),
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (stale) MaterialTheme.colorScheme.tertiary else LocalContentColor.current.copy(alpha = SECONDARY_ALPHA),
             )
@@ -223,7 +230,12 @@ internal fun StationSheet(
     Surface(modifier = modifier, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 6.dp) {
         Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(StationText.title(s), style = MaterialTheme.typography.headlineMedium)
-            val price = row.price?.let { p -> StationText.price(p.amount, p.currency) + (p.atMs?.let { ", updated ${StationText.age(it, now)}" } ?: "") }
+            val price =
+                row.price?.let { p ->
+                    StationText.price(p.amount, p.currency) +
+                        (row.discount?.let { d -> row.posted?.let { " with your ${d.label} discount (${StationText.posted(it)})" } } ?: "") +
+                        (p.atMs?.let { ", updated ${StationText.age(it, now)}" } ?: "")
+                }
             Text(price ?: "No price", style = MaterialTheme.typography.headlineSmall)
             row.distanceM?.let { d ->
                 Text(StationText.distance(d, imperial) + " away" + if (row.outOfReach) ", out of reach on this range" else "", style = MaterialTheme.typography.titleLarge)
