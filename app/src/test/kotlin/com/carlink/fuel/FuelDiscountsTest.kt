@@ -212,22 +212,35 @@ class FuelDiscountsTest {
 
     @Test
     fun `the dialog says why it won't take a listed brand or the unnamed placeholder (CL-3, CL-7)`() {
-        assertEquals("Shell has its own row: set it there", FuelDiscounts.nameProblem(" shell "))
-        assertEquals("Kroger has its own row: set it there", FuelDiscounts.nameProblem("Fry's Fuel Center"))
+        assertEquals("Shell has its own row: set it there, or add its street for one store", FuelDiscounts.nameProblem(" shell "))
+        assertEquals("Kroger has its own row: set it there, or add its street for one store", FuelDiscounts.nameProblem("Fry's Fuel Center"))
         assertNotNull(FuelDiscounts.nameProblem("Fuel Station"))
         assertNull(FuelDiscounts.nameProblem("Kum & Go"))
         assertNull(FuelDiscounts.nameProblem("Shell Rock Fuel"))
-        assertEquals("Shell has its own row: set it there", FuelDiscounts.nameProblem("Shell Gas Station"))
+        assertEquals("Shell has its own row: set it there, or add its street for one store", FuelDiscounts.nameProblem("Shell Gas Station"))
         assertNull("one store of a brand (R3-1)", FuelDiscounts.nameProblem("Circle K #2715"))
         assertNull(FuelDiscounts.nameProblem("Shell Gas on Main St"))
         assertNull(FuelDiscounts.nameProblem("QT 1023"))
+        // QuikTrip's row leaves "QT Mart" out (E2), so it is a station of its own, not the brand (L-1).
+        assertNull(FuelDiscounts.nameProblem("QT Mart"))
+        val qtMart = FuelDiscount(null, "QT Mart", 5)
+        assertTrue(qtMart.matches(st("QT Mart", 1.0, 3.0)))
+        assertFalse(qtMart.matches(st("QuikTrip", 1.0, 3.0)))
+        assertFalse(qtMart.matches(st("QT 1023", 1.0, 3.0)))
     }
 
     @Test
     fun `the dialog offers named stations that aren't a listed brand (E4)`() {
         val around =
-            listOf(st("Fuel station", 1.0, 3.0), st("QuikTrip", 1.0, 3.0), st("123", 1.0, 3.0), st("Kum & Go", 1.0, 3.0), st("Kum & Go", 2.0, 3.0))
-        assertEquals(listOf("Kum & Go"), FuelDiscounts.pickable(around))
+            listOf(
+                st("Fuel station", 1.0, 3.0),
+                st("QuikTrip", 1.0, 3.0),
+                st("123", 1.0, 3.0),
+                st("Kum & Go", 1.0, 3.0),
+                st("Kum & Go", 2.0, 3.0),
+                st("QT Mart", 1.0, 3.0),
+            )
+        assertEquals(listOf("Kum & Go", "QT Mart"), FuelDiscounts.pickable(around))
         // A name over the cap is left out, not cut (cut inside a word or number it misses its own station: round 3).
         val long = st("Speedy Gas & Go Travel Center Number 41237 Hwy 9", 1.0, 3.0)
         assertTrue(FuelDiscounts.pickable(listOf(long)).isEmpty())

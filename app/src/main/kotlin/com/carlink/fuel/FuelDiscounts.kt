@@ -62,8 +62,11 @@ enum class DiscountBrand(
 
     fun matches(stationName: String): Boolean = match.containsMatchIn(stationName)
 
-    /** Whether [name], typed, is the brand alone ([bare]): its own row's program, not one store's. */
-    fun isBare(name: String): Boolean = bare.containsMatchIn(name)
+    /**
+     * Whether [name], typed, is the brand alone ([bare]): its own row's program, not one store's. Only a name the row takes
+     * too, so "QT Mart", which QuikTrip's row leaves out (E2), stays a station of its own (round 3, L-1).
+     */
+    fun isBare(name: String): Boolean = bare.containsMatchIn(name) && match.containsMatchIn(name)
 
     companion object {
         fun of(code: String): DiscountBrand? = entries.firstOrNull { it.code == code }
@@ -137,7 +140,7 @@ object FuelDiscounts {
     fun nameProblem(name: String): String? {
         val n = name.trim()
         if (n.equals(UNNAMED, ignoreCase = true)) return "That's the maps' word for a station with no name: type its own name"
-        return DiscountBrand.entries.firstOrNull { it.isBare(n) }?.let { "${it.label} has its own row: set it there" }
+        return DiscountBrand.entries.firstOrNull { it.isBare(n) }?.let { "${it.label} has its own row: set it there, or add its street for one store" }
     }
 
     /**

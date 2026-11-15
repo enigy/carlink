@@ -141,7 +141,7 @@ private fun DiscountDialog(
                         value = name,
                         onValueChange = { name = it.take(FuelDiscounts.MAX_NAME) },
                         singleLine = true,
-                        label = { Text("The station's name, without the street") },
+                        label = { Text("The station's name as the Fuel card shows it") },
                         isError = problem != null,
                         supportingText = problem?.let { { Text(it) } },
                     )
