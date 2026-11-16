@@ -38,9 +38,10 @@ import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 
 /**
- * Adapter and about: the box's status in plain words (with the raw line kept for bug reports), the
- * app version and the privacy policy ([PrivacyRow]), the USB bridge's version and other apps' access ([UsbBridgeGroup]), and where lyrics come from and what of them the
- * head unit keeps ([LyricsGroup]). The log controls live under Troubleshoot ([LogsGroup]).
+ * Adapter and about: the box's status in plain words (with the raw line kept for bug reports), how quickly the CarPlay
+ * picture comes after the display ([ConnectTimeRow]), the app version and the privacy policy ([PrivacyRow]), the USB
+ * bridge's version and other apps' access ([UsbBridgeGroup]), and where lyrics come from and what of them the head unit
+ * keeps ([LyricsGroup]). The log controls live under Troubleshoot ([LogsGroup]).
  */
 @Composable
 internal fun AdapterPane(
@@ -51,9 +52,11 @@ internal fun AdapterPane(
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(28.dp)) {
         PaneHeader(title = "Adapter and about")
         Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            // Left: the adapter, then the app (version and privacy policy). Right: the adapter's firmware, then lyrics.
+            // Left: the adapter and its connect time, then the app (version and privacy policy). Right: the adapter's
+            // firmware, then lyrics.
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(28.dp)) {
                 AdapterStatusCard(carlinkManager.adapterName, live.box)
+                SettingsGroup { ConnectTimeRow() }
                 SettingsGroup {
                     SettingRow(title = "App version", icon = Icons.Default.Info) {
                         Text(rememberAppVersion(), style = SettingsStyle.RowTitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
