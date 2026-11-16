@@ -1,6 +1,6 @@
 # Carlink
 
-The Carlink app makes the Apple Carplay experience on a 2024+ Chevy Silverado or GMC Sierra functionally similar to the native Android Auto (AA) experience.  It enables you to have a full screen Carplay experience, with HUD features that previously were only AA capable.  In addition to enabling these features, this app enhances the HUD by allowing you to customize many of the HUD settings to your preference.
+The Carlink app makes the Apple Carplay experience on a 2023+ Chevy Silverado or GMC Sierra functionally similar to the native Android Auto (AA) experience.  It enables you to have a full screen Carplay experience, with HUD features that previously were only AA capable.  In addition to enabling these features, this app enhances the HUD by allowing you to customize many of the HUD settings to your preference.
 
 It also has a Media side pane that is much more functional and appealing than the Carplay NowPlaying Widget.  This media side pane also includes the ability to display lyrics, for those trips that your passengers need assistance with! ;)
 
