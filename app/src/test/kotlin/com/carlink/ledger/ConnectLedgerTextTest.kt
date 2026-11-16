@@ -89,13 +89,41 @@ class ConnectLedgerTextTest {
                 "for a wake, the process start for an app start, the start itself for a reconnect.",
             lines[0],
         )
-        assertEquals("Display on to picture, the last 5 wakes with a picture: median 3000 ms, 9 in 10 within 5000 ms (nearest rank).", lines[1])
+        assertEquals(
+            "Display on to picture, the last 5 wakes with a picture: median 3000 ms, 9 in 10 within 5000 ms (nearest rank). " +
+                "Not counted: 0 wakes with a picture whose screen wasn't in front within 1000 ms of the display on (marked below).",
+            lines[1],
+        )
         assertEquals(listOf("07:47:13", "07:46:13", "07:45:13", "07:44:13", "07:43:13"), lines.drop(2).map { it.substring(11, 19) })
         assertEquals(text, String(LogRedactor.text(text.toByteArray(Charsets.UTF_8)), Charsets.UTF_8))
     }
 
     @Test
     fun `with too few wakes the header says so`() {
-        assertEquals("Display on to picture: not enough wakes with a picture yet (1 of 5).", ConnectLedgerText.summaryLine(ConnectLedger().with(wake)))
+        assertEquals(
+            "Display on to picture: not enough wakes with a picture yet (1 of 5). Not counted: 0 wakes with a picture whose screen " +
+                "wasn't in front within 1000 ms of the display on (marked below).",
+            ConnectLedgerText.summaryLine(ConnectLedger().with(wake)),
+        )
+    }
+
+    @Test
+    fun `a wake left out of the figure is marked in the list and counted in the header`() {
+        val late = wake.copy(pictureMs = 42_000, endMs = 42_000, frontMs = 40_500)
+        assertEquals(
+            "2026-11-16 07:42:13 wake, adapter listed: picture +42000 ms, not counted: Carlink's screen came to the front +40500 ms",
+            ConnectLedgerText.line(late, utc).substringBefore(" | "),
+        )
+        assertEquals(
+            "2026-11-16 07:42:13 wake, adapter listed: picture +3400 ms, not counted: Carlink's screen was not in front",
+            ConnectLedgerText.line(wake.copy(pictureMs = 3_400, endMs = 3_400, frontMs = null), utc).substringBefore(" | "),
+        )
+        assertEquals("counted: no mark", "2026-11-16 07:42:13 wake, adapter listed: picture +3412 ms", ConnectLedgerText.line(wake, utc).substringBefore(" | "))
+        val ledger = (1..5).fold(ConnectLedger()) { l, i -> l.with(wake.copy(pictureMs = i * 1_000L, endMs = i * 1_000L)) }.with(late)
+        assertEquals(
+            "Display on to picture, the last 5 wakes with a picture: median 3000 ms, 9 in 10 within 5000 ms (nearest rank). " +
+                "Not counted: 1 wake with a picture whose screen wasn't in front within 1000 ms of the display on (marked below).",
+            ConnectLedgerText.summaryLine(ledger),
+        )
     }
 }
