@@ -54,6 +54,9 @@ class ConnectLedgerStoreTest {
     fun `the file keeps the last 200`() {
         val a = store()
         for (i in 1..205) a.add(record(i.toLong()))
+        // Every write done before the next store reads: close() waits only 2 s for them, which 205 synced writes overran
+        // on a loaded Mac (16 Nov), and the next store then deleted the one in flight as a power cut's.
+        assertEquals(200, a.snapshot().records.size)
         a.close()
         val back = store().snapshot()
         assertEquals(200, back.records.size)
