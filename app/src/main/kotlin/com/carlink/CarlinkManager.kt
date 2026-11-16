@@ -47,6 +47,9 @@ import com.carlink.device.mergeDeviceList
 import com.carlink.device.phonePolicyJson
 import com.carlink.fuel.Directions
 import com.carlink.fuel.GeoPoint
+import com.carlink.ledger.ConnectLedgerStore
+import com.carlink.ledger.ConnectLedgerText
+import com.carlink.ledger.ConnectTimer
 import com.carlink.logging.DriveLog
 import com.carlink.logging.DriveLogging
 import com.carlink.logging.LogExport
@@ -857,6 +860,7 @@ class CarlinkManager(
     fun setAppVisible(visible: Boolean) {
         appVisible = visible
         callNotificationHost?.setAppVisible(visible)
+        connectTimer.appVisible(visible, SystemClock.elapsedRealtime()) // ledger
     }
 
     /**
@@ -956,6 +960,30 @@ class CarlinkManager(
     /** Dormant since the display stayed off ([endForDisplayOff]) until it is on again: the bench's flicker starts from here. */
     val dormant: Boolean get() = dormantForDisplayOff
 
+    /**
+     * The connect ledger's timer (M2): told what happened, after it happened, by the calls marked "ledger" here and by the
+     * screen's picture ([pictureShown]). It only watches; nothing it does changes how Carlink connects. Each connect it
+     * ends goes to the ledger on the head unit ([ConnectLedgerStore]) and into the log.
+     */
+    private val connectTimer: ConnectTimer =
+        ConnectTimer(
+            processStartMs = android.os.Process.getStartElapsedRealtime(),
+            commit = { record ->
+                ConnectLedgerStore.get(context).add(record)
+                logInfo("[LEDGER] ${ConnectLedgerText.line(record)}", tag = Logger.Tags.USB)
+            },
+            schedule = { atMs ->
+                scope.launch {
+                    delay((atMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L))
+                    connectTimer.tick(SystemClock.elapsedRealtime())
+                }
+            },
+            note = { logInfo(it, tag = Logger.Tags.ADAPTR) },
+        ).also {
+            // MainActivity builds the manager as its screen comes up, after its onStart: in front from now.
+            it.appVisible(true, SystemClock.elapsedRealtime())
+        }
+
     /** The starts, the display wake's and the undo of one a display OFF cut short ([WakeStarts]). */
     private val starts =
         WakeStarts(
@@ -983,6 +1011,11 @@ class CarlinkManager(
                 override fun stop() = stopImpl()
 
                 override fun log(line: String) = logInfo(line, tag = Logger.Tags.USB)
+
+                override fun wakeConnecting(
+                    displayOnMs: Long,
+                    adapterListed: Boolean,
+                ) = connectTimer.wake(displayOnMs, adapterListed, SystemClock.elapsedRealtime()) // ledger
             },
         )
 
@@ -1466,6 +1499,7 @@ class CarlinkManager(
     suspend fun handOverAdapter(packageName: String): String? = detached("the handover") { handOverImpl(packageName) }
 
     private suspend fun handOverImpl(packageName: String): String? {
+        connectTimer.closing(SystemClock.elapsedRealtime()) // ledger: a connect in flight ended early
         cancelReconnect()
         starts.closing() // no wake may start a session after the handover, nor arm a cut
         startingJob?.let { if (it.isActive) it.cancel() }
@@ -1693,6 +1727,7 @@ class CarlinkManager(
             logInfo("[POWER] start skipped: dormant while the display is off", tag = Logger.Tags.USB)
             return
         }
+        connectTimer.startBegan(SystemClock.elapsedRealtime()) // ledger
         // The coroutine running this start, for [disconnect] to cancel: it may sit ~30 s looking for the adapter.
         startingJob = currentCoroutineContext()[Job]
 
@@ -1749,7 +1784,9 @@ class CarlinkManager(
             return
         }
         starts.sessionUp() // every start, not only a wake: the session is up, and a cut wake is no longer one to restart
-        ColdStart.process.subscribed(SystemClock.elapsedRealtime())?.let { logInfo(it, tag = Logger.Tags.USB) }
+        val subscribedAt = SystemClock.elapsedRealtime()
+        connectTimer.subscribed(subscribedAt) // ledger
+        ColdStart.process.subscribed(subscribedAt)?.let { logInfo(it, tag = Logger.Tags.USB) }
         c.startHeartbeat()
         armBoxLogStream(c)
         syncPhonePolicyAfterSubscribe()
@@ -1920,6 +1957,7 @@ class CarlinkManager(
      * ~30 s holding the lifecycle mutex, and Close app waited behind it with its dialog up (owner, 5 Nov).
      */
     suspend fun disconnect() {
+        connectTimer.closing(SystemClock.elapsedRealtime()) // ledger: a connect in flight ended early
         cancelReconnect()
         starts.closing() // nor may the wake start a session after Close app, or arm a cut again
         startingJob?.let { job ->
@@ -2710,6 +2748,7 @@ class CarlinkManager(
     fun onDisplayOff(source: String) {
         if (released || !displayOn) return
         displayOn = false
+        connectTimer.displayOff(SystemClock.elapsedRealtime(), SystemClock.uptimeMillis()) // ledger
         starts.displayOff()
         logInfo(
             "[POWER] display OFF ($source): state=$state driving=$isDriving call=${callActive()}; the session ends in " +
@@ -2761,7 +2800,10 @@ class CarlinkManager(
         dormantForDisplayOff = false
         reconnects.reset()
         logInfo("[POWER] display ON ($source): state=$state dormant=$wasDormant", tag = Logger.Tags.USB)
-        starts.displayOn(wasDormant, SystemClock.elapsedRealtime())
+        // One reading for both: the ledger matches the wake WakeStarts reports back by this time.
+        val now = SystemClock.elapsedRealtime()
+        connectTimer.displayOn(now, SystemClock.uptimeMillis()) // ledger
+        starts.displayOn(wasDormant, now)
     }
 
     private fun rebootAdapterImpl() {
@@ -2769,6 +2811,7 @@ class CarlinkManager(
         // a clean-slate reset, so a user who reboots after several short sessions still gets the
         // right escalation messaging on the next attempt.
         logWarn("[LIFECYCLE] Reboot adapter requested (~50 s absence expected)", tag = Logger.Tags.ADAPTR)
+        connectTimer.sessionDown(SystemClock.elapsedRealtime()) // ledger
         cancelReconnect()
         cancelDelayedKeyframe()
         stopMicrophoneCapture()
@@ -2801,6 +2844,7 @@ class CarlinkManager(
         // then cancel the scope so in-flight coroutines die at their next suspension point rather
         // than racing the synchronous teardown below.
         released = true
+        connectTimer.closing(SystemClock.elapsedRealtime()) // ledger: a connect in flight ended early
         scope.cancel()
 
         stop()
@@ -3074,6 +3118,15 @@ class CarlinkManager(
         val e = videoEpoch
         return (e?.seq ?: 0) to (e?.renderer?.framesRendered?.get() ?: 0L)
     }
+
+    /** When the current video epoch handed its first frame to the Surface (elapsedRealtime); 0 before it has one. */
+    fun firstFrameDrawnAt(): Long = videoEpoch?.renderer?.firstFrameAtMs ?: 0L
+
+    /**
+     * The first video frame is on screen at [atMs] (MainScreen: the loading screen lifting over a frame the decoder drew):
+     * the connect ledger's picture. It only watches.
+     */
+    fun pictureShown(atMs: Long) = connectTimer.picture(atMs, SystemClock.elapsedRealtime())
 
     /**
      * Recover video after the settings overlay closes.
@@ -3949,6 +4002,8 @@ class CarlinkManager(
         c.onBoxLog = { entries ->
             if (DriveLog.recording) DriveLog.boxEntries(entries)
             watchLaneRefusal(entries)
+            // ledger: the adapter's [startup] and [timeline] lines, when the stream is on anyway (never armed for it)
+            connectTimer.adapterLines(entries, SystemClock.elapsedRealtime())
         }
         c.setBoxLogStream(true)
     }
@@ -4413,6 +4468,7 @@ class CarlinkManager(
     /** STREAMING: at this phone's first media once keyed, or at its key when the media came first ([StreamingStamp]). */
     private fun markStreaming() {
         lastStreamingStartMs = SystemClock.elapsedRealtime()
+        connectTimer.streaming(lastStreamingStartMs) // ledger
         // At STREAMING, about 1 s after the picture; not for a wake with no phone for minutes, which times nothing.
         starts.streaming(lastStreamingStartMs)?.let { logInfo(it, tag = Logger.Tags.USB) }
         setState(State.STREAMING)
@@ -4655,6 +4711,7 @@ class CarlinkManager(
         // distinguish "broken after a prior session" from "never connected".
 
         logError("Adapter error: $error", tag = Logger.Tags.ADAPTR)
+        connectTimer.sessionDown(SystemClock.elapsedRealtime()) // ledger
 
         cancelDelayedKeyframe()
         currentPhoneType = null
@@ -4716,6 +4773,7 @@ class CarlinkManager(
      * never ran despite MAX_RECONNECT_ATTEMPTS.
      */
     private fun handleFailedStart(statusMsg: String) {
+        connectTimer.sessionDown(SystemClock.elapsedRealtime()) // ledger
         transport?.stop()
         transport = null
         setState(State.DISCONNECTED)

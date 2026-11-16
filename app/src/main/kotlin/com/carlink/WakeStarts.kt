@@ -64,6 +64,15 @@ class WakeStarts(
         fun stop()
 
         fun log(line: String)
+
+        /**
+         * The connect ledger: a wake's connect begins, timed from the display on at [displayOnMs], with the adapter
+         * listed on USB then or not ([DisplayOff.firstPath]). It only watches.
+         */
+        fun wakeConnecting(
+            displayOnMs: Long,
+            adapterListed: Boolean,
+        ) {}
     }
 
     // A display OFF cut the wake in flight before SUBSCRIBE: the one cancel after which the undo starts again
@@ -198,6 +207,7 @@ class WakeStarts(
     private suspend fun connect(origin: WakePath?) {
         if (origin != null) lock.withLock { }
         val first = DisplayOff.firstPath(adapterListed = host.adapterListed())
+        host.wakeConnecting(wakeAtMs, adapterListed = first == WakePath.AT_ONCE)
         path = origin ?: first
         val why =
             when (origin) {

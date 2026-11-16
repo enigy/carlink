@@ -100,6 +100,16 @@ class WakeStartsTest {
         }
 
         override fun log(line: String) = Unit
+
+        // What the connect ledger hears of each wake: when the display came on, and whether the adapter was listed.
+        val wakes = CopyOnWriteArrayList<Pair<Long, Boolean>>()
+
+        override fun wakeConnecting(
+            displayOnMs: Long,
+            adapterListed: Boolean,
+        ) {
+            wakes += displayOnMs to adapterListed
+        }
     }
 
     private val session = FakeSession()
@@ -260,6 +270,27 @@ class WakeStartsTest {
         eventually("the undo") { session.stops.get() == 1 }
         settled()
         assertEquals("no start after Close app", 1, session.begun.get())
+    }
+
+    @Test
+    fun the_ledger_hears_each_wake_with_its_display_on_time_and_whether_the_adapter_was_listed() {
+        on(nowMs = 42)
+        eventually("the first wake streams") { session.state == S.STREAMING }
+        settled()
+        assertEquals(listOf(42L to true), session.wakes.toList())
+
+        session.stop() // DISCONNECTED, as the display-off wait leaves it
+        session.listed = false
+        off()
+        on(nowMs = 77)
+        eventually("the settled wake streams") { session.state == S.STREAMING }
+        settled()
+        assertEquals("with the adapter not listed", listOf(42L to true, 77L to false), session.wakes.toList())
+
+        off()
+        on(nowMs = 90) // the session is up: no wake is launched, and there is nothing to time
+        settled()
+        assertEquals(2, session.wakes.size)
     }
 
     @Test
