@@ -228,5 +228,16 @@ class ConnectLedgerCodecTest {
         val stored = JSONObject(ConnectLedgerCodec.encodeRecord(bad))
         assertFalse(stored.has("timeline"))
         assertFalse(stored.getJSONObject("adapter").has("preload"))
+        for (timeline in listOf("[timeline] v1 bt_02000000a0b1=1", "[timeline] v1 dial=12345678901234", "[timeline] v1 ${"k".repeat(25)}=1")) {
+            assertFalse(timeline, JSONObject(ConnectLedgerCodec.encodeRecord(full.copy(timeline = timeline))).has("timeline"))
+        }
+    }
+
+    @Test
+    fun `a file whose timeline holds an address in a key gives no timeline back`() {
+        val stored = JSONObject(ConnectLedgerCodec.encodeRecord(full)).put("timeline", "[timeline] v1 dial=1 a4c3f085ac2d=7")
+        val doc = JSONObject().put("v", 1).put("connects", JSONArray().put(stored)).toString()
+        val back = ConnectLedgerCodec.decode(doc)!!.records.single()
+        assertNull(back.timeline)
     }
 }
