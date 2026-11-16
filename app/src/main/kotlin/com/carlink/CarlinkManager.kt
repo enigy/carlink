@@ -1978,8 +1978,9 @@ class CarlinkManager(
     /**
      * Settings → Adapter → Save Logs: pull the box's `/tmp/box.log` over the live link (it lives in
      * RAM on the box and is gone at power-off, so this is the only way to keep it after a drive) and
-     * save it next to this process's own logcat under Downloads/Carlink. Returns where they went. With no
-     * OCBM adapter connected (a stock adapter mid-conversion, say) it saves the app's own logs alone.
+     * save it next to this process's own logcat under Downloads/Carlink, with the trail and the connect
+     * ledger as text. Returns where they went. With no OCBM adapter connected (a stock adapter
+     * mid-conversion, say) it saves the app's own logs alone.
      */
     suspend fun saveLogs(): Result<String> =
         withContext(Dispatchers.IO) {
@@ -2000,6 +2001,10 @@ class CarlinkManager(
             )
             val trail = LogTrail.snapshot().toByteArray(Charsets.UTF_8)
             saved += LogExport.save(context, "carlink-trail-$stamp.log", trail).getOrElse { return@withContext Result.failure(it) }
+            // The connect ledger as text, newest first, through the same redaction as every saved log (LogExport).
+            connectTimer.tick(SystemClock.elapsedRealtime())
+            val ledger = ConnectLedgerText.text(ConnectLedgerStore.get(context).snapshot()).toByteArray(Charsets.UTF_8)
+            saved += LogExport.save(context, "carlink-ledger-$stamp.log", ledger).getOrElse { return@withContext Result.failure(it) }
             LogExport.appLogcat()?.let { app ->
                 saved += LogExport.save(context, "carlink-app-$stamp.log", app).getOrElse { return@withContext Result.failure(it) }
             }
