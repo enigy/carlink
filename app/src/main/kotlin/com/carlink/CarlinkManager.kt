@@ -2640,6 +2640,11 @@ class CarlinkManager(
             client?.reannounceKeyed()
             streamingStamp.reset()
             r.mode?.let(::applyProjMode)
+            // The epoch opens now, as it does once a live state is known, not at the phone's own key seconds later: opened
+            // there, on main, it lost the race with the read thread, and the phone's first codec config and frames went to
+            // no pipe (15 Nov, 10:24:30: nopipe=3, the decoder waited for the next config; the 16 Nov 17:15 app start opened
+            // it only as the key's handler ran on main). The last host's replay came before this NONE, with no pipe to go to.
+            startCodecIfDeferred()
             return
         }
         logInfo("[SESSION] the box's state at SUBSCRIBE is live ($why)", tag = Logger.Tags.ADAPTR)
