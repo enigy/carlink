@@ -392,6 +392,79 @@ class ConnectTimerTest {
     }
 
     @Test
+    fun `a display off and on while the wake's SUBSCRIBE is in flight leaves the session to the next wake, whose picture counts`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L) // its HELLO and SUBSCRIBE block
+        t.displayOff(301_000L, 0L) // the first wake's record ends early
+        t.subscribed(301_400L) // the blocked SUBSCRIBE lands with no connect open
+        t.displayOn(302_000L, 0L)
+        t.wake(302_000L, adapterListed = true, nowMs = 302_050L) // queued behind it: the session is up, nothing starts
+        t.picture(304_500L, 304_500L)
+        t.streaming(305_000L)
+        t.tick(304_500L + SETTLE_MS)
+
+        assertEquals(2, committed.size)
+        val first = committed[0]
+        assertEquals(Outcome.ENDED_EARLY, first.outcome)
+        assertEquals(EndReason.DISPLAY_OFF, first.endReason)
+        assertNull(first.subscribeMs)
+        val second = committed[1]
+        assertEquals(Outcome.PICTURE, second.outcome)
+        assertEquals("up before this display on", 0L, second.subscribeMs)
+        assertEquals(2_500L, second.pictureMs)
+        assertEquals(3_000L, second.streamingMs)
+        assertEquals("no start of its own", 0, second.starts)
+    }
+
+    @Test
+    fun `STREAMING that came while no connect was open is the next wake's too`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L)
+        t.displayOff(301_000L, 0L)
+        t.subscribed(301_400L)
+        t.streaming(301_900L) // the phone came while the display was still off
+        t.displayOn(303_000L, 0L)
+        t.wake(303_000L, adapterListed = true, nowMs = 303_000L)
+        t.picture(303_800L, 303_800L)
+        t.tick(303_800L + SETTLE_MS)
+        val r = committed.last()
+        assertEquals(Outcome.PICTURE, r.outcome)
+        assertEquals(0L, r.subscribeMs)
+        assertEquals(0L, r.streamingMs)
+        assertEquals(800L, r.pictureMs)
+    }
+
+    @Test
+    fun `a session that went down, a start's own teardown or Close app leaves nothing for a wake to take`() {
+        val t = timer()
+        t.subscribed(100_000L) // no connect open
+        t.sessionDown(100_500L)
+        t.displayOff(101_000L, 0L)
+        t.displayOn(102_000L, 0L)
+        t.wake(102_000L, adapterListed = true, nowMs = 102_000L)
+        t.closing(103_000L)
+
+        t.subscribed(200_000L)
+        t.startBegan(200_100L) // a reconnect: its start stops the session that is up
+        t.closing(200_200L)
+
+        t.subscribed(300_000L)
+        t.closing(300_100L)
+        t.displayOff(300_200L, 0L)
+        t.displayOn(300_300L, 0L)
+        t.wake(300_300L, adapterListed = true, nowMs = 300_300L)
+        t.closing(300_400L)
+
+        assertEquals(listOf(Kind.WAKE_LISTED, Kind.RECONNECT, Kind.WAKE_LISTED), committed.map { it.kind })
+        assertEquals(listOf(null, null, null), committed.map { it.subscribeMs })
+        assertTrue(committed.all { it.outcome == Outcome.ENDED_EARLY && it.endReason == EndReason.APP_CLOSED })
+    }
+
+    @Test
     fun `the same wake reported twice is one connect`() {
         val t = timer()
         t.offThenOn(onAt = 300_000L)
