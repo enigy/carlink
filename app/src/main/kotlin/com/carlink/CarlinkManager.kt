@@ -19,6 +19,7 @@ import com.carlink.av.MediaAudioPlayer
 import com.carlink.av.PictureGate
 import com.carlink.av.PictureWatch
 import com.carlink.av.SkipAftermath
+import com.carlink.av.StreamSetups
 import com.carlink.av.TransientFocusPolicy
 import com.carlink.av.VideoCodec
 import com.carlink.av.VideoCodecs
@@ -765,6 +766,13 @@ class CarlinkManager(
 
     /** The phone's first frame, which lifts the loading screen: a wait started at each session, each phone's key, each phone leaving. */
     private val pictureGate = PictureGate()
+
+    /**
+     * The last stream's decoder setup, as its renderer configured for it: each new video epoch builds its decoder from it
+     * before its stream ([VideoRenderer]), so a wake's first frame (the same phone, the same parameter sets) waits for no
+     * decoder. Memory only, this manager's life; none for a new process.
+     */
+    private val streamSetups = StreamSetups()
 
     /**
      * The first frame the decoder drew for the phone's session now on, or null while there is none: what lifts the loading
@@ -2957,7 +2965,7 @@ class CarlinkManager(
         val pipe = SeamPipe(VIDEO_PIPE_BYTES, VIDEO_PIPE_DEPTH, name = "cp-video", log = ocbmLog)
         val watch = PictureWatch({ pictureGate.waiting }, SystemClock::elapsedRealtime) { wait, frame -> onPictureDrawn(seq, wait, frame) }
         val renderer =
-            VideoRenderer(config.width, config.height, surface, picture = watch) {
+            VideoRenderer(config.width, config.height, surface, picture = watch, setups = streamSetups) {
                 client?.requestKeyframe()
             }
         renderer.start()
@@ -3020,6 +3028,8 @@ class CarlinkManager(
         if (latched == codec) return
         logWarn("[LIFECYCLE] Video epoch #${e.seq} decodes ${latched.label}; the stream is now ${codec.label}: a fresh epoch", tag = Logger.Tags.VIDEO)
         val surface = videoSurface
+        // Not built ahead as the codec it is leaving: these parameter sets come next, and they build it.
+        if (streamSetups.last?.codec != codec) streamSetups.last = null
         retireVideoEpoch("codec ${latched.label} -> ${codec.label}")
         if (surface != null) openVideoEpoch(surface)
     }

@@ -36,12 +36,18 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * **The picture.** [picture] hears each message as it arrives, each decoder ready and each frame drawn, all on that
  * thread, and offers frames to the manager's [PictureGate] while it waits: what lifts the loading screen.
+ *
+ * **Built ahead.** Given [setups] holding the last stream's setup, [consume] configures the decoder from it before the
+ * first message, exactly as that stream configured it, so on a wake (the same phone, the same parameter sets) the first
+ * frame waits for no decoder. That decoder is fed nothing until this stream's own complete parameter sets prove byte for
+ * byte the same; any other ones rebuild it as a mid-stream change does. Each setup a stream configures is left there.
  */
 class VideoRenderer(
     private val width: Int,
     private val height: Int,
     private val surface: Surface,
     private val picture: PictureWatch? = null,
+    private val setups: StreamSetups? = null,
     private val onKeyframeNeeded: () -> Unit = {},
 ) {
     private val log = ProbeLog.sub("video")
@@ -68,6 +74,15 @@ class VideoRenderer(
     /** The parameter sets actually baked into the live codec, to detect a mid-session change. */
     private var configuredCsd: ByteArray? = null
 
+    /** The live codec was built ahead ([configure]) and this stream's own parameter sets haven't yet proven it: feed nothing. */
+    private var aheadUnproven = false
+
+    /** The codec the live decoder was built ahead as. */
+    private var aheadCodec: VideoCodec? = null
+
+    /** The live codec was built ahead: a failure before its first frame builds one at once, without the backoff. */
+    private var builtAhead = false
+
     private companion object {
         const val CONFIGURE_RETRY_MS = 5_000L // don't re-attempt configure per NAL (codec-pool leak)
         const val KEYFRAME_COOLDOWN_MS = 500L // H264Renderer's REACTIVE_KEYFRAME_COOLDOWN
@@ -87,6 +102,8 @@ class VideoRenderer(
         sawKeyframe = false
         configured = false
         configureFailedAt = 0L
+        aheadUnproven = false
+        builtAhead = false
         running.set(true)
     }
 
@@ -110,6 +127,8 @@ class VideoRenderer(
         sawKeyframe = false
         val hdr = ByteArray(4)
         try {
+            // Built ahead, before the first message (the pipe holds what comes meanwhile): see [configure].
+            setups?.last?.takeIf { it.width == width && it.height == height }?.let { configure(it, ahead = true) }
             while (running.get()) {
                 val msg = readSeamMessage(ins, hdr, log) ?: break
                 bytesIn.addAndGet((msg.size + 4).toLong())
@@ -138,7 +157,7 @@ class VideoRenderer(
             return
         }
         absorb(c, scan)
-        if (!configured) return
+        if (!configured || aheadUnproven) return
         // Skip only a PURE parameter-set message — csd already carries those. A mixed message
         // (parameter sets + VCL slices, which IDR access units routinely are) must be fed whole:
         // MediaCodec accepts in-band parameter sets inside an Annex-B AU, and dropping it would throw
@@ -160,7 +179,8 @@ class VideoRenderer(
      * Latch the codec, merge any parameter sets the message carried, and (re)configure once the set
      * the codec needs is complete. Reconfigures if the parameter sets CHANGED mid-session (iOS
      * re-SETUP / resolution change): feeding new-stream AUs into a codec configured for the old ones
-     * decodes garbage indefinitely with no self-heal.
+     * decodes garbage indefinitely with no self-heal. A decoder built ahead is this stream's only once
+     * its complete parameter sets are the very ones it was built with.
      */
     private fun absorb(
         c: VideoCodec,
@@ -172,13 +192,22 @@ class VideoRenderer(
         }
         paramSets.absorb(scan)
         if (scan.sawParamSet) log.i("parameter sets: ${paramSets.describe()}")
-        val csd = paramSets.csd(c) ?: return
-        if (configured && !csd.contentEquals(configuredCsd)) {
+        val setup = paramSets.setup(c, width, height) ?: return
+        if (aheadUnproven) {
+            aheadUnproven = false
+            if (c == aheadCodec && setup.csd.contentEquals(configuredCsd)) {
+                log.i("the decoder built ahead takes this stream: the same ${c.label} parameter sets")
+                return
+            }
+            log.i("the decoder built ahead had other parameter sets: building one for this ${c.label} stream")
+            releaseCodec()
+            sawKeyframe = false
+        } else if (configured && !setup.csd.contentEquals(configuredCsd)) {
             log.i("parameter sets changed — reconfiguring decoder")
             releaseCodec() // sets configured = false
             sawKeyframe = false
         }
-        if (!configured) maybeConfigure(c, csd)
+        if (!configured) configure(setup)
     }
 
     private fun requestKeyframe() {
@@ -193,49 +222,78 @@ class VideoRenderer(
         val c = codec ?: return
         codec = null
         configured = false
+        aheadUnproven = false
+        builtAhead = false
         runCatching { c.stop() }
         runCatching { c.release() }
     }
 
-    private fun maybeConfigure(
-        vc: VideoCodec,
-        csd: ByteArray,
-    ) {
+    /**
+     * Configure and start a decoder for [s] on the surface: true when it runs. The stream's own setup waits out the backoff
+     * after a failure, arms it on one, and is left in [setups] for the next epoch.
+     *
+     * Built [ahead], from the last stream's setup before this stream's first message: the very configure that stream made,
+     * so when this one brings the same parameter sets its first frame waits for no decoder. It is fed nothing until
+     * [absorb] has this stream's own and finds them the same, and it neither waits for nor arms the backoff, so when it
+     * fails it costs the stream nothing: the stream's own parameter sets build the decoder as they always have.
+     */
+    private fun configure(
+        s: StreamSetup,
+        ahead: Boolean = false,
+    ): Boolean {
         val now = SystemClock.elapsedRealtime()
-        if (configureFailedAt != 0L && now - configureFailedAt < CONFIGURE_RETRY_MS) return
+        if (!ahead && configureFailedAt != 0L && now - configureFailedAt < CONFIGURE_RETRY_MS) return false
         var c: MediaCodec? = null
-        runCatching {
-            val fmt = MediaFormat.createVideoFormat(vc.mime, width, height)
-            if (vc == VideoCodec.HEVC) {
-                // HEVC: ONE csd-0 holding VPS+SPS+PPS. Splitting them the way H.264 does fails here.
-                fmt.setByteBuffer("csd-0", ByteBuffer.wrap(csd))
-            } else {
-                fmt.setByteBuffer("csd-0", ByteBuffer.wrap(paramSets.sps!!))
-                fmt.setByteBuffer("csd-1", ByteBuffer.wrap(paramSets.pps!!))
+        val failure =
+            runCatching {
+                val fmt = MediaFormat.createVideoFormat(s.codec.mime, width, height)
+                if (s.codec == VideoCodec.HEVC) {
+                    // HEVC: ONE csd-0 holding VPS+SPS+PPS. Splitting them the way H.264 does fails here.
+                    fmt.setByteBuffer("csd-0", ByteBuffer.wrap(s.csd))
+                } else {
+                    fmt.setByteBuffer("csd-0", ByteBuffer.wrap(s.sps))
+                    fmt.setByteBuffer("csd-1", ByteBuffer.wrap(s.pps))
+                }
+                // Without this the input buffer is a vendor default; the NAL most likely to overflow it is
+                // the IDR, and losing that costs every frame until the next one.
+                fmt.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_INPUT_SIZE)
+                val mc = MediaCodec.createDecoderByType(s.codec.mime)
+                c = mc
+                mc.configure(fmt, surface, null, 0)
+                mc.start()
+                codec = mc
+                configuredCsd = s.csd
+                configured = true
+                picture?.decoderReady()
+                log.i("MediaCodec configured: ${s.codec.mime} ${width}x$height csd=${s.csd.size} B, decoder=${mc.name}")
+            }.exceptionOrNull()
+        when {
+            failure == null && ahead -> {
+                aheadUnproven = true
+                aheadCodec = s.codec
+                builtAhead = true
+                log.i("decoder built ahead from the last stream's ${s.codec.label} parameter sets in ${SystemClock.elapsedRealtime() - now} ms")
             }
-            // Without this the input buffer is a vendor default; the NAL most likely to overflow it is
-            // the IDR, and losing that costs every frame until the next one.
-            fmt.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_INPUT_SIZE)
-            val mc = MediaCodec.createDecoderByType(vc.mime)
-            c = mc
-            mc.configure(fmt, surface, null, 0)
-            mc.start()
-            codec = mc
-            configuredCsd = csd
-            configured = true
-            configureFailedAt = 0L
-            picture?.decoderReady()
-            log.i("MediaCodec configured: ${vc.mime} ${width}x$height csd=${csd.size} B, decoder=${mc.name}")
-        }.onFailure { e ->
-            // runCatching, not catch Exception: an OutOfMemoryError while the framework allocates the
-            // input buffers is an Error, and catching only Exception let it escape with the native
-            // codec never released AND configureFailedAt never armed — so the next producer re-dial
-            // leaked another one, walking the global codec pool down to a permanent black screen.
-            // Bare release is correct HERE: stop() is invalid from the Configured state.
-            runCatching { c?.release() }
-            configureFailedAt = now
-            log.e("configure failed (retry in ${CONFIGURE_RETRY_MS}ms): ${e.message}")
+            failure == null -> {
+                configureFailedAt = 0L
+                setups?.last = s
+            }
+            else -> {
+                // runCatching, not catch Exception: an OutOfMemoryError while the framework allocates the
+                // input buffers is an Error, and catching only Exception let it escape with the native
+                // codec never released AND configureFailedAt never armed — so the next producer re-dial
+                // leaked another one, walking the global codec pool down to a permanent black screen.
+                // Bare release is correct HERE: stop() is invalid from the Configured state.
+                runCatching { c?.release() }
+                if (ahead) {
+                    log.w("the decoder could not be built ahead (${failure.message}): the stream's own parameter sets build it")
+                } else {
+                    configureFailedAt = now
+                    log.e("configure failed (retry in ${CONFIGURE_RETRY_MS}ms): ${failure.message}")
+                }
+            }
         }
+        return failure == null
     }
 
     private fun feed(auBytes: ByteArray) {
@@ -269,10 +327,14 @@ class VideoRenderer(
             // Recover from a codec that threw mid-stream (CodecException is an ISE). Deliberately
             // does NOT clear configureFailedAt: clearing it meant a codec that threw on every access
             // unit rebuilt at frame rate — the codec-pool drain the backoff exists to prevent.
-            log.e("codec in error state: ${e.message} — resetting")
+            // The one exception: a decoder built ahead that fails before its first frame was built
+            // seconds before its stream and may have gone stale; the stream's own parameter sets build
+            // one at once, as they would have without it. That one is not built ahead, so this is once.
+            val again = builtAhead && framesRendered.get() == 0L
+            log.e("codec in error state: ${e.message} — resetting" + if (again) " (it was built ahead: building one now)" else "")
             releaseCodec()
             sawKeyframe = false
-            configureFailedAt = SystemClock.elapsedRealtime()
+            configureFailedAt = if (again) 0L else SystemClock.elapsedRealtime()
             requestKeyframe()
         }
     }

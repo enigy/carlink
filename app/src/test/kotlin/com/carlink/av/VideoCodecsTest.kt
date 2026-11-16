@@ -97,6 +97,31 @@ class VideoCodecsTest {
     }
 
     @Test
+    fun `a stream's setup is there only once its codec has every parameter set, with the csd it configures`() {
+        val vps = sc4 + nal(0x40, 0x01, 0x0C, 0x01)
+        val sps = sc4 + nal(0x42, 0x01, 0x01, 0x01)
+        val pps = sc4 + nal(0x44, 0x01, 0xC0, 0x2C)
+        val sets = VideoCodecs.ParamSets()
+        sets.absorb(VideoCodecs.scan(null, sps + pps))
+        assertNull("HEVC without its VPS", sets.setup(VideoCodec.HEVC, 2400, 960))
+        sets.absorb(VideoCodecs.scan(VideoCodec.HEVC, vps))
+        val hevc = sets.setup(VideoCodec.HEVC, 2400, 960)!!
+        assertArrayEquals(sets.csd(VideoCodec.HEVC), hevc.csd)
+        assertEquals(2400 to 960, hevc.width to hevc.height)
+
+        val avcSps = sc4 + nal(0x67, 0x42, 0x00, 0x1E, 0xAB)
+        val avcPps = sc4 + nal(0x68, 0xCE, 0x38, 0x80)
+        val avcSets = VideoCodecs.ParamSets()
+        avcSets.absorb(VideoCodecs.scan(null, avcSps))
+        assertNull("H.264 without its PPS", avcSets.setup(VideoCodec.H264, 2400, 960))
+        avcSets.absorb(VideoCodecs.scan(VideoCodec.H264, avcPps))
+        val avc = avcSets.setup(VideoCodec.H264, 2400, 960)!!
+        assertArrayEquals("no VPS for H.264: SPS and PPS", avcSps + avcPps, avc.csd)
+        assertArrayEquals(avcSps, avc.sps)
+        assertArrayEquals(avcPps, avc.pps)
+    }
+
+    @Test
     fun `the parameter-set classifier is per codec`() {
         assertEquals(VideoCodecs.PS_SPS, VideoCodecs.paramSetKind(VideoCodec.H264, 7))
         assertEquals(VideoCodecs.PS_PPS, VideoCodecs.paramSetKind(VideoCodec.H264, 8))
