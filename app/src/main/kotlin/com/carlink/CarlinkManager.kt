@@ -1004,6 +1004,9 @@ class CarlinkManager(
             it.appVisible(true, SystemClock.elapsedRealtime())
         }
 
+    /** The adapter's USB attaches ([onUsbDeviceAttached]): a not-listed wake connects at one, and the adapter search looks again. */
+    private val usbAttaches = UsbAttaches()
+
     /** The starts, the display wake's and the undo of one a display OFF cut short ([WakeStarts]). */
     private val starts =
         WakeStarts(
@@ -1037,6 +1040,7 @@ class CarlinkManager(
                     adapterListed: Boolean,
                 ) = connectTimer.wake(displayOnMs, adapterListed, SystemClock.elapsedRealtime()) // ledger
             },
+            attaches = usbAttaches,
         )
 
     /** The adapter's boot radio preload state, logged once per session. */
@@ -1607,19 +1611,21 @@ class CarlinkManager(
     }
 
     /**
-     * The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s: the OCBM
-     * adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the conversion,
-     * or else a shared stick that looks like an adapter's, for which the conversion shows guidance
-     * ([StockConversion.strayStick]). A conversion's USB stick never comes this way ([openConversionStick]).
+     * The adapter from `UsbManager.deviceList` (no permission needed), looked for up to ~30 s, every 3 s and at once as an
+     * adapter attaches: the OCBM adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the
+     * conversion, or else a shared stick that looks like an adapter's, for which the conversion shows guidance
+     * ([StockConversion.strayStick]). A conversion's USB stick never comes this way ([openConversionStick]). Before the
+     * attach ended the wait, an adapter that came during it waited out the rest of the 3 s (12 Nov, 08:00:10: 1.8 s).
      */
     private suspend fun awaitAdapterListed(): UsbDevice? {
-        var attempts = 0
-        while (attempts < USB_FIND_ATTEMPTS) {
+        val deadline = SystemClock.elapsedRealtime() + USB_FIND_ATTEMPTS * USB_WAIT_PERIOD_MS
+        while (true) {
+            val seen = usbAttaches.seen
             (BridgeBulkTransport.findAdapter(context) ?: StockAdapters.find(context) ?: strayStick())?.let { return it }
-            attempts++
-            delay(USB_WAIT_PERIOD_MS)
+            val left = deadline - SystemClock.elapsedRealtime()
+            if (left <= 0L) return null
+            usbAttaches.await(seen, minOf(USB_WAIT_PERIOD_MS, left))
         }
-        return null
     }
 
     /** A shared stick for which the conversion now shows "take the stick out" guidance; it is never opened. */
@@ -2758,11 +2764,19 @@ class CarlinkManager(
      */
     fun onUsbDeviceAttached() {
         if (released) return
-        ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
+        val now = SystemClock.elapsedRealtime()
+        ColdStart.process.adapterSeen(now)
         val since = rebootAtMs
         if (since != 0L) {
             rebootAtMs = 0L
             logInfo("[REBOOT] adapter back on USB ${(android.os.SystemClock.elapsedRealtime() - since) / 1000}s after the reboot", tag = Logger.Tags.USB)
+        }
+        // Ends a display-on wake's wait for it, and an adapter search's wait between its looks, at once.
+        usbAttaches.attached(now)
+        if (starts.awaitingAttach) {
+            // That wake connects to it with its short HELLO; a start of this one's would take the lock first, with 20 s.
+            logInfo("[USB] Adapter attached — the display-on wake connects to it", tag = Logger.Tags.USB)
+            return
         }
         scope.launch { startIfDisconnected("Adapter attached") }
     }

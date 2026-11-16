@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Carlink's starts, the display wake's own, and the undo of one a display OFF cut short: moved out of CarlinkManager, with
@@ -18,8 +19,9 @@ import kotlinx.coroutines.withContext
  *
  * - [startIfDisconnected]: a start under the lifecycle [lock], only from DISCONNECTED. Cancelled before it sent SUBSCRIBE,
  *   it is undone (the stop runs on IO and can't be cancelled: W8); a session that came up is left alone (13 Nov, C1).
- * - [displayOn] / [displayOff] / [closing]: the wake (at once while the adapter is listed, with a short HELLO; else after
- *   the USB settle), a cut wake started again when the display is back, never after Close app or a handover.
+ * - [displayOn] / [displayOff] / [closing]: the wake (at once while the adapter is listed, with a short HELLO; else as it
+ *   attaches, with the short HELLO too, the USB settle only the most it waits for that), a cut wake started again when
+ *   the display is back, never after Close app or a handover.
  * - The HELLO wait is each start's own parameter: a start already under the lock never takes the wake's 3 s (W7).
  * - A start queued behind a running one, or after an undo, is kept in the wake's job, so another OFF, Close app or a
  *   handover cancels it, and it takes the wake's path once the lock is free, with its own label (W6).
@@ -29,6 +31,8 @@ class WakeStarts(
     private val lock: Mutex,
     private val host: Host,
     private val settleMs: Long = DisplayOff.WAKE_SETTLE_MS,
+    /** The adapter's attaches, as CarlinkManager hears them: what a wake with the adapter not listed waits for. */
+    private val attaches: UsbAttaches = UsbAttaches(),
 ) {
     /** CarlinkManager's side. */
     @Suppress("TooManyFunctions") // one call each into the session; a holder would only rename them
@@ -94,6 +98,17 @@ class WakeStarts(
     @Volatile private var wakeAtMs = 0L
 
     @Volatile private var path = WakePath.AT_ONCE
+
+    // Wakes waiting for the adapter's attach ([connect]): counted, as a cancelled wake's finally can run after the next
+    // wake has begun its wait.
+    private val attachWaits = AtomicInteger()
+
+    /**
+     * A wake is waiting for the adapter to attach (it wasn't listed when the display came on): an attach now is the
+     * wake's to connect, with its short HELLO, so CarlinkManager starts no session of its own for it (it would take the
+     * lock first, with the usual 20 s HELLO).
+     */
+    val awaitingAttach: Boolean get() = attachWaits.get() > 0
 
     /** A start got no reply to HELLO within [helloMs]: the wake's short wait says so in its line. */
     fun helloMissed(helloMs: Long) {
@@ -201,13 +216,18 @@ class WakeStarts(
 
     /**
      * About 90% of the truck's connects are a wake with the adapter powered throughout (Scott, 13 Nov): connect at once
-     * while it is still listed, and settle first only when it isn't, or when that open failed. A queued or after-undo
-     * start ([origin]) first waits for what holds the lock.
+     * while it is still listed. When it isn't (it lost power, or USB came back after the display), connect as it attaches,
+     * the settle only the most it waits for that; with no attach by then, the usual start, whose search looks again at an
+     * attach. An open at once, or at the attach, that didn't connect tries again after the settle, as before. A queued or
+     * after-undo start ([origin]) first waits for what holds the lock.
      */
     private suspend fun connect(origin: WakePath?) {
         if (origin != null) lock.withLock { }
+        val onAt = wakeAtMs
+        // Counted before the adapter is looked for: an attach between the look and the wait is still seen.
+        val seen = attaches.seen
         val first = DisplayOff.firstPath(adapterListed = host.adapterListed())
-        host.wakeConnecting(wakeAtMs, adapterListed = first == WakePath.AT_ONCE)
+        host.wakeConnecting(onAt, adapterListed = first == WakePath.AT_ONCE)
         path = origin ?: first
         val why =
             when (origin) {
@@ -215,13 +235,30 @@ class WakeStarts(
                 WakePath.AFTER_UNDO -> "Display on, again after a display OFF undid its start"
                 else -> "Display on"
             }
+        val attached =
+            first != WakePath.AT_ONCE &&
+                try {
+                    // Not listed: wait for its attach (after the ones seen before the look), at most the settle.
+                    attachWaits.incrementAndGet()
+                    attaches.await(seen, settleMs)
+                } finally {
+                    attachWaits.decrementAndGet()
+                }
         if (first == WakePath.AT_ONCE) {
             startIfDisconnected("$why, at once (the adapter listed)", DisplayOff.WAKE_HELLO_MS)
             if (!host.disconnected()) return
             host.log("[POWER] the wake connect did not open the adapter: again after the USB settle")
             path = WakePath.OPEN_FAILED
+            delay(settleMs)
+        } else if (attached) {
+            if (origin == null) path = WakePath.ATTACHED
+            val after = attaches.lastAtMs - onAt
+            startIfDisconnected("$why, as the adapter attached${if (onAt > 0L && after >= 0L) " $after ms after it" else ""}", DisplayOff.WAKE_HELLO_MS)
+            if (!host.disconnected()) return
+            host.log("[POWER] the wake's open as the adapter attached did not connect: again after the USB settle")
+            path = WakePath.ATTACH_FAILED
+            delay(settleMs)
         }
-        delay(settleMs)
         startIfDisconnected("$why, after the USB settle")
     }
 }

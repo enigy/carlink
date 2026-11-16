@@ -20,8 +20,9 @@ object DisplayOff {
     fun waitText(ms: Long = graceMs): String = if (ms % 1_000 == 0L) "${ms / 1_000} s" else "$ms ms"
 
     /**
-     * After the display comes back: let a re-powered USB port settle before connecting (Carlink2's WAKE_SETTLE_MS). Only
-     * when the adapter is not listed, or opening it at once failed (WakeStarts).
+     * After the display comes back (Carlink2's WAKE_SETTLE_MS), in WakeStarts: the most a wake waits for the adapter to
+     * attach when it isn't listed (it connects as it attaches; with none by then, the usual start, whose search keeps
+     * looking), and the wait before trying again when an open at once, or at the attach, didn't connect.
      */
     const val WAKE_SETTLE_MS = 2_500L
 
@@ -69,6 +70,8 @@ object DisplayOff {
         HELLO_MISSED("the open at once got no reply in ${WAKE_HELLO_MS / 1000} s, then the retry"),
         OPEN_FAILED("after the settle, the open at once failed"),
         NOT_LISTED("after the settle, the adapter not listed"),
+        ATTACHED("as the adapter attached, not listed at display on"),
+        ATTACH_FAILED("after the settle, the open as the adapter attached failed"),
         QUEUED("after the start or stop in flight"),
         AFTER_UNDO("again after a display OFF undid its start"),
     }
