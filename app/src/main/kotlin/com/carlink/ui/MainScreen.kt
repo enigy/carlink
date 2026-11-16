@@ -297,11 +297,14 @@ private fun SessionEffects(
         }
     }
 
-    // Forward the AAOS day/night state to CarPlay: on reaching STREAMING and on every mid-session
-    // theme flip (MainActivity handles the uiMode config change without recreating).
+    // Forward the AAOS day/night state to CarPlay, whose own UI takes its look from it: as the phone's picture comes (as
+    // carlink_native did at its STREAMING, which was the first frame; OCBM's STREAMING, the phone's first media, comes a
+    // second or more later, and a session can sit without it, live-verified 2026-09-25), again at STREAMING as before, and
+    // on every theme flip (MainActivity handles the uiMode config change without recreating).
     val darkTheme = isSystemInDarkTheme()
-    LaunchedEffect(darkTheme, ui.connectionState) {
-        if (ui.connectionState == CarlinkManager.State.STREAMING) carlinkManager.setNightMode(darkTheme)
+    val streaming = ui.connectionState == CarlinkManager.State.STREAMING
+    LaunchedEffect(darkTheme, ui.projecting, streaming) {
+        if (ui.projecting || streaming) carlinkManager.setNightMode(darkTheme)
     }
 
     // Surface init for the adapter — uses container (content-area) dimensions. Idempotent across
