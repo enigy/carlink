@@ -44,7 +44,6 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -68,7 +67,7 @@ import androidx.compose.ui.unit.dp
 import com.carlink.BuildConfig
 import com.carlink.CarlinkManager
 import com.carlink.R
-import com.carlink.ledger.ConnectTimer
+import com.carlink.av.PictureWatch
 import com.carlink.logging.logDebug
 import com.carlink.logging.logInfo
 import com.carlink.protocol.MessageSerializer
@@ -99,12 +98,8 @@ import com.carlink.ui.theme.AutomotiveDimens
 import com.carlink.usb.BridgeAccessHub
 import com.carlink.usb.CarlinkBridge
 import com.carlink.util.EdgeInsets
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-
-/** Poll period for the first-frame watch while DEVICE_CONNECTED. */
-private const val FIRST_FRAME_POLL_MS = 100L
 
 /**
  * Session-scoped UI state, one instance per [CarlinkManager] (a Reset Device rebuild replaces the
@@ -122,31 +117,29 @@ private class SessionUiState {
     /** Set once initialize() has run with a real surface + size; gates the one-shot start effect. */
     var initializedForStart by mutableStateOf(false)
 
-    /** True once the decoder has put a frame on the Surface in DEVICE_CONNECTED (polled; see [SessionEffects]). */
-    var videoOnScreen by mutableStateOf(false)
-
-    /** Counts the phone leaving a session on screen ([CarlinkManager.Callback.onPhoneLeft]); restarts the first-frame watch. */
-    var phoneLeft by mutableIntStateOf(0)
+    /** The phone's first frame drawn ([CarlinkManager.picture], collected in [SessionEffects]), or null while there is none. */
+    var picture by mutableStateOf<PictureWatch.FirstFrame?>(null)
 
     /** The wireless pairing code awaiting Pair / Cancel (CT_PAIRING_CODE), or null. */
     var pairingCode by mutableStateOf<String?>(null)
 
-    /** Start from where [manager] stands: its state, status line and any pairing code awaiting an answer. */
+    /** Start from where [manager] stands: its state, status line, picture and any pairing code awaiting an answer. */
     fun seededFrom(manager: CarlinkManager): SessionUiState =
         apply {
             connectionState = manager.state
             manager.statusText.takeIf { it.isNotEmpty() }?.let { statusText = it }
+            picture = manager.picture.value
             pairingCode = manager.pairingCode
         }
 
     /**
      * carlink_native hid its loading overlay (and forwarded touch) from the FIRST VIDEO FRAME, which
      * was its STREAMING edge. OCBM stamps STREAMING on the first media metadata instead, so the same
-     * behaviour needs the frame counter as well: projecting = STREAMING, or DEVICE_CONNECTED with
-     * video already on screen.
+     * behaviour goes by the frame itself: the phone's first frame drawn, in a session that is up
+     * ([LoadingLift]). The manager hands it over as it is drawn, not polled.
      */
     val projecting: Boolean
-        get() = connectionState == CarlinkManager.State.STREAMING || (connectionState == CarlinkManager.State.DEVICE_CONNECTED && videoOnScreen)
+        get() = LoadingLift.lifted(connectionState, picture != null)
 
     // Plain fields, not snapshot state: only the touch handler reads/mutates them on the UI thread.
     var lastTouchTime = 0L
@@ -178,7 +171,7 @@ fun MainScreen(
     val scope = rememberCoroutineScope()
     var showResetConfirm by remember(carlinkManager) { mutableStateOf(false) }
     SessionEffects(carlinkManager, ui, surfaceState, onNavigateToSettings, onStateChanged)
-    PictureForLedger(carlinkManager, ui.projecting)
+    PictureForLedger(carlinkManager, ui)
 
     // The surface rect comes from the SAME profile the config was built from — the bars the
     // session's display mode keeps visible plus the parity pixel — not from the live Compose
@@ -288,29 +281,20 @@ private fun SessionEffects(
     LaunchedEffect(ui.connectionState) {
         logInfo("[UI_STATE] MainScreen connection state: ${ui.connectionState}", tag = "UI")
         stateSink(ui.connectionState)
-        // Streaming gate drops UP/CANCEL while paused — clear stale pointers when the session
-        // leaves STREAMING so they can't resurface as phantom MOVE pointers on resume.
-        if (ui.connectionState != CarlinkManager.State.STREAMING) ui.activeTouches.clear()
     }
 
-    // First-frame watch: while DEVICE_CONNECTED (video may already be decoding, STREAMING not yet
-    // stamped) poll the frame counter so the overlay lifts on the first rendered frame, as the
-    // carlink_native STREAMING edge did. Cancelled by the state change that keys it.
-    // A frame rendered since entering the state, not the count so far: when the phone walks away the
-    // manager drops STREAMING back to DEVICE_CONNECTED to show "Waiting for phone", and the old
-    // session's frames lifted the overlay at once over the last frozen picture (2026-10-22). A session
-    // that drops before STREAMING stays DEVICE_CONNECTED, so the phone leaving restarts the watch too.
-    LaunchedEffect(ui.connectionState, ui.phoneLeft) {
-        ui.videoOnScreen = false
-        if (ui.connectionState != CarlinkManager.State.DEVICE_CONNECTED) return@LaunchedEffect
-        val (startEpoch, startFrames) = carlinkManager.videoFrameMark()
-        while (true) {
-            val (epoch, frames) = carlinkManager.videoFrameMark()
-            if (frames > 0 && (epoch != startEpoch || frames > startFrames)) break
-            delay(FIRST_FRAME_POLL_MS)
+    // The phone's first frame, as the manager hands it over from the renderer's thread: the loading screen lifts on it in
+    // DEVICE_CONNECTED or STREAMING alike, and never on STREAMING without one. It goes null at the next session, the next
+    // phone's key and the phone leaving, so the last frozen frame never lifts it (2026-10-22).
+    LaunchedEffect(carlinkManager) { carlinkManager.picture.collect { ui.picture = it } }
+
+    // Touch reaches CarPlay only while projecting: pointers held as it stops would come back as phantom MOVEs.
+    LaunchedEffect(ui.projecting) {
+        if (ui.projecting) {
+            logInfo("[UI_STATE] The phone's first frame is on screen — lifting the loading screen (${ui.connectionState})", tag = "UI")
+        } else {
+            ui.activeTouches.clear()
         }
-        logInfo("[UI_STATE] First video frame on screen in DEVICE_CONNECTED — lifting loading overlay", tag = "UI")
-        ui.videoOnScreen = true
     }
 
     // Forward the AAOS day/night state to CarPlay: on reaching STREAMING and on every mid-session
@@ -364,7 +348,6 @@ private fun SessionEffects(
                         logInfo("[UI_STATE] Phone left — the last frame is covered until the next session draws one", tag = "UI")
                         // Touch stops with the picture; pointers it never saw lift must not resurface.
                         ui.activeTouches.clear()
-                        ui.phoneLeft++
                     }
                 },
         )
@@ -383,27 +366,21 @@ private fun SessionEffects(
 }
 
 /**
- * The connect ledger's "first video frame on screen" ([CarlinkManager.pictureShown]): the later of the moment the loading
- * screen starts to lift ([SessionUiState.projecting]) and the moment the decoder handed the epoch's first frame to the
- * surface. The overlay lifts in DEVICE_CONNECTED for a frame drawn there, and at STREAMING whether or not one is drawn, so
- * a picture is a lifted overlay with a frame under it. It only watches; the overlay is the [SessionEffects] watch's.
+ * The connect ledger's "first video frame on screen" ([CarlinkManager.pictureShown]): the moment the loading screen starts
+ * to lift ([SessionUiState.projecting]), which it does only over the phone's first frame drawn, so never before the
+ * decoder handed it to the surface (the later of the two is kept all the same). It hands the ledger that frame's video in
+ * and decoder ready too. It only watches; the lift is [LoadingLift]'s.
  */
 @Composable
 private fun PictureForLedger(
     carlinkManager: CarlinkManager,
-    projecting: Boolean,
+    ui: SessionUiState,
 ) {
+    val projecting = ui.projecting
     LaunchedEffect(carlinkManager, projecting) {
         if (!projecting) return@LaunchedEffect
-        val liftedAt = SystemClock.elapsedRealtime()
-        var drawnAt = carlinkManager.firstFrameDrawnAt()
-        // Polled only while the overlay is lifted with no frame drawn yet (STREAMING first), and no longer than the
-        // ledger's window, past which the picture wouldn't count.
-        while (drawnAt == 0L && SystemClock.elapsedRealtime() - liftedAt < ConnectTimer.WINDOW_MS) {
-            delay(FIRST_FRAME_POLL_MS)
-            drawnAt = carlinkManager.firstFrameDrawnAt()
-        }
-        if (drawnAt != 0L) carlinkManager.pictureShown(maxOf(liftedAt, drawnAt))
+        val frame = ui.picture ?: return@LaunchedEffect
+        carlinkManager.pictureShown(maxOf(SystemClock.elapsedRealtime(), frame.drawnAtMs), frame)
     }
 }
 

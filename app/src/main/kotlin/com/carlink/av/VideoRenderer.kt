@@ -33,11 +33,15 @@ import java.util.concurrent.atomic.AtomicLong
  * **Threading contract.** [consume] owns the codec for its whole life: it configures, feeds, drains and
  * releases on its own thread. [stop] only flips the flag — it never touches the codec, because
  * MediaCodec lifecycle calls racing a dequeue crash natively.
+ *
+ * **The picture.** [picture] hears each message as it arrives, each decoder ready and each frame drawn, all on that
+ * thread, and offers frames to the manager's [PictureGate] while it waits: what lifts the loading screen.
  */
 class VideoRenderer(
     private val width: Int,
     private val height: Int,
     private val surface: Surface,
+    private val picture: PictureWatch? = null,
     private val onKeyframeNeeded: () -> Unit = {},
 ) {
     private val log = ProbeLog.sub("video")
@@ -56,10 +60,6 @@ class VideoRenderer(
     val framesRendered = AtomicLong(0)
     val bytesIn = AtomicLong(0)
     val ausDropped = AtomicLong(0)
-
-    /** When this renderer handed its first frame to the Surface (SystemClock.elapsedRealtime); 0 before. The connect ledger's. */
-    @Volatile var firstFrameAtMs = 0L
-        private set
 
     private val paramSets = VideoCodecs.ParamSets()
     private var sawKeyframe = false
@@ -116,7 +116,10 @@ class VideoRenderer(
                 // A 0-length message is NOT a desync: forward_screen is called unconditionally with
                 // whatever the conversion produced, and an empty VideoConfig is exactly what this head
                 // unit emitted before the sample-description fix.
-                if (msg.isNotEmpty()) handleMessage(msg)
+                if (msg.isNotEmpty()) {
+                    picture?.videoIn()
+                    handleMessage(msg)
+                }
             }
         } finally {
             releaseCodec()
@@ -221,6 +224,7 @@ class VideoRenderer(
             configuredCsd = csd
             configured = true
             configureFailedAt = 0L
+            picture?.decoderReady()
             log.i("MediaCodec configured: ${vc.mime} ${width}x$height csd=${csd.size} B, decoder=${mc.name}")
         }.onFailure { e ->
             // runCatching, not catch Exception: an OutOfMemoryError while the framework allocates the
@@ -289,10 +293,8 @@ class VideoRenderer(
                     val real = info.size != 0
                     c.releaseOutputBuffer(outIdx, real)
                     val n = if (real) framesRendered.incrementAndGet() else 0L
-                    if (n == 1L) {
-                        firstFrameAtMs = SystemClock.elapsedRealtime()
-                        log.i("FIRST FRAME RENDERED")
-                    }
+                    if (real) picture?.drawn()
+                    if (n == 1L) log.i("FIRST FRAME RENDERED")
                     if (n > 0L && n % LOG_EVERY_FRAMES == 0L) log.i("$n frames rendered (${bytesIn.get()} B in)")
                 }
                 outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> log.i("output format: ${c.outputFormat}")
