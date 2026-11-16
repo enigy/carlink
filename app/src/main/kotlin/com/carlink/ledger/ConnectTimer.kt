@@ -27,8 +27,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - with a picture: the first video frame on screen within [WINDOW_MS] ([picture]); it stays open [SETTLE_MS] more for
  *   STREAMING and the adapter's lines, which come just after, unless the session ends first;
  * - early: the display off again ([displayOff]), Close app, a handover or the manager's release ([closing]);
- * - at [WINDOW_MS] with no picture: no phone while the session with the adapter is up, else ended early with an error, at
- *   its last failure ([sessionDown]).
+ * - at [WINDOW_MS] with no picture: no phone while the session with the adapter is up, or no picture for Carlink's screen
+ *   when the phone was streaming but the screen was not in front; else ended early with an error, at its last failure
+ *   ([sessionDown]).
  */
 @Suppress("TooManyFunctions") // one entry point per event CarlinkManager reports, and the steps of a connect
 class ConnectTimer(
@@ -293,6 +294,7 @@ class ConnectTimer(
         when {
             picture != null -> if (nowMs >= picture + SETTLE_MS) finish(a, Outcome.PICTURE)
             nowMs - a.originMs < WINDOW_MS -> Unit
+            a.sessionUp && a.streamingAt != null && frontSince == null -> finish(a, Outcome.NOT_IN_FRONT, endAtMs = a.originMs + WINDOW_MS)
             a.sessionUp -> finish(a, Outcome.NO_PHONE, endAtMs = a.originMs + WINDOW_MS)
             else -> finish(a, Outcome.ENDED_EARLY, EndReason.ERROR, a.downAt ?: (a.originMs + WINDOW_MS))
         }

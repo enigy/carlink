@@ -71,6 +71,7 @@ object ConnectLedgerText {
             Outcome.PICTURE -> "picture ${at(r.endMs)}"
             Outcome.NO_PHONE -> "no phone, no picture within ${ConnectTimer.WINDOW_MS / MS_PER_S} s"
             Outcome.ENDED_EARLY -> "ended early, ${r.endReason?.words ?: "unknown"}, ${at(r.endMs)}"
+            Outcome.NOT_IN_FRONT -> "no picture within ${ConnectTimer.WINDOW_MS / MS_PER_S} s: Carlink's screen was not in front"
         }
 
     private fun adapterWords(a: AdapterStartup): String {

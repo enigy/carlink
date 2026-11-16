@@ -55,6 +55,12 @@ class ConnectLedgerTextTest {
                 "1 start, screen in front from the origin | no adapter line | no timeline",
             ConnectLedgerText.line(noPhone, utc),
         )
+        val away = ConnectRecord(at, Kind.WAKE_LISTED, Outcome.NOT_IN_FRONT, endMs = ConnectTimer.WINDOW_MS, subscribeMs = 600, streamingMs = 4_000, starts = 1, suspendedMs = 0)
+        assertEquals(
+            "2026-11-16 07:42:13 wake, adapter listed: no picture within 120 s: Carlink's screen was not in front | SUBSCRIBE +600 ms, " +
+                "picture -, STREAMING +4000 ms | 1 start, screen not in front, not suspended | no adapter line | no timeline",
+            ConnectLedgerText.line(away, utc),
+        )
         val error = ConnectRecord(at, Kind.RECONNECT, Outcome.ENDED_EARLY, endMs = 64_500, endReason = EndReason.ERROR, starts = 2)
         assertEquals(
             "2026-11-16 07:42:13 reconnect: ended early, an error, +64500 ms | SUBSCRIBE -, picture -, STREAMING - | 2 starts, screen not in front " +

@@ -508,6 +508,25 @@ class ConnectTimerTest {
     }
 
     @Test
+    fun `the window ending with the phone streaming but Carlink's screen not in front is no picture, not no phone`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.appVisible(false, 300_000L) // the head unit's own screen came back at the wake
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L)
+        t.subscribed(300_600L)
+        t.streaming(304_000L) // the phone is there; nothing draws it
+        t.tick(300_000L + WINDOW_MS)
+        val r = committed.single()
+        assertEquals(Outcome.NOT_IN_FRONT, r.outcome)
+        assertEquals(WINDOW_MS, r.endMs)
+        assertNull(r.endReason)
+        assertNull(r.pictureMs)
+        assertEquals(4_000L, r.streamingMs)
+        assertNull(r.frontMs)
+    }
+
+    @Test
     fun `a connect that ended with Carlink's screen not in front says so`() {
         val t = timer()
         t.offThenOn(onAt = 300_000L)
@@ -516,7 +535,7 @@ class ConnectTimerTest {
         t.subscribed(300_600L)
         t.appVisible(false, 301_000L)
         t.tick(300_000L + WINDOW_MS)
-        assertEquals(Outcome.NO_PHONE, committed.single().outcome)
+        assertEquals("no STREAMING: nothing says the phone was there", Outcome.NO_PHONE, committed.single().outcome)
         assertNull(committed.single().frontMs)
     }
 
