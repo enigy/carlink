@@ -88,6 +88,42 @@ class ConnectTimerTest {
     }
 
     @Test
+    fun `the picture keeps its epoch's video in and decoder ready, from the origin`() {
+        val t = timer()
+        t.offThenOn(onAt = 700_000L)
+        t.wake(displayOnMs = 700_000L, adapterListed = true, nowMs = 700_010L)
+        t.startBegan(700_020L)
+        t.subscribed(700_170L)
+        // The decoder was built ahead at 700.43 s, from the last stream's parameter sets; the video came at 707.95 s.
+        t.picture(atMs = 708_160L, nowMs = 708_170L, videoInAtMs = 707_950L, decoderReadyAtMs = 700_430L)
+        t.picture(atMs = 709_000L, nowMs = 709_000L, videoInAtMs = 708_900L, decoderReadyAtMs = 708_950L) // a later one changes nothing
+        t.tick(708_160L + SETTLE_MS)
+        val r = committed.single()
+        assertEquals(7_950L, r.videoInMs)
+        assertEquals("ready before the video came", 430L, r.decoderReadyMs)
+        assertEquals(8_160L, r.pictureMs)
+    }
+
+    @Test
+    fun `a picture whose epoch's stamps aren't known, or no picture, keeps neither`() {
+        val t = timer()
+        t.startBegan(15_000L)
+        t.subscribed(16_000L)
+        t.picture(atMs = 18_000L, nowMs = 18_000L)
+        t.closing(19_000L)
+        assertNull(committed.single().videoInMs)
+        assertNull(committed.single().decoderReadyMs)
+
+        t.startBegan(30_000L)
+        t.subscribed(30_500L)
+        t.picture(atMs = 30_200L, nowMs = 30_200L, videoInAtMs = 30_100L, decoderReadyAtMs = 30_150L) // before SUBSCRIBE: not this connect's
+        t.closing(31_000L)
+        assertEquals(Outcome.ENDED_EARLY, committed[1].outcome)
+        assertNull(committed[1].videoInMs)
+        assertNull(committed[1].decoderReadyMs)
+    }
+
+    @Test
     fun `a wake with the adapter not listed is its own kind`() {
         val t = timer()
         t.offThenOn(onAt = 200_000L)

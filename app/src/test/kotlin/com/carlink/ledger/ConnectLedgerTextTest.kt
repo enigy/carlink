@@ -42,6 +42,25 @@ class ConnectLedgerTextTest {
     }
 
     @Test
+    fun `a picture's video in and decoder ready follow SUBSCRIBE, each only when the record has it`() {
+        val measured = wake.copy(videoInMs = 3_190, decoderReadyMs = 905)
+        assertEquals(
+            "SUBSCRIBE +612 ms, video in +3190 ms, decoder ready +905 ms, picture +3412 ms, STREAMING +4105 ms",
+            ConnectLedgerText.line(measured, utc).split(" | ")[1],
+        )
+        assertEquals(
+            "a decoder built at the first frame, its ready time not kept",
+            "SUBSCRIBE +612 ms, video in +3190 ms, picture +3412 ms, STREAMING +4105 ms",
+            ConnectLedgerText.line(wake.copy(videoInMs = 3_190), utc).split(" | ")[1],
+        )
+        assertEquals(
+            "a record kept before they were measured reads as it always did",
+            "SUBSCRIBE +612 ms, picture +3412 ms, STREAMING +4105 ms",
+            ConnectLedgerText.line(wake, utc).split(" | ")[1],
+        )
+    }
+
+    @Test
     fun `steps that never came are dashes, and each ending says why`() {
         val off = ConnectRecord(at, Kind.WAKE_NOT_LISTED, Outcome.ENDED_EARLY, endMs = 2_100, endReason = EndReason.DISPLAY_OFF, starts = 1, suspendedMs = 0)
         assertEquals(

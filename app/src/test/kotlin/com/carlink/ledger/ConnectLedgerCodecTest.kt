@@ -25,6 +25,8 @@ class ConnectLedgerCodecTest {
             outcome = Outcome.PICTURE,
             endMs = 3_412,
             subscribeMs = 612,
+            videoInMs = 3_190,
+            decoderReadyMs = 905,
             pictureMs = 3_412,
             streamingMs = 4_105,
             starts = 1,
@@ -57,7 +59,8 @@ class ConnectLedgerCodecTest {
     fun `a record's stored form, as the bench prints it`() {
         assertEquals(
             "{\"startedAtMs\":1795330933000,\"origin\":\"display_on\",\"kind\":\"wake_listed\",\"outcome\":\"picture\",\"endMs\":3412," +
-                "\"subscribeMs\":612,\"pictureMs\":3412,\"streamingMs\":4105,\"starts\":1,\"frontMs\":214,\"suspendedMs\":412300," +
+                "\"subscribeMs\":612,\"videoInMs\":3190,\"decoderReadyMs\":905,\"pictureMs\":3412,\"streamingMs\":4105,\"starts\":1," +
+                "\"frontMs\":214,\"suspendedMs\":412300," +
                 "\"adapter\":{\"uptimeMs\":1802400,\"preload\":\"done\",\"absentPages\":0,\"resets\":2,\"firstNudges\":1,\"secondNudges\":0," +
                 "\"pskMismatches\":3,\"pskAtLeast\":true},\"timeline\":\"[timeline] v1 host_present=0 bt_up=1195 first_frame=7195 nudge_2=-\"}",
             ConnectLedgerCodec.encodeRecord(full),
@@ -68,6 +71,20 @@ class ConnectLedgerCodecTest {
                 "\"endReason\":\"display_off\",\"starts\":0}",
             ConnectLedgerCodec.encodeRecord(early),
         )
+    }
+
+    @Test
+    fun `a record kept before the video steps were measured reads back without them, and is written back as it was`() {
+        // As Carlink 3.20 with the connect ledger wrote it, before videoInMs and decoderReadyMs (16 Nov, made-up values).
+        val old =
+            "{\"startedAtMs\":1795330933000,\"origin\":\"display_on\",\"kind\":\"wake_listed\",\"outcome\":\"picture\",\"endMs\":8165," +
+                "\"subscribeMs\":172,\"pictureMs\":8165,\"streamingMs\":9575,\"starts\":1,\"frontMs\":186,\"suspendedMs\":0}"
+        val back = ConnectLedgerCodec.decode("{\"v\":1,\"connects\":[$old]}")?.records?.single()
+        assertNotNull(back)
+        assertNull(back!!.videoInMs)
+        assertNull(back.decoderReadyMs)
+        assertEquals(8_165L, back.pictureMs)
+        assertEquals(old, ConnectLedgerCodec.encodeRecord(back))
     }
 
     @Test
@@ -110,6 +127,8 @@ class ConnectLedgerCodecTest {
             "endMs",
             "endReason",
             "subscribeMs",
+            "videoInMs",
+            "decoderReadyMs",
             "pictureMs",
             "streamingMs",
             "starts",
