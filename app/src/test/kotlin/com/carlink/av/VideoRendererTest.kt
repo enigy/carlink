@@ -244,15 +244,17 @@ class VideoRendererTest {
     }
 
     @Test
-    fun `only a decoder built ahead that was fed and drew nothing is to blame`() {
+    fun `a decoder built ahead is idle until video comes, and only one fed that drew nothing is to blame`() {
         silent = true // it takes the access units and draws nothing
-        val seen = mutableListOf<Boolean>()
+        val seen = mutableListOf<Pair<Long, Boolean>>()
 
-        fun look() = seen.add(renderer!!.builtAheadDrewNothing)
+        fun look() = seen.add(renderer!!.idleAheadSince to renderer!!.builtAheadDrewNothing)
         run(hevcSetup, { look() }, vps + sps + pps, { look() }, idr, { look() })
-        assertFalse("never fed: not to blame", seen[0])
-        assertFalse("proven by its stream, not yet fed: not to blame", seen[1])
-        assertTrue("fed a keyframe and drew nothing: to blame", seen[2])
+        assertTrue("built ahead, no video yet: idle since it was built", seen[0].first != 0L)
+        assertFalse("never fed: not to blame", seen[0].second)
+        assertEquals("its video came: not idle", 0L, seen[1].first)
+        assertFalse("proven by its stream, not yet fed: not to blame", seen[1].second)
+        assertTrue("fed a keyframe and drew nothing: to blame", seen[2].second)
     }
 
     @Test

@@ -15,6 +15,7 @@ import com.carlink.audio.MicProfile
 import com.carlink.audio.MicRecovery
 import com.carlink.audio.MicrophoneCaptureManager
 import com.carlink.audio.SilenceGuard
+import com.carlink.av.IdleAheadWatch
 import com.carlink.av.MediaAudioPlayer
 import com.carlink.av.PictureGate
 import com.carlink.av.PictureWatch
@@ -756,6 +757,8 @@ class CarlinkManager(
         val thread: Thread,
         /** Its renderer's side of the picture: the picture watchdog reads its first video. */
         val watch: PictureWatch,
+        /** Opened without building ahead because the one before held a decoder built ahead with no phone ([dropIdleDecoder]). */
+        val idleDropped: Boolean = false,
     )
 
     @Volatile private var videoEpoch: VideoEpoch? = null
@@ -795,6 +798,9 @@ class CarlinkManager(
     private val pictureDog = PictureWatchdog()
 
     @Volatile private var pictureDogJob: Job? = null
+
+    /** Releases a decoder built ahead that has waited a minute with no phone ([dropIdleDecoder], [phoneComing]). Main thread. */
+    private val idleAhead = IdleAheadWatch()
 
     /** Rebuilds a video epoch that takes access units and draws nothing (9 Nov bench). Main thread. */
     private val videoStall = VideoStallWatch()
@@ -2976,12 +2982,15 @@ class CarlinkManager(
      * Ordering is load-bearing: the renderer must be constructed and started before the seam is
      * pointed at its pipe, or the first frames land in a pipe nobody is draining.
      *
-     * [buildAhead] false: its decoder is built at the stream's parameter sets, not ahead (the picture watchdog's rebuild).
+     * [buildAhead] false: its decoder is built at the stream's parameter sets, not ahead (the picture watchdog's rebuild,
+     * an idle decoder dropped). [idleDropped]: it was opened to drop an idle one, and is built ahead again when a phone
+     * shows up ([phoneComing]).
      */
     @Synchronized
     private fun openVideoEpoch(
         surface: Surface,
         buildAhead: Boolean = true,
+        idleDropped: Boolean = false,
     ) {
         val lanes = client?.lanes ?: return
         if (videoEpoch != null) return
@@ -3005,7 +3014,7 @@ class CarlinkManager(
         renderer.start()
         val thread = lanes.runConsumer("cp-video", pipe) { renderer.consume(it) }
         // The current epoch before any video can reach it: its first frame is offered as the picture only as the current one's.
-        videoEpoch = VideoEpoch(seq, pipe, renderer, thread, watch)
+        videoEpoch = VideoEpoch(seq, pipe, renderer, thread, watch, idleDropped)
         lanes.videoSeam.attach(pipe)
         codecDeferred = false
 
@@ -3029,6 +3038,7 @@ class CarlinkManager(
     /**
      * Rebuild epoch [seq] if access units keep arriving and it draws nothing ([VideoStallWatch]): on the 9 Nov bench a
      * decoder latched to the wrong codec froze the frame, with touch dead, until the overlay watchdog happened to run.
+     * The same 2 s look releases a decoder built ahead that has waited with no phone ([IdleAheadWatch], [dropIdleDecoder]).
      */
     private fun watchVideoStall(seq: Int) {
         scope.launch {
@@ -3037,7 +3047,12 @@ class CarlinkManager(
                 val e = videoEpoch ?: return@launch
                 if (e.seq != seq) return@launch
                 val r = e.renderer
-                if (!videoStall.sample(seq, SystemClock.elapsedRealtime(), r.bytesIn.get(), r.framesRendered.get())) continue
+                val now = SystemClock.elapsedRealtime()
+                if (idleAhead.release(now, r.idleAheadSince)) {
+                    dropIdleDecoder(e)
+                    return@launch
+                }
+                if (!videoStall.sample(seq, now, r.bytesIn.get(), r.framesRendered.get())) continue
                 logWarn(
                     "[LIFECYCLE] Video epoch #$seq: access units arriving and no frame drawn for ${videoStall.timing.stallMs} ms " +
                         "(${r.videoCodec?.label ?: "no codec"}) — rebuilding the decoder",
@@ -3061,6 +3076,37 @@ class CarlinkManager(
         if (r.builtAheadDrewNothing && streamSetups.buildAhead.turnOff()) {
             logWarn("[LIFECYCLE] the decoder built ahead was fed and drew nothing: not building ahead again in this process", tag = Logger.Tags.VIDEO)
         }
+    }
+
+    /**
+     * The decoder built ahead in epoch [e] has waited [IdleAheadWatch.idleMs] with no video and no phone on its way (a drive
+     * without one): it is released (a fresh epoch with none), not held for hours; [phoneComing] builds it again when a
+     * phone shows up.
+     */
+    private fun dropIdleDecoder(e: VideoEpoch) {
+        val surface = videoSurface ?: return
+        logInfo(
+            "[LIFECYCLE] Video epoch #${e.seq}: its decoder built ahead had no video for ${idleAhead.idleMs / 1000} s — released until a phone shows up",
+            tag = Logger.Tags.VIDEO,
+        )
+        retireVideoEpoch("idle decoder built ahead")
+        openVideoEpoch(surface, buildAhead = false, idleDropped = true)
+    }
+
+    /**
+     * Main thread. The adapter says a phone is coming (a Bluetooth phase of its connect, the phone on its bus): the idle
+     * clock starts again, and an epoch whose decoder was dropped for idleness, still with no video, builds it ahead again,
+     * seconds before the phone's video (its Bluetooth link came 4 to 6 s before the first frame on the 16 Nov bench).
+     */
+    private fun phoneComing() {
+        idleAhead.phoneComing(SystemClock.elapsedRealtime())
+        val e = videoEpoch ?: return
+        if (!e.idleDropped || e.renderer.bytesIn.get() != 0L) return
+        if (!streamSetups.buildAhead.on || streamSetups.last == null) return
+        val surface = videoSurface ?: return
+        logInfo("[LIFECYCLE] a phone is coming: building the decoder ahead again", tag = Logger.Tags.VIDEO)
+        retireVideoEpoch("a phone is coming")
+        openVideoEpoch(surface)
     }
 
     /**
@@ -3389,7 +3435,10 @@ class CarlinkManager(
         c.onBtPhase = { phase ->
             phoneSetup.onBtPhase(phase)
             val text = btPhaseText(phase)
-            if (text != null) scope.launch { if (state != State.STREAMING) setStatusText(text) }
+            scope.launch {
+                if (client === c) phoneComing()
+                if (text != null && state != State.STREAMING) setStatusText(text)
+            }
         }
 
         wirePairingCode(c)
@@ -3457,6 +3506,8 @@ class CarlinkManager(
                     markPhoneLeft()
                     adapterPhone.absent()
                     phoneSessionEnded()
+                } else if (client === c) {
+                    phoneComing()
                 }
                 _phoneNews.update { it + 1 }
                 if (present || state == State.DISCONNECTED) return@launch

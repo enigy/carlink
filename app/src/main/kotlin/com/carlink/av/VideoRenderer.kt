@@ -90,6 +90,9 @@ class VideoRenderer(
     /** The live codec built ahead has been fed (so its own stream's parameter sets proved it): only then is it to blame. */
     @Volatile private var aheadFed = false
 
+    /** When the live codec was built ahead (elapsedRealtime). */
+    @Volatile private var aheadBuiltAt = 0L
+
     /** Any access unit went to a decoder in this epoch: a new wait on it is a kept decoder's. */
     private var fedAny = false
 
@@ -101,6 +104,12 @@ class VideoRenderer(
      * blame when they turn building ahead off for the process. A decoder never fed is not to blame for drawing nothing.
      */
     val builtAheadDrewNothing: Boolean get() = builtAhead && aheadFed && framesRendered.get() == 0L
+
+    /**
+     * Since when the live decoder, built ahead, has waited with no video at all (elapsedRealtime), 0 when it isn't one:
+     * the manager releases it after a minute with no phone ([IdleAheadWatch]), and builds it again when one shows up.
+     */
+    val idleAheadSince: Long get() = if (builtAhead && aheadUnproven && bytesIn.get() == 0L) aheadBuiltAt else 0L
 
     private companion object {
         const val CONFIGURE_RETRY_MS = 5_000L // don't re-attempt configure per NAL (codec-pool leak)
@@ -311,10 +320,12 @@ class VideoRenderer(
             }.exceptionOrNull()
         when {
             failure == null && ahead -> {
+                // Its time before the flags: the manager's thread that reads them set (idleAheadSince) reads it too.
+                aheadBuiltAt = SystemClock.elapsedRealtime()
                 aheadUnproven = true
                 aheadCodec = s.codec
                 builtAhead = true
-                log.i("decoder built ahead from the last stream's ${s.codec.label} parameter sets in ${SystemClock.elapsedRealtime() - now} ms")
+                log.i("decoder built ahead from the last stream's ${s.codec.label} parameter sets in ${aheadBuiltAt - now} ms")
             }
             failure == null -> {
                 configureFailedAt = 0L
