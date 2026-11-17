@@ -107,4 +107,23 @@ class PictureGateTest {
         w.videoIn()
         assertEquals(1, offered.size)
     }
+
+    @Test
+    fun `a frame of an access unit fed before the wait began is stale, and so is any before this wait's first`() {
+        val w = watch()
+        assertTrue("nothing fed under this wait yet: any frame is an earlier one's", w.stale(ptsUs = 500))
+        w.fed(ptsUs = 1_000) // this wait's first access unit
+        assertFalse(w.stale(ptsUs = 1_000))
+        w.drawn() // its frame: the picture
+        assertFalse("never while the picture is up", w.stale(ptsUs = 500))
+        gate.expect() // the phone left and came back on the same decoder
+        assertTrue(w.waitUnfed())
+        assertTrue("the last phone's frame, drained after the wait began", w.stale(ptsUs = 1_000))
+        w.fed(ptsUs = 2_000) // this wait's first access unit
+        assertFalse(w.waitUnfed())
+        assertTrue("fed before it", w.stale(ptsUs = 1_999))
+        assertFalse(w.stale(ptsUs = 2_000))
+        w.fed(ptsUs = 2_100)
+        assertFalse("the wait's first stays where its frames begin", w.stale(ptsUs = 2_050))
+    }
 }

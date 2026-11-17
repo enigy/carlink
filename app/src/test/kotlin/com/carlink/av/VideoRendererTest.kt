@@ -3,9 +3,11 @@ package com.carlink.av
 import android.graphics.SurfaceTexture
 import android.media.MediaCrypto
 import android.media.MediaFormat
+import android.os.SystemClock
 import android.view.Surface
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -16,14 +18,18 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowMediaCodec
 import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.io.SequenceInputStream
 import java.nio.ByteBuffer
+import java.util.Collections
 
 /**
- * The renderer's decoder built ahead from the last stream's setup, over Robolectric's MediaCodec with a pass-through
- * fake decoder: taken by a stream with the same parameter sets, rebuilt for other ones or another codec, fed nothing
- * before the stream's own, and a failure there never costs the stream its backoff-free configure. Synthetic parameter
- * sets, as in [VideoCodecsTest]: only their header bytes matter to the renderer.
+ * The renderer over Robolectric's MediaCodec with a pass-through fake decoder: its decoder built ahead from the last
+ * stream's setup (taken, rebuilt for other parameter sets or another codec, fed nothing before the stream's own, a
+ * failure there costing the stream nothing), and the picture's rules (a still screen's keyframe drawn by its own feed, a
+ * kept decoder's new wait starting at a keyframe, what the manager's watchdogs read). Synthetic parameter sets, as in
+ * [VideoCodecsTest]: only their header bytes matter to the renderer. Hooks between messages stand for what happens on
+ * the manager's side meanwhile (the phone leaving and coming back).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -51,6 +57,9 @@ class VideoRendererTest {
     /** The next [failInputs] access units queued make the decoder throw, as a codec in error does. */
     private var failInputs = 0
 
+    /** While true the decoder takes access units and gives back nothing to draw, as a poisoned one does. */
+    private var silent = false
+
     private val passThrough =
         object : ShadowMediaCodec.CodecConfig.Codec {
             override fun process(
@@ -61,7 +70,7 @@ class VideoRendererTest {
                     failInputs--
                     error("made-up codec error")
                 }
-                output.put(input)
+                if (!silent) output.put(input)
             }
 
             override fun onConfigured(
@@ -81,11 +90,17 @@ class VideoRendererTest {
     private var tick = 0L
     private val gate = PictureGate()
     private val surface = Surface(SurfaceTexture(0))
-    private val setups = StreamSetups()
+
+    // A switch of this test's own: the process's must not carry from one test to the next.
+    private val switch = BuildAheadSwitch()
+    private val setups = StreamSetups(switch)
+    private var keyframesAsked = 0
 
     @Before
     fun decoders() {
         for (codec in VideoCodec.entries) ShadowMediaCodec.addDecoder(codec.mime, ShadowMediaCodec.CodecConfig(BUFFER, BUFFER, passThrough))
+        // Robolectric's clock starts at 100 ms, inside the 500 ms keyframe throttle: past it, a keyframe asked is seen.
+        SystemClock.sleep(10_000)
     }
 
     @After
@@ -94,26 +109,38 @@ class VideoRendererTest {
         surface.release()
     }
 
-    /** The seam's `[u32 BE len][payload]` framing, as VideoSeam emits it. */
-    private fun seam(vararg messages: ByteArray): ByteArrayInputStream {
-        val out = ByteArrayOutputStream()
-        for (m in messages) {
-            out.write(byteArrayOf((m.size ushr 24).toByte(), (m.size ushr 16).toByte(), (m.size ushr 8).toByte(), m.size.toByte()))
-            out.write(m)
-        }
-        return ByteArrayInputStream(out.toByteArray())
-    }
+    /** One message in the seam's `[u32 BE len][payload]` framing, as VideoSeam emits it. */
+    private fun framed(m: ByteArray): InputStream =
+        ByteArrayInputStream(byteArrayOf((m.size ushr 24).toByte(), (m.size ushr 16).toByte(), (m.size ushr 8).toByte(), m.size.toByte()) + m)
 
-    /** One epoch: a renderer with the last stream's setup [ahead] of its stream or none, run over [messages] to the seam's end. */
+    /** A hook run as the renderer reaches it, after the message before it is handled: a stream that is only that. */
+    private fun hook(action: () -> Unit): InputStream =
+        object : InputStream() {
+            override fun read(): Int {
+                action()
+                return -1
+            }
+        }
+
+    /** The seam over [parts]: messages (ByteArray) and hooks (`() -> Unit`), in order. */
+    @Suppress("UNCHECKED_CAST") // a hook is a () -> Unit, whatever its static type in the vararg
+    private fun seam(vararg parts: Any): InputStream =
+        SequenceInputStream(Collections.enumeration(parts.map { if (it is ByteArray) framed(it) else hook(it as () -> Unit) }))
+
+    private var renderer: VideoRenderer? = null
+
+    /** One epoch: a renderer with the last stream's setup [ahead] of its stream or none, run over [parts] to the seam's end. */
     private fun run(
         ahead: StreamSetup?,
-        vararg messages: ByteArray,
+        vararg parts: Any,
+        renderSetups: StreamSetups? = setups,
     ): VideoRenderer {
         setups.last = ahead
         val watch = PictureWatch({ gate.waiting }, { ++tick }) { wait, frame -> gate.drawn(wait, frame) }
-        val r = VideoRenderer(WIDTH, HEIGHT, surface, picture = watch, setups = setups)
+        val r = VideoRenderer(WIDTH, HEIGHT, surface, picture = watch, setups = renderSetups) { keyframesAsked++ }
+        renderer = r
         r.start()
-        r.consume(seam(*messages))
+        r.consume(seam(*parts))
         return r
     }
 
@@ -163,11 +190,23 @@ class VideoRendererTest {
     }
 
     @Test
-    fun `a decoder built ahead that fails at its first frame is built again at once, and only once`() {
+    fun `a decoder built ahead that throws at its first use is rebuilt at once, takes the same keyframe, and building ahead goes off`() {
         failInputs = 1
+        val r = run(hevcSetup, vps + sps + pps, idr, trail)
+        assertEquals("the one built ahead, then one at the stream's parameter sets", listOf(VideoCodec.HEVC.mime, VideoCodec.HEVC.mime), configures)
+        assertEquals("the keyframe that threw was fed again, so its frame and the next are drawn", 2L, r.framesRendered.get())
+        assertEquals("no keyframe round trip", 0, keyframesAsked)
+        assertTrue(gate.picture.value != null)
+        assertFalse("off for the process: the next wake builds at the stream's parameter sets", switch.on)
+    }
+
+    @Test
+    fun `the decoder built at the stream's parameter sets that throws too waits out the backoff, once`() {
+        failInputs = 2 // the one built ahead, and the one built for the stream
         val r = run(hevcSetup, vps + sps + pps, idr, trail, idr)
         assertEquals(listOf(VideoCodec.HEVC.mime, VideoCodec.HEVC.mime), configures)
-        assertEquals(1L, r.framesRendered.get())
+        assertEquals("nothing: the backoff holds, Robolectric's clock standing still", 0L, r.framesRendered.get())
+        assertFalse(switch.on)
     }
 
     @Test
@@ -180,11 +219,50 @@ class VideoRendererTest {
 
     @Test
     fun `once building ahead is off, a last stream's setup builds nothing and the stream's own build the decoder`() {
-        setups.buildAhead = false // the manager's stall watch saw a decoder built ahead draw nothing
+        switch.turnOff() // a decoder built ahead failed earlier in the process
         val r = run(hevcSetup, vps + sps + pps, idr)
         assertEquals(listOf(VideoCodec.HEVC.mime), configures)
         assertEquals(1L, r.framesRendered.get())
         assertTrue("built after its video came", gate.picture.value!!.decoderReadyAtMs > gate.picture.value!!.videoInAtMs)
+    }
+
+    @Test
+    fun `on a still screen a keyframe's own feed draws its frame, with nothing after it`() {
+        val r = run(null, vps + sps + pps, idr)
+        assertEquals(1L, r.framesRendered.get())
+        assertNotNull("the picture, with no second access unit to push it out", gate.picture.value)
+    }
+
+    @Test
+    fun `a new wait on a kept decoder draws its picture from the next keyframe, not from frames that refer to the last phone's`() {
+        var cameBack = 0L
+        val r = run(hevcSetup, vps + sps + pps, idr, trail, { gate.expect().also { cameBack = tick } }, trail, trail, idr, trail)
+        val picture = gate.picture.value!!
+        assertTrue("drawn after the phone came back", picture.drawnAtMs > cameBack)
+        assertEquals("the first phone's two, then the keyframe's and the one after it, not the two before it", 4L, r.framesRendered.get())
+        assertEquals("a keyframe asked for (once: the second is within the throttle)", 1, keyframesAsked)
+    }
+
+    @Test
+    fun `only a decoder built ahead that was fed and drew nothing is to blame`() {
+        silent = true // it takes the access units and draws nothing
+        val seen = mutableListOf<Boolean>()
+
+        fun look() = seen.add(renderer!!.builtAheadDrewNothing)
+        run(hevcSetup, { look() }, vps + sps + pps, { look() }, idr, { look() })
+        assertFalse("never fed: not to blame", seen[0])
+        assertFalse("proven by its stream, not yet fed: not to blame", seen[1])
+        assertTrue("fed a keyframe and drew nothing: to blame", seen[2])
+    }
+
+    @Test
+    fun `building ahead is the process's to turn off, once`() {
+        assertSame("every manager's setups share the process's switch", StreamSetups().buildAhead, StreamSetups().buildAhead)
+        assertSame(BuildAheadSwitch.process, StreamSetups().buildAhead)
+        val mine = BuildAheadSwitch()
+        assertTrue(mine.turnOff())
+        assertFalse("already off: nothing to log", mine.turnOff())
+        assertFalse(mine.on)
     }
 
     @Test

@@ -25,10 +25,36 @@ class StreamSetup(
 /**
  * The last stream's setup, shared by a manager's video epochs one after another: a renderer builds its decoder ahead
  * from [last] and leaves its own stream's there as it configures. Read and written on renderers' threads, one at a time.
+ * Whether to build ahead at all is [buildAhead]'s, the process's by default.
  */
-class StreamSetups {
+class StreamSetups(
+    val buildAhead: BuildAheadSwitch = BuildAheadSwitch.process,
+) {
     @Volatile var last: StreamSetup? = null
+}
 
-    /** False once a decoder built ahead drew nothing (CarlinkManager's stall watch): decoders are built at the stream's. */
-    @Volatile var buildAhead = true
+/**
+ * Whether video decoders are built ahead of their stream. Off for good, until Carlink's process ends, once one built ahead
+ * failed it: it threw at its first use, or it was fed and drew nothing (the renderer, CarlinkManager's stall and picture
+ * watchdogs). Decoders are then built at the stream's parameter sets, as before building ahead. Per process
+ * ([process]), not per manager: a rebuilt manager (Reset Device, a new screen) must not try the same head unit again.
+ */
+class BuildAheadSwitch {
+    @Volatile var on = true
+        private set
+
+    /** Turn it off: true when this call did, so the caller logs it once. */
+    fun turnOff(): Boolean {
+        if (!on) return false
+        synchronized(this) {
+            if (!on) return false
+            on = false
+            return true
+        }
+    }
+
+    companion object {
+        /** The process's switch. */
+        val process = BuildAheadSwitch()
+    }
 }
