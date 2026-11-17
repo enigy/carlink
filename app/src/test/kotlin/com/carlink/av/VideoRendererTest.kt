@@ -179,6 +179,15 @@ class VideoRendererTest {
     }
 
     @Test
+    fun `once building ahead is off, a last stream's setup builds nothing and the stream's own build the decoder`() {
+        setups.buildAhead = false // the manager's stall watch saw a decoder built ahead draw nothing
+        val r = run(hevcSetup, vps + sps + pps, idr)
+        assertEquals(listOf(VideoCodec.HEVC.mime), configures)
+        assertEquals(1L, r.framesRendered.get())
+        assertTrue("built after its video came", gate.picture.value!!.decoderReadyAtMs > gate.picture.value!!.videoInAtMs)
+    }
+
+    @Test
     fun `with no last stream, or one of another size, the stream's parameter sets build the decoder as before`() {
         val first = run(null, vps + sps + pps, idr)
         assertEquals(listOf(VideoCodec.HEVC.mime), configures)

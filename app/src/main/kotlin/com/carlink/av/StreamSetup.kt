@@ -28,4 +28,7 @@ class StreamSetup(
  */
 class StreamSetups {
     @Volatile var last: StreamSetup? = null
+
+    /** False once a decoder built ahead drew nothing (CarlinkManager's stall watch): decoders are built at the stream's. */
+    @Volatile var buildAhead = true
 }

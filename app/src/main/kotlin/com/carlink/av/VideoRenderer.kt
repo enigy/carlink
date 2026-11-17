@@ -81,7 +81,10 @@ class VideoRenderer(
     private var aheadCodec: VideoCodec? = null
 
     /** The live codec was built ahead: a failure before its first frame builds one at once, without the backoff. */
-    private var builtAhead = false
+    @Volatile private var builtAhead = false
+
+    /** The live decoder was built ahead (and not yet replaced): the manager's stall watch reads it. */
+    val decoderBuiltAhead: Boolean get() = builtAhead
 
     private companion object {
         const val CONFIGURE_RETRY_MS = 5_000L // don't re-attempt configure per NAL (codec-pool leak)
@@ -128,7 +131,8 @@ class VideoRenderer(
         val hdr = ByteArray(4)
         try {
             // Built ahead, before the first message (the pipe holds what comes meanwhile): see [configure].
-            setups?.last?.takeIf { it.width == width && it.height == height }?.let { configure(it, ahead = true) }
+            val last = setups?.takeIf { it.buildAhead }?.last
+            if (last != null && last.width == width && last.height == height) configure(last, ahead = true)
             while (running.get()) {
                 val msg = readSeamMessage(ins, hdr, log) ?: break
                 bytesIn.addAndGet((msg.size + 4).toLong())

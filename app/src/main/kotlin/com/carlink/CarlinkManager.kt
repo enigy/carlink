@@ -3022,6 +3022,12 @@ class CarlinkManager(
                         "(${r.videoCodec?.label ?: "no codec"}) — rebuilding the decoder",
                     tag = Logger.Tags.VIDEO,
                 )
+                if (r.decoderBuiltAhead && r.framesRendered.get() == 0L && streamSetups.buildAhead) {
+                    // A decoder built ahead that never drew: whatever the cause, this head unit's next ones are built as
+                    // they always were, at the stream's parameter sets, for the rest of the process. One stall, not one a wake.
+                    streamSetups.buildAhead = false
+                    logWarn("[LIFECYCLE] the decoder built ahead drew nothing: not building ahead again", tag = Logger.Tags.VIDEO)
+                }
                 val surface = videoSurface ?: return@launch
                 retireVideoEpoch("stall watchdog")
                 openVideoEpoch(surface)
