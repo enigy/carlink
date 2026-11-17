@@ -7,6 +7,9 @@ import android.os.Build
 import android.os.Process
 import com.carlink.CarlinkManager
 import com.carlink.DisplayOff
+import com.carlink.ledger.ConnectLedgerCodec
+import com.carlink.ledger.ConnectLedgerStore
+import com.carlink.ledger.ConnectLedgerText
 import com.carlink.logging.LogRedactor
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
@@ -50,6 +53,10 @@ import java.io.File
  * - `box_flag --es name <bench_name> [--es value <text>] [--ez on false]`: write the box's /tmp/<bench_name> over CH_FILE
  *   (its content: the value, else "on"; "off" with on false, which the box reads as unset, since a push can't delete).
  *   Only names starting bench_. A flash's reboot clears them: set them again after it.
+ * - `ledger`: the connect ledger into this log, for a script: "[bench] ledger: N connects", the Settings figure, then
+ *   "[bench] ledger i/N {json}" per connect (its stored form, newest first) and "[bench] ledger end". A connect still in
+ *   flight isn't in it yet. Needs no adapter or session.
+ * - `ledger_clear`: delete the connect ledger, as "[bench] ledger cleared: N connects".
  */
 class BenchReceiver : BroadcastReceiver() {
     override fun onReceive(
@@ -62,6 +69,13 @@ class BenchReceiver : BroadcastReceiver() {
         }
         val m = CarlinkManager.live
         val what = intent.getStringExtra("do").orEmpty()
+        if (what in LEDGER_ACTIONS) {
+            // The ledger is the head unit's, not a session's: no manager needed.
+            val store = ConnectLedgerStore.get(context)
+            logInfo("[bench] $what", tag = Logger.Tags.USB)
+            scope.launch { if (what == "ledger") printLedger(store) else clearLedger(store) }
+            return
+        }
         if (m == null) {
             logWarn("[bench] $what: no Carlink session manager running", tag = Logger.Tags.USB)
             return
@@ -185,6 +199,19 @@ class BenchReceiver : BroadcastReceiver() {
             .onFailure { logWarn("[bench] box_flag /tmp/$name not written: ${it.message}", tag = Logger.Tags.ADAPTR) }
     }
 
+    private fun printLedger(store: ConnectLedgerStore) {
+        val ledger = store.snapshot()
+        val all = ledger.newestFirst
+        logInfo("[bench] ledger: ${all.size} connects, newest first", tag = Logger.Tags.USB)
+        logInfo("[bench] ledger: ${ConnectLedgerText.summaryLine(ledger)}", tag = Logger.Tags.USB)
+        all.forEachIndexed { i, r -> logInfo("[bench] ledger ${i + 1}/${all.size} ${ConnectLedgerCodec.encodeRecord(r)}", tag = Logger.Tags.USB) }
+        logInfo("[bench] ledger end", tag = Logger.Tags.USB)
+    }
+
+    private fun clearLedger(store: ConnectLedgerStore) {
+        logInfo("[bench] ledger cleared: ${store.clear()} connects", tag = Logger.Tags.USB)
+    }
+
     /** DUMP is the gate; on Android 14+ a sender that shares its identity must also be the shell (2000) or root. */
     private fun fromShell(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
@@ -199,6 +226,7 @@ class BenchReceiver : BroadcastReceiver() {
         const val DEFAULT_ON_AFTER_MS = 100
         const val DEFAULT_LINES = 400
         const val UPDATE_FOLLOW_MS = 600_000L
+        val LEDGER_ACTIONS = setOf("ledger", "ledger_clear")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }

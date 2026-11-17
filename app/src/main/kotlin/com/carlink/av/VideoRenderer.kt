@@ -57,6 +57,10 @@ class VideoRenderer(
     val bytesIn = AtomicLong(0)
     val ausDropped = AtomicLong(0)
 
+    /** When this renderer handed its first frame to the Surface (SystemClock.elapsedRealtime); 0 before. The connect ledger's. */
+    @Volatile var firstFrameAtMs = 0L
+        private set
+
     private val paramSets = VideoCodecs.ParamSets()
     private var sawKeyframe = false
     private var lastKeyframeReq = 0L
@@ -285,7 +289,10 @@ class VideoRenderer(
                     val real = info.size != 0
                     c.releaseOutputBuffer(outIdx, real)
                     val n = if (real) framesRendered.incrementAndGet() else 0L
-                    if (n == 1L) log.i("FIRST FRAME RENDERED")
+                    if (n == 1L) {
+                        firstFrameAtMs = SystemClock.elapsedRealtime()
+                        log.i("FIRST FRAME RENDERED")
+                    }
                     if (n > 0L && n % LOG_EVERY_FRAMES == 0L) log.i("$n frames rendered (${bytesIn.get()} B in)")
                 }
                 outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> log.i("output format: ${c.outputFormat}")

@@ -1,5 +1,6 @@
 package com.carlink.ui
 
+import android.os.SystemClock
 import android.view.MotionEvent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -67,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import com.carlink.BuildConfig
 import com.carlink.CarlinkManager
 import com.carlink.R
+import com.carlink.ledger.ConnectTimer
 import com.carlink.logging.logDebug
 import com.carlink.logging.logInfo
 import com.carlink.protocol.MessageSerializer
@@ -176,6 +178,7 @@ fun MainScreen(
     val scope = rememberCoroutineScope()
     var showResetConfirm by remember(carlinkManager) { mutableStateOf(false) }
     SessionEffects(carlinkManager, ui, surfaceState, onNavigateToSettings, onStateChanged)
+    PictureForLedger(carlinkManager, ui.projecting)
 
     // The surface rect comes from the SAME profile the config was built from — the bars the
     // session's display mode keeps visible plus the parity pixel — not from the live Compose
@@ -376,6 +379,31 @@ private fun SessionEffects(
     LaunchedEffect(carlinkManager) {
         snapshotFlow { ui.initializedForStart }.first { it }
         carlinkManager.startIfDisconnected("the screen is up")
+    }
+}
+
+/**
+ * The connect ledger's "first video frame on screen" ([CarlinkManager.pictureShown]): the later of the moment the loading
+ * screen starts to lift ([SessionUiState.projecting]) and the moment the decoder handed the epoch's first frame to the
+ * surface. The overlay lifts in DEVICE_CONNECTED for a frame drawn there, and at STREAMING whether or not one is drawn, so
+ * a picture is a lifted overlay with a frame under it. It only watches; the overlay is the [SessionEffects] watch's.
+ */
+@Composable
+private fun PictureForLedger(
+    carlinkManager: CarlinkManager,
+    projecting: Boolean,
+) {
+    LaunchedEffect(carlinkManager, projecting) {
+        if (!projecting) return@LaunchedEffect
+        val liftedAt = SystemClock.elapsedRealtime()
+        var drawnAt = carlinkManager.firstFrameDrawnAt()
+        // Polled only while the overlay is lifted with no frame drawn yet (STREAMING first), and no longer than the
+        // ledger's window, past which the picture wouldn't count.
+        while (drawnAt == 0L && SystemClock.elapsedRealtime() - liftedAt < ConnectTimer.WINDOW_MS) {
+            delay(FIRST_FRAME_POLL_MS)
+            drawnAt = carlinkManager.firstFrameDrawnAt()
+        }
+        if (drawnAt != 0L) carlinkManager.pictureShown(maxOf(liftedAt, drawnAt))
     }
 }
 
