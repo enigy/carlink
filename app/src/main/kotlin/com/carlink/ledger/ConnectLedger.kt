@@ -25,12 +25,16 @@ data class ConnectLedger(
 /**
  * The figure the project is judged by, as Settings shows it: display on to the first video frame on screen, over the
  * last [WINDOW] wakes that showed a picture. Their median, and the time 9 in 10 were within (nearest-rank 90th
- * percentile). Fewer than [MIN_COUNT] say nothing yet.
+ * percentile). Fewer than [MIN_COUNT] say nothing yet. A wake whose screen wasn't in front within [FRONT_GRACE_MS] of
+ * the display on is left out ([leftOutOfFigure]): its time is the driver's opening Carlink, not the connect.
  */
 object ConnectStats {
     const val WINDOW = 20
     const val MIN_COUNT = 5
     const val PERCENTILE = 90
+
+    /** How soon after the display on Carlink's screen must be in front for a wake to count. */
+    const val FRONT_GRACE_MS = 1_000L
 
     private const val HUNDRED = 100
     private const val HALF_TENTH_MS = 50
@@ -45,14 +49,22 @@ object ConnectStats {
         val ninetiethMs: Long,
     )
 
-    /** Display on to picture of the newest [WINDOW] wakes that showed one, newest first. */
+    /** Display on to picture of the newest [WINDOW] wakes that showed one and count ([leftOutOfFigure]), newest first. */
     fun wakePictures(ledger: ConnectLedger): List<Long> =
         ledger.newestFirst
             .asSequence()
-            .filter { it.origin == Origin.DISPLAY_ON && it.outcome == Outcome.PICTURE }
+            .filter { wakePicture(it) && !leftOutOfFigure(it) }
             .mapNotNull { it.pictureMs }
             .take(WINDOW)
             .toList()
+
+    /**
+     * A wake that showed a picture but doesn't count: Carlink's screen wasn't in front at the display on or within
+     * [FRONT_GRACE_MS] of it (frontMs null or later). It stays in the ledger and in Save Logs, marked.
+     */
+    fun leftOutOfFigure(r: ConnectRecord): Boolean = wakePicture(r) && (r.frontMs ?: Long.MAX_VALUE) > FRONT_GRACE_MS
+
+    private fun wakePicture(r: ConnectRecord): Boolean = r.origin == Origin.DISPLAY_ON && r.outcome == Outcome.PICTURE
 
     /** The summary of [ledger]'s [wakePictures], or null with fewer than [MIN_COUNT]. */
     fun summary(ledger: ConnectLedger): Summary? = summary(wakePictures(ledger))

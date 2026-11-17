@@ -92,6 +92,12 @@ data class ConnectRecord(
 
         /** It ended before a picture: [EndReason]. */
         ENDED_EARLY("ended_early"),
+
+        /**
+         * No picture within the window though the phone was there (the session up, STREAMING stamped): Carlink's screen
+         * was not in front at the end of the window, so nothing could show it. Not [NO_PHONE].
+         */
+        NOT_IN_FRONT("not_in_front"),
     }
 
     enum class EndReason(

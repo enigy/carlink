@@ -428,6 +428,120 @@ class ConnectTimerTest {
     }
 
     @Test
+    fun `a display off and on while the wake's SUBSCRIBE is in flight leaves the session to the next wake, whose picture counts`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L) // its HELLO and SUBSCRIBE block
+        t.displayOff(301_000L, 0L) // the first wake's record ends early
+        t.subscribed(301_400L) // the blocked SUBSCRIBE lands with no connect open
+        t.displayOn(302_000L, 0L)
+        t.wake(302_000L, adapterListed = true, nowMs = 302_050L) // queued behind it: the session is up, nothing starts
+        t.picture(304_500L, 304_500L)
+        t.streaming(305_000L)
+        t.tick(304_500L + SETTLE_MS)
+
+        assertEquals(2, committed.size)
+        val first = committed[0]
+        assertEquals(Outcome.ENDED_EARLY, first.outcome)
+        assertEquals(EndReason.DISPLAY_OFF, first.endReason)
+        assertNull(first.subscribeMs)
+        val second = committed[1]
+        assertEquals(Outcome.PICTURE, second.outcome)
+        assertEquals("up before this display on", 0L, second.subscribeMs)
+        assertEquals(2_500L, second.pictureMs)
+        assertEquals(3_000L, second.streamingMs)
+        assertEquals("no start of its own", 0, second.starts)
+    }
+
+    @Test
+    fun `a wake that takes its cut start's session keeps its picture's video in and decoder ready`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L) // its HELLO and SUBSCRIBE block
+        t.displayOff(301_000L, 0L)
+        t.subscribed(301_400L) // lands with no connect open
+        t.displayOn(302_000L, 0L)
+        t.wake(302_000L, adapterListed = true, nowMs = 302_050L) // takes the session that is up
+        // The surface came back with the display: the epoch opened and built its decoder ahead; the phone's video came later.
+        t.picture(atMs = 304_500L, nowMs = 304_500L, videoInAtMs = 304_300L, decoderReadyAtMs = 302_430L)
+        t.tick(304_500L + SETTLE_MS)
+        val r = committed.last()
+        assertEquals(Outcome.PICTURE, r.outcome)
+        assertEquals("up before this display on", 0L, r.subscribeMs)
+        assertEquals(2_300L, r.videoInMs)
+        assertEquals(430L, r.decoderReadyMs)
+        assertEquals(2_500L, r.pictureMs)
+        assertEquals(0, r.starts)
+    }
+
+    @Test
+    fun `a not-in-front connect keeps no video steps, even after a picture that didn't count`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.appVisible(false, 300_000L)
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L)
+        t.picture(atMs = 300_300L, nowMs = 300_300L, videoInAtMs = 300_200L, decoderReadyAtMs = 300_100L) // before SUBSCRIBE: not its own
+        t.subscribed(300_600L)
+        t.streaming(304_000L)
+        t.tick(300_000L + WINDOW_MS)
+        val r = committed.single()
+        assertEquals(Outcome.NOT_IN_FRONT, r.outcome)
+        assertNull(r.videoInMs)
+        assertNull(r.decoderReadyMs)
+        val stored = ConnectLedgerCodec.encodeRecord(r)
+        assertFalse(stored, stored.contains("videoInMs") || stored.contains("decoderReadyMs"))
+    }
+
+    @Test
+    fun `STREAMING that came while no connect was open is the next wake's too`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L)
+        t.displayOff(301_000L, 0L)
+        t.subscribed(301_400L)
+        t.streaming(301_900L) // the phone came while the display was still off
+        t.displayOn(303_000L, 0L)
+        t.wake(303_000L, adapterListed = true, nowMs = 303_000L)
+        t.picture(303_800L, 303_800L)
+        t.tick(303_800L + SETTLE_MS)
+        val r = committed.last()
+        assertEquals(Outcome.PICTURE, r.outcome)
+        assertEquals(0L, r.subscribeMs)
+        assertEquals(0L, r.streamingMs)
+        assertEquals(800L, r.pictureMs)
+    }
+
+    @Test
+    fun `a session that went down, a start's own teardown or Close app leaves nothing for a wake to take`() {
+        val t = timer()
+        t.subscribed(100_000L) // no connect open
+        t.sessionDown(100_500L)
+        t.displayOff(101_000L, 0L)
+        t.displayOn(102_000L, 0L)
+        t.wake(102_000L, adapterListed = true, nowMs = 102_000L)
+        t.closing(103_000L)
+
+        t.subscribed(200_000L)
+        t.startBegan(200_100L) // a reconnect: its start stops the session that is up
+        t.closing(200_200L)
+
+        t.subscribed(300_000L)
+        t.closing(300_100L)
+        t.displayOff(300_200L, 0L)
+        t.displayOn(300_300L, 0L)
+        t.wake(300_300L, adapterListed = true, nowMs = 300_300L)
+        t.closing(300_400L)
+
+        assertEquals(listOf(Kind.WAKE_LISTED, Kind.RECONNECT, Kind.WAKE_LISTED), committed.map { it.kind })
+        assertEquals(listOf(null, null, null), committed.map { it.subscribeMs })
+        assertTrue(committed.all { it.outcome == Outcome.ENDED_EARLY && it.endReason == EndReason.APP_CLOSED })
+    }
+
+    @Test
     fun `the same wake reported twice is one connect`() {
         val t = timer()
         t.offThenOn(onAt = 300_000L)
@@ -471,6 +585,25 @@ class ConnectTimerTest {
     }
 
     @Test
+    fun `the window ending with the phone streaming but Carlink's screen not in front is no picture, not no phone`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.appVisible(false, 300_000L) // the head unit's own screen came back at the wake
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L)
+        t.subscribed(300_600L)
+        t.streaming(304_000L) // the phone is there; nothing draws it
+        t.tick(300_000L + WINDOW_MS)
+        val r = committed.single()
+        assertEquals(Outcome.NOT_IN_FRONT, r.outcome)
+        assertEquals(WINDOW_MS, r.endMs)
+        assertNull(r.endReason)
+        assertNull(r.pictureMs)
+        assertEquals(4_000L, r.streamingMs)
+        assertNull(r.frontMs)
+    }
+
+    @Test
     fun `a connect that ended with Carlink's screen not in front says so`() {
         val t = timer()
         t.offThenOn(onAt = 300_000L)
@@ -479,7 +612,7 @@ class ConnectTimerTest {
         t.subscribed(300_600L)
         t.appVisible(false, 301_000L)
         t.tick(300_000L + WINDOW_MS)
-        assertEquals(Outcome.NO_PHONE, committed.single().outcome)
+        assertEquals("no STREAMING: nothing says the phone was there", Outcome.NO_PHONE, committed.single().outcome)
         assertNull(committed.single().frontMs)
     }
 

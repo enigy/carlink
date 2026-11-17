@@ -94,6 +94,48 @@ class AdapterLinesTest {
         assertEquals("v1b", "[timeline] v1b k=-", AdapterTimeline.accept("[timeline] v1b k=-"))
     }
 
+    /** Every key the firmware's lines carry today (27 to 33 of them a line), and the two coming next (the 16 Nov review's list). */
+    private val firmwareKeys =
+        listOf(
+            "sup_radios bt_power btd_start bt_up page_start acl sdp rfcomm cert_req sign1_start sign1_end ident",
+            "wifi_req wifi_rsp ap_start ap_up ap_enabled sta_assoc dhcp_ack carplayd_start svc_seen dial pv_done auth_in",
+            "auth_out record_in record screen_setup first_frame chip1_ms cert1_ms chip2_ms cert2_ms usb_edge_s bt_armed dial_ok",
+        ).flatMap { it.split(' ') }
+
+    @Test
+    fun `every key the firmware sends today passes, alone and all together`() {
+        assertEquals(36, firmwareKeys.toSet().size)
+        for ((i, key) in firmwareKeys.withIndex()) {
+            for (value in listOf("0", "-", "${1_000 + i * 97}", "9999999999999")) {
+                val line = "[timeline] v1 $key=$value"
+                assertEquals(line, AdapterTimeline.accept(line))
+            }
+        }
+        // All 36 in one line, with values like the firmware's (milliseconds from the host's arrival, a dash for a stage not seen).
+        val all = "[timeline] v1 " + firmwareKeys.withIndex().joinToString(" ") { (i, k) -> if (i % 9 == 4) "$k=-" else "$k=${406 + i * 151}" }
+        assertTrue("${all.length} characters", all.length <= AdapterTimeline.MAX_CHARS)
+        assertEquals(all, AdapterTimeline.accept(all))
+    }
+
+    @Test
+    fun `a key must be a short lower-case word, a value at most 13 digits, and no key may hold an address`() {
+        assertEquals("24 characters", "[timeline] v1 ${"k".repeat(24)}=1", AdapterTimeline.accept("[timeline] v1 ${"k".repeat(24)}=1"))
+        assertEquals("13 digits", "[timeline] v1 dial=1234567890123", AdapterTimeline.accept("[timeline] v1 dial=1234567890123"))
+        assertEquals("11 hex characters in a row", "[timeline] v1 abcdef01234=1", AdapterTimeline.accept("[timeline] v1 abcdef01234=1"))
+        val refused =
+            listOf(
+                "a key of 25 characters" to "[timeline] v1 ${"k".repeat(25)}=1",
+                "a value of 14 digits" to "[timeline] v1 dial=12345678901234",
+                "a key starting with a digit" to "[timeline] v1 1st_frame=7195",
+                "a key starting with an underscore" to "[timeline] v1 _frame=7195",
+                "an address as a key" to "[timeline] v1 a4c3f085ac2d=1",
+                "an address inside a key" to "[timeline] v1 bt_02000000a0b1=1",
+                "a serial inside a key" to "[timeline] v1 dev_0123456789abcdef=1",
+                "the last of several keys" to "[timeline] v1 dial=1 first_frame=2 dc0a5f3e9b71=3",
+            )
+        for ((why, line) in refused) assertNull(why, AdapterTimeline.accept(line))
+    }
+
     @Test
     fun `a timeline line naming a phone, carrying an address or in another form is dropped`() {
         val rejected =

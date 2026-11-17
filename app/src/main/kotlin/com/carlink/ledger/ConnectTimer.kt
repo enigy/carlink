@@ -21,12 +21,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - any other start while none is in flight ([startBegan]): a reconnect, timed from that start.
  *
  * A start while one is in flight (a retry, Reset connection) belongs to it; a start while the display is off begins none.
+ * A wake that begins on a session already up (its start's SUBSCRIBE landed after a display OFF ended the record that
+ * start was for) takes that session's SUBSCRIBE and STREAMING times.
  * It ends
  * - with a picture: the first video frame on screen within [WINDOW_MS] ([picture]); it stays open [SETTLE_MS] more for
  *   STREAMING and the adapter's lines, which come just after, unless the session ends first;
  * - early: the display off again ([displayOff]), Close app, a handover or the manager's release ([closing]);
- * - at [WINDOW_MS] with no picture: no phone while the session with the adapter is up, else ended early with an error, at
- *   its last failure ([sessionDown]).
+ * - at [WINDOW_MS] with no picture: no phone while the session with the adapter is up, or no picture for Carlink's screen
+ *   when the phone was streaming but the screen was not in front; else ended early with an error, at its last failure
+ *   ([sessionDown]).
  */
 @Suppress("TooManyFunctions") // one entry point per event CarlinkManager reports, and the steps of a connect
 class ConnectTimer(
@@ -71,6 +74,12 @@ class ConnectTimer(
 
     // Since when Carlink's screen has been in front ([appVisible]), null while it isn't or until it is told.
     private var frontSince: Long? = null
+
+    // The session with the adapter, whether or not a connect is in flight: up since its SUBSCRIBE, and STREAMING since.
+    // A display OFF and ON while a wake's start is still blocked in HELLO or SUBSCRIBE ends that wake's record before the
+    // SUBSCRIBE lands; the wake that follows begins on the session already up and takes both ([adoptSession]).
+    private var sessionUpSince: Long? = null
+    private var streamingSince: Long? = null
 
     /** The display went off at [elapsedMs] ([uptimeMs]: SystemClock.uptimeMillis then). A connect in flight ends. */
     @Synchronized
@@ -120,19 +129,37 @@ class ConnectTimer(
                 a.originMs = displayOnMs
                 a.startedAtMs = wallClock() - (nowMs - displayOnMs)
                 a.suspendedMs = suspended
+                adoptSession(a)
                 schedule(displayOnMs + WINDOW_MS)
             }
             else -> {
                 a?.let { if (it.pictureAt != null) finish(it, Outcome.PICTURE) else finish(it, Outcome.ENDED_EARLY, EndReason.DISPLAY_OFF, displayOnMs) }
-                begin(kind, displayOnMs, nowMs).suspendedMs = suspended
+                val wake = begin(kind, displayOnMs, nowMs)
+                wake.suspendedMs = suspended
+                adoptSession(wake)
             }
         }
+    }
+
+    /**
+     * A wake that begins while the session with the adapter is up takes it: its SUBSCRIBE (and STREAMING) came while no
+     * connect was open, after a display OFF ended the one its start was for. A start never does: it tears the session
+     * down first (CarlinkManager.startImpl), so [startBegan] forgets it.
+     */
+    private fun adoptSession(a: Attempt) {
+        val up = sessionUpSince ?: return
+        if (a.subscribeAt != null) return
+        a.subscribeAt = up
+        a.sessionUp = true
+        if (a.streamingAt == null) a.streamingAt = streamingSince
     }
 
     /** Carlink begins a session (CarlinkManager.startImpl): a retry of the connect in flight, or a connect of its own. */
     @Synchronized
     fun startBegan(nowMs: Long) {
         tick(nowMs)
+        // The start tears down any session that is up before it connects (CarlinkManager.startImpl): none carries over.
+        forgetSession()
         if (!displayOn) return
         var a = open
         if (a?.pictureAt != null) {
@@ -150,10 +177,12 @@ class ConnectTimer(
         return if (appStart) begin(Kind.APP_START, processStartMs, nowMs) else begin(Kind.RECONNECT, nowMs, nowMs)
     }
 
-    /** CT_SUBSCRIBE went out: the session with the adapter is up. */
+    /** CT_SUBSCRIBE went out: the session with the adapter is up, kept even with no connect open ([adoptSession]). */
     @Synchronized
     fun subscribed(nowMs: Long) {
         tick(nowMs)
+        sessionUpSince = nowMs
+        streamingSince = null
         val a = open ?: return
         if (a.pictureAt != null) return
         a.subscribeAt = nowMs
@@ -164,6 +193,7 @@ class ConnectTimer(
     @Synchronized
     fun sessionDown(nowMs: Long) {
         tick(nowMs)
+        forgetSession()
         val a = open ?: return
         if (a.pictureAt != null) {
             finish(a, Outcome.PICTURE)
@@ -177,6 +207,7 @@ class ConnectTimer(
     @Synchronized
     fun streaming(nowMs: Long) {
         tick(nowMs)
+        if (sessionUpSince != null && streamingSince == null) streamingSince = nowMs
         val a = open ?: return
         val subscribe = a.subscribeAt ?: return
         if (a.streamingAt == null && nowMs >= subscribe) a.streamingAt = nowMs
@@ -219,6 +250,7 @@ class ConnectTimer(
     @Synchronized
     fun closing(nowMs: Long) {
         tick(nowMs)
+        forgetSession()
         val a = open ?: return
         if (a.pictureAt != null) finish(a, Outcome.PICTURE) else finish(a, Outcome.ENDED_EARLY, EndReason.APP_CLOSED, nowMs)
     }
@@ -270,9 +302,15 @@ class ConnectTimer(
         when {
             picture != null -> if (nowMs >= picture + SETTLE_MS) finish(a, Outcome.PICTURE)
             nowMs - a.originMs < WINDOW_MS -> Unit
+            a.sessionUp && a.streamingAt != null && frontSince == null -> finish(a, Outcome.NOT_IN_FRONT, endAtMs = a.originMs + WINDOW_MS)
             a.sessionUp -> finish(a, Outcome.NO_PHONE, endAtMs = a.originMs + WINDOW_MS)
             else -> finish(a, Outcome.ENDED_EARLY, EndReason.ERROR, a.downAt ?: (a.originMs + WINDOW_MS))
         }
+    }
+
+    private fun forgetSession() {
+        sessionUpSince = null
+        streamingSince = null
     }
 
     private fun begin(

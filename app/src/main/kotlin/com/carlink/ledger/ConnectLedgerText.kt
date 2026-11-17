@@ -36,12 +36,18 @@ object ConnectLedgerText {
             ledger.newestFirst.forEach { append(line(it, zone)).append('\n') }
         }
 
-    /** The Settings figure in milliseconds, for the header. */
+    /** The Settings figure in milliseconds, for the header, with how many wakes it leaves out. */
     fun summaryLine(ledger: ConnectLedger): String {
         val times = ConnectStats.wakePictures(ledger)
-        val s = ConnectStats.summary(times) ?: return "Display on to picture: not enough wakes with a picture yet (${times.size} of ${ConnectStats.MIN_COUNT})."
+        val leftOut = ledger.records.count(ConnectStats::leftOutOfFigure)
+        val notCounted =
+            " Not counted: $leftOut ${if (leftOut == 1) "wake" else "wakes"} with a picture whose screen wasn't in front within " +
+                "${ConnectStats.FRONT_GRACE_MS} ms of the display on (marked below)."
+        val s =
+            ConnectStats.summary(times)
+                ?: return "Display on to picture: not enough wakes with a picture yet (${times.size} of ${ConnectStats.MIN_COUNT}).$notCounted"
         return "Display on to picture, the last ${s.count} wakes with a picture: median ${s.medianMs} ms, 9 in 10 within ${s.ninetiethMs} ms " +
-            "(nearest rank)."
+            "(nearest rank).$notCounted"
     }
 
     /** One connect on one line. */
@@ -71,10 +77,14 @@ object ConnectLedgerText {
 
     private fun outcomeWords(r: ConnectRecord): String =
         when (r.outcome) {
-            Outcome.PICTURE -> "picture ${at(r.endMs)}"
+            Outcome.PICTURE -> "picture ${at(r.endMs)}" + if (ConnectStats.leftOutOfFigure(r)) ", not counted: ${notCounted(r)}" else ""
             Outcome.NO_PHONE -> "no phone, no picture within ${ConnectTimer.WINDOW_MS / MS_PER_S} s"
             Outcome.ENDED_EARLY -> "ended early, ${r.endReason?.words ?: "unknown"}, ${at(r.endMs)}"
+            Outcome.NOT_IN_FRONT -> "no picture within ${ConnectTimer.WINDOW_MS / MS_PER_S} s: Carlink's screen was not in front"
         }
+
+    /** Why a wake's picture is left out of the figure ([ConnectStats.leftOutOfFigure]). */
+    private fun notCounted(r: ConnectRecord): String = r.frontMs?.let { "Carlink's screen came to the front ${at(it)}" } ?: "Carlink's screen was not in front"
 
     private fun adapterWords(a: AdapterStartup): String {
         val up = a.uptimeMs?.let { "${it / MS_PER_S}.${it % MS_PER_S / MS_PER_TENTH} s" } ?: "-"

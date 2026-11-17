@@ -75,18 +75,26 @@ data class AdapterStartup(
 
 /**
  * The adapter's `[timeline]` line (OCBM 2.6.1 and later, sent just after its `[startup]` line), kept verbatim only when
- * the whole line is the v1 form and at most [MAX_CHARS] long; anything else is dropped. Its values are numbers or a dash
- * and its keys lower-case words, so no name, address or free text can ride in it. Its keys are never read: the set may
- * change from one adapter build to the next.
+ * the whole line is the v1 form and at most [MAX_CHARS] long; anything else is dropped. A key is a lower-case word of at
+ * most 24 characters starting with a letter, a value a dash or at most 13 digits (the firmware's own cap), and a key with
+ * 12 hex characters in a row (an address or a serial) is refused, so no name, address or free text can ride in it. Its
+ * keys are never read: the set may change from one adapter build to the next.
  */
 object AdapterTimeline {
     const val PREFIX = "[timeline]"
     const val MAX_CHARS = 800
 
-    // `^\[timeline\] v1[ab]?( [a-z0-9_]+=(-|\d+))+$`, matched against the whole line, with `[0-9]` for `\d`: Android's
-    // ICU engine takes \d as any Unicode digit, the JVM's only 0-9.
-    private val V1 = Regex("\\[timeline\\] v1[ab]?( [a-z0-9_]+=(-|[0-9]+))+")
+    // `^\[timeline\] v1[ab]?( [a-z][a-z0-9_]{0,23}=(-|\d{1,13}))+$`, matched against the whole line, with `[0-9]` for `\d`:
+    // Android's ICU engine takes \d as any Unicode digit, the JVM's only 0-9.
+    private val V1 = Regex("\\[timeline\\] v1[ab]?( [a-z][a-z0-9_]{0,23}=(-|[0-9]{1,13}))+")
+
+    // Twelve hex characters in a row, in a key: a Bluetooth or Wi-Fi address without its colons, or a serial.
+    private val HEX_RUN = Regex("[0-9a-f]{12}")
 
     /** [line] when it may be kept, else null. */
-    fun accept(line: String): String? = line.takeIf { it.length <= MAX_CHARS && V1.matches(it) }
+    fun accept(line: String): String? {
+        if (line.length > MAX_CHARS || !V1.matches(line)) return null
+        val keys = line.splitToSequence(' ').drop(2).map { it.substringBefore('=') }
+        return line.takeIf { keys.none(HEX_RUN::containsMatchIn) }
+    }
 }

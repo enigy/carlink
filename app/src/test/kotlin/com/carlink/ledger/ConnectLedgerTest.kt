@@ -5,6 +5,7 @@ import com.carlink.ledger.ConnectRecord.Kind
 import com.carlink.ledger.ConnectRecord.Outcome
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The ledger's cap and order, and the Settings figure's maths: which connects count, the median, the nearest-rank 90th. */
@@ -12,7 +13,8 @@ class ConnectLedgerTest {
     private fun wake(
         pictureMs: Long,
         at: Long = 1_000L,
-    ) = ConnectRecord(startedAtMs = at, kind = Kind.WAKE_LISTED, outcome = Outcome.PICTURE, endMs = pictureMs, pictureMs = pictureMs, starts = 1)
+        frontMs: Long? = 0L,
+    ) = ConnectRecord(startedAtMs = at, kind = Kind.WAKE_LISTED, outcome = Outcome.PICTURE, endMs = pictureMs, pictureMs = pictureMs, starts = 1, frontMs = frontMs)
 
     /** A ledger of wakes with these pictures, oldest first. */
     private fun ledgerOf(vararg pictures: Long) = pictures.fold(ConnectLedger()) { l, ms -> l.with(wake(ms)) }
@@ -45,12 +47,44 @@ class ConnectLedgerTest {
         ledger = ledger.with(ConnectRecord(2, Kind.RECONNECT, Outcome.PICTURE, endMs = 2_000, pictureMs = 2_000))
         ledger = ledger.with(ConnectRecord(3, Kind.WAKE_LISTED, Outcome.NO_PHONE, endMs = ConnectTimer.WINDOW_MS))
         ledger = ledger.with(ConnectRecord(4, Kind.WAKE_LISTED, Outcome.ENDED_EARLY, endMs = 900, endReason = EndReason.DISPLAY_OFF))
-        ledger = ledger.with(ConnectRecord(5, Kind.WAKE_NOT_LISTED, Outcome.PICTURE, endMs = 9_000, pictureMs = 9_000))
+        ledger = ledger.with(ConnectRecord(5, Kind.WAKE_NOT_LISTED, Outcome.PICTURE, endMs = 9_000, pictureMs = 9_000, frontMs = 0))
         ledger = ledger.with(wake(4_000))
         assertEquals("newest first, wakes with a picture only", listOf(4_000L, 9_000L), ConnectStats.wakePictures(ledger))
 
         val many = (1..25).fold(ConnectLedger()) { l, i -> l.with(wake(i * 100L)) }
         assertEquals((25 downTo 6).map { it * 100L }, ConnectStats.wakePictures(many))
+    }
+
+    @Test
+    fun `a wake whose screen wasn't in front within 1 s of the display on is left out of the figure, and kept`() {
+        val ledger =
+            ConnectLedger()
+                .with(wake(3_000, frontMs = 0))
+                .with(wake(3_100, frontMs = 1_000))
+                .with(wake(42_000, frontMs = 40_500)) // the driver opened Carlink 40 s after the wake
+                .with(wake(3_300, frontMs = 1_001))
+                .with(wake(3_400, frontMs = null))
+        assertEquals(listOf(3_100L, 3_000L), ConnectStats.wakePictures(ledger))
+        assertEquals("kept all the same", 5, ledger.records.size)
+        assertEquals(listOf(false, false, true, true, true), ledger.records.map(ConnectStats::leftOutOfFigure))
+
+        // Only a wake's picture is left out: the others never counted, and aren't marked.
+        val others =
+            listOf(
+                ConnectRecord(1, Kind.APP_START, Outcome.PICTURE, endMs = 30_000, pictureMs = 30_000),
+                ConnectRecord(2, Kind.WAKE_LISTED, Outcome.NOT_IN_FRONT, endMs = ConnectTimer.WINDOW_MS),
+                ConnectRecord(3, Kind.WAKE_LISTED, Outcome.NO_PHONE, endMs = ConnectTimer.WINDOW_MS),
+            )
+        assertTrue(others.none(ConnectStats::leftOutOfFigure))
+    }
+
+    @Test
+    fun `a late screen doesn't move the median or the 9 in 10 time`() {
+        val ledger = ledgerOf(3_000, 3_100, 3_200, 3_300, 3_400).with(wake(42_000, frontMs = 40_500))
+        val s = ConnectStats.summary(ledger)!!
+        assertEquals(5, s.count)
+        assertEquals(3_200L, s.medianMs)
+        assertEquals(3_400L, s.ninetiethMs)
     }
 
     @Test
