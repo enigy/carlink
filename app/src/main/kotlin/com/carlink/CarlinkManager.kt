@@ -15,6 +15,7 @@ import com.carlink.audio.MicProfile
 import com.carlink.audio.MicRecovery
 import com.carlink.audio.MicrophoneCaptureManager
 import com.carlink.audio.SilenceGuard
+import com.carlink.av.EpochKeeper
 import com.carlink.av.IdleAheadWatch
 import com.carlink.av.MediaAudioPlayer
 import com.carlink.av.PictureGate
@@ -750,16 +751,26 @@ class CarlinkManager(
      * is exactly why `VideoSeam`'s pipe is swappable while the seam itself (holding the session's
      * decrypt key) is not.
      */
-    private class VideoEpoch(
-        val seq: Int,
+    private data class VideoEpoch(
+        override val seq: Int,
         val pipe: SeamPipe,
         val renderer: VideoRenderer,
         val thread: Thread,
         /** Its renderer's side of the picture: the picture watchdog reads its first video. */
         val watch: PictureWatch,
-        /** Opened without building ahead because the one before held a decoder built ahead with no phone ([dropIdleDecoder]). */
-        val idleDropped: Boolean = false,
-    )
+        override val openedAtMs: Long,
+        /** The wait the picture watchdog's rebuild opened it for ([EpochKeeper.Reopen.PICTURE]), else none. */
+        override val rebuiltFor: Long = PictureGate.NONE,
+        /** Opened without building ahead because the one before held a decoder built ahead with no phone ([EpochKeeper.Reopen.IDLE]). */
+        override val idleDropped: Boolean = false,
+    ) : EpochKeeper.Epoch {
+        override val idleAheadSince: Long get() = renderer.idleAheadSince
+
+        // Unread video in the pipe counts: a phone's VideoConfig waiting there would be closed with it, and the seam never re-sends it.
+        override val hasVideo: Boolean get() = renderer.bytesIn.get() != 0L || pipe.available() > 0
+
+        override fun firstVideoAt(wait: Long): Long = watch.firstVideoAt(wait)
+    }
 
     @Volatile private var videoEpoch: VideoEpoch? = null
     private val videoEpochSeq =
@@ -794,13 +805,40 @@ class CarlinkManager(
      */
     val pictureFallback: StateFlow<Boolean> get() = pictureGate.fallenBack
 
-    /** The picture watchdog's rules and state; sampled on the main scope while the gate waits ([watchPicture]). */
-    private val pictureDog = PictureWatchdog()
+    /**
+     * The picture watchdog ([PictureWatchdog]) and a decoder built ahead with no phone ([IdleAheadWatch]), over the current
+     * epoch: it decides, and [reopenVideoEpoch] does. Main thread ([watchPicture], [watchVideoStall], the phone's signs).
+     */
+    private val epochKeeper =
+        EpochKeeper(
+            pictureGate,
+            object : EpochKeeper.Epochs {
+                override val current: EpochKeeper.Epoch? get() = videoEpoch
+                override val phoneKeyed: Boolean get() = streamingStamp.phoneKeyedIn(state)
+                override val canBuildAhead: Boolean get() = streamSetups.buildAhead.on && streamSetups.last != null
+
+                override fun reopen(
+                    epoch: EpochKeeper.Epoch,
+                    why: EpochKeeper.Reopen,
+                    forWait: Long,
+                ): Boolean = reopenVideoEpoch(epoch, why, forWait)
+
+                override fun blame(epoch: EpochKeeper.Epoch) {
+                    (epoch as? VideoEpoch)?.let { blameBuiltAhead(it.renderer) }
+                }
+
+                override fun keyframeSoon() = scheduleDelayedKeyframe()
+
+                override fun fellBack(wait: Long) =
+                    logWarn(
+                        "[LIFECYCLE] still no frame of the phone's: the loading screen goes by STREAMING, as 3.20's did, until the " +
+                            "next phone or session",
+                        tag = Logger.Tags.VIDEO,
+                    )
+            },
+        )
 
     @Volatile private var pictureDogJob: Job? = null
-
-    /** Releases a decoder built ahead that has waited a minute with no phone ([dropIdleDecoder], [phoneComing]). Main thread. */
-    private val idleAhead = IdleAheadWatch()
 
     /** Rebuilds a video epoch that takes access units and draws nothing (9 Nov bench). Main thread. */
     private val videoStall = VideoStallWatch()
@@ -2983,13 +3021,15 @@ class CarlinkManager(
      * pointed at its pipe, or the first frames land in a pipe nobody is draining.
      *
      * [buildAhead] false: its decoder is built at the stream's parameter sets, not ahead (the picture watchdog's rebuild,
-     * an idle decoder dropped), and its stream's setup is still left for the next epoch ([StreamSetups.notAhead]).
-     * [idleDropped]: it was opened to drop an idle one, and is built ahead again when a phone shows up ([phoneComing]).
+     * an idle decoder released), and its stream's setup is still left for the next epoch ([StreamSetups.notAhead]).
+     * [rebuiltFor]: the wait the picture watchdog's rebuild opened it for. [idleDropped]: it was opened to release an idle
+     * one, and is built ahead again when a phone shows up ([EpochKeeper.phoneComing]).
      */
     @Synchronized
     private fun openVideoEpoch(
         surface: Surface,
         buildAhead: Boolean = true,
+        rebuiltFor: Long = PictureGate.NONE,
         idleDropped: Boolean = false,
     ) {
         val lanes = client?.lanes ?: return
@@ -3005,12 +3045,12 @@ class CarlinkManager(
         }
 
         val seq = videoEpochSeq.incrementAndGet()
+        val openedAt = SystemClock.elapsedRealtime()
         val pipe = SeamPipe(VIDEO_PIPE_BYTES, VIDEO_PIPE_DEPTH, name = "cp-video", log = ocbmLog)
         val watch =
             PictureWatch({ pictureGate.waiting }, SystemClock::elapsedRealtime, pictureGate::videoIn) { wait, frame ->
                 onPictureDrawn(seq, wait, frame)
             }
-        // Not built ahead, its stream's setup is still left for the next epoch.
         val setups = if (buildAhead) streamSetups else streamSetups.notAhead()
         val renderer =
             VideoRenderer(config.width, config.height, surface, picture = watch, setups = setups) {
@@ -3019,7 +3059,7 @@ class CarlinkManager(
         renderer.start()
         val thread = lanes.runConsumer("cp-video", pipe) { renderer.consume(it) }
         // The current epoch before any video can reach it: its first frame is offered as the picture only as the current one's.
-        videoEpoch = VideoEpoch(seq, pipe, renderer, thread, watch, idleDropped)
+        videoEpoch = VideoEpoch(seq, pipe, renderer, thread, watch, openedAt, rebuiltFor, idleDropped)
         lanes.videoSeam.attach(pipe)
         codecDeferred = false
 
@@ -3043,7 +3083,7 @@ class CarlinkManager(
     /**
      * Rebuild epoch [seq] if access units keep arriving and it draws nothing ([VideoStallWatch]): on the 9 Nov bench a
      * decoder latched to the wrong codec froze the frame, with touch dead, until the overlay watchdog happened to run.
-     * The same 2 s look releases a decoder built ahead that has waited with no phone ([IdleAheadWatch], [dropIdleDecoder]).
+     * The same 2 s look releases a decoder built ahead that has waited with no phone ([EpochKeeper.idleLook]).
      */
     private fun watchVideoStall(seq: Int) {
         scope.launch {
@@ -3053,10 +3093,7 @@ class CarlinkManager(
                 if (e.seq != seq) return@launch
                 val r = e.renderer
                 val now = SystemClock.elapsedRealtime()
-                if (idleAhead.release(now, r.idleAheadSince)) {
-                    dropIdleDecoder(e)
-                    return@launch
-                }
+                if (epochKeeper.idleLook(now, e)) return@launch
                 if (!videoStall.sample(seq, now, r.bytesIn.get(), r.framesRendered.get())) continue
                 logWarn(
                     "[LIFECYCLE] Video epoch #$seq: access units arriving and no frame drawn for ${videoStall.timing.stallMs} ms " +
@@ -3084,97 +3121,63 @@ class CarlinkManager(
     }
 
     /**
-     * The decoder built ahead in epoch [e] has waited [IdleAheadWatch.idleMs] with no video and no phone on its way (a drive
-     * without one): it is released (a fresh epoch with none), not held for hours; [phoneComing] builds it again when a
-     * phone shows up.
+     * [EpochKeeper]'s act on [epoch]: retired only while it is still the current one (the read thread may just have swapped
+     * it, for a codec change, and that epoch is left alone), and the next opened for [why]. Under this manager's lock, as
+     * every retire and open is. False when [epoch] was no longer current, or no next epoch opened.
      */
-    private fun dropIdleDecoder(e: VideoEpoch) {
-        val surface = videoSurface ?: return
-        logInfo(
-            "[LIFECYCLE] Video epoch #${e.seq}: its decoder built ahead had no video for ${idleAhead.idleMs / 1000} s — released until a phone shows up",
-            tag = Logger.Tags.VIDEO,
-        )
-        retireVideoEpoch("idle decoder built ahead")
-        openVideoEpoch(surface, buildAhead = false, idleDropped = true)
+    private fun reopenVideoEpoch(
+        epoch: EpochKeeper.Epoch,
+        why: EpochKeeper.Reopen,
+        forWait: Long,
+    ): Boolean {
+        val surface = videoSurface ?: return false
+        synchronized(this) {
+            if (videoEpoch !== epoch) return false
+            when (why) {
+                EpochKeeper.Reopen.PICTURE -> {
+                    logWarn(
+                        "[LIFECYCLE] Video epoch #${epoch.seq}: no frame of the phone's with the loading screen up — rebuilding its " +
+                            "decoder at the stream's parameter sets",
+                        tag = Logger.Tags.VIDEO,
+                    )
+                    retireVideoEpoch("picture watchdog")
+                    openVideoEpoch(surface, buildAhead = false, rebuiltFor = forWait)
+                }
+                EpochKeeper.Reopen.IDLE -> {
+                    logInfo(
+                        "[LIFECYCLE] Video epoch #${epoch.seq}: its decoder built ahead had no video for ${epochKeeper.idle.idleMs / 1000} s " +
+                            "— released until a phone shows up",
+                        tag = Logger.Tags.VIDEO,
+                    )
+                    retireVideoEpoch("idle decoder built ahead")
+                    openVideoEpoch(surface, buildAhead = false, idleDropped = true)
+                }
+                EpochKeeper.Reopen.AHEAD -> {
+                    logInfo("[LIFECYCLE] a phone is coming: building the decoder ahead again", tag = Logger.Tags.VIDEO)
+                    retireVideoEpoch("a phone is coming")
+                    openVideoEpoch(surface)
+                }
+            }
+            return videoEpoch != null
+        }
     }
 
     /**
-     * Main thread. The adapter says a phone is coming (a Bluetooth phase of its connect, the phone on its bus): the idle
-     * clock starts again, and an epoch whose decoder was dropped for idleness, still with no video, builds it ahead again,
-     * seconds before the phone's video (its Bluetooth link came 4 to 6 s before the first frame on the 16 Nov bench).
-     */
-    private fun phoneComing() {
-        idleAhead.phoneComing(SystemClock.elapsedRealtime())
-        val e = videoEpoch ?: return
-        if (!e.idleDropped || e.renderer.bytesIn.get() != 0L) return
-        if (!streamSetups.buildAhead.on || streamSetups.last == null) return
-        val surface = videoSurface ?: return
-        logInfo("[LIFECYCLE] a phone is coming: building the decoder ahead again", tag = Logger.Tags.VIDEO)
-        retireVideoEpoch("a phone is coming")
-        openVideoEpoch(surface)
-    }
-
-    /**
-     * The picture watchdog ([PictureWatchdog]), once per manager: asleep while the picture is up, it looks at each wait
-     * until its picture comes, a new wait begins, or it falls back. It acts on whatever epoch is current, so its second
-     * look carries over the epoch its rebuild opened.
+     * The picture watchdog, once per manager ([EpochKeeper.look]): asleep while the picture is up and once it fell back for
+     * a wait, it looks at each wait until its picture comes or a new wait begins. The look reads the gate's wait itself,
+     * after the delay, so a picture drawn meanwhile is answered with nothing. It acts on whatever epoch is current, so its
+     * second look carries over the epoch its rebuild opened.
      */
     private fun watchPicture() {
         if (pictureDogJob?.isActive == true) return
         pictureDogJob =
             scope.launch {
                 while (true) {
-                    val wait = pictureGate.waits.first { it != PictureGate.NONE }
-                    watchWait(wait)
-                    pictureGate.waits.first { it != wait }
+                    pictureGate.waits.first { it != PictureGate.NONE && it != epochKeeper.settled }
+                    delay(epochKeeper.lookEveryMs())
+                    epochKeeper.look(SystemClock.elapsedRealtime())
                 }
             }
-    }
-
-    /**
-     * Main scope. Look at [wait] until its picture comes, a new wait begins, or it fell back. Its clock runs only while a
-     * keyed phone is here ([StreamingStamp.phoneKeyedIn]): a phone that left leaves the session DEVICE_CONNECTED, and a
-     * fallback armed with no phone would lift the screen at the next phone's media, before its key and over the last
-     * phone's frame.
-     */
-    private suspend fun watchWait(wait: Long) {
-        while (pictureGate.waiting == wait) {
-            val keyed = streamingStamp.phoneKeyedIn(state)
-            delay(if (keyed) pictureDog.timing.sampleMs else pictureDog.timing.idleSampleMs)
-            val e = videoEpoch ?: continue
-            val keyedNow = streamingStamp.phoneKeyedIn(state)
-            when (pictureDog.sample(SystemClock.elapsedRealtime(), wait, keyedNow, e.watch.firstVideoAt(wait))) {
-                PictureWatchdog.Action.NONE -> Unit
-                PictureWatchdog.Action.REBUILD -> rebuildForPicture(e)
-                PictureWatchdog.Action.FALL_BACK -> {
-                    if (pictureGate.fallBack(wait)) {
-                        logWarn(
-                            "[LIFECYCLE] still no frame of the phone's: the loading screen goes by STREAMING, as 3.20's did, until the " +
-                                "next phone or session",
-                            tag = Logger.Tags.VIDEO,
-                        )
-                    }
-                    return
-                }
-            }
-        }
-    }
-
-    /**
-     * The picture watchdog's first answer: epoch [e] took the phone's video and drew nothing for [PictureWatchdog.Timing.rebuildMs].
-     * A fresh decoder, built at the stream's parameter sets (not ahead), and a keyframe asked (openVideoEpoch). Built
-     * ahead, proven and fed, it is blamed for the process.
-     */
-    private fun rebuildForPicture(e: VideoEpoch) {
-        val surface = videoSurface ?: return
-        logWarn(
-            "[LIFECYCLE] Video epoch #${e.seq}: no frame ${pictureDog.timing.rebuildMs} ms after its video came, the loading screen up — " +
-                "rebuilding its decoder at the stream's parameter sets",
-            tag = Logger.Tags.VIDEO,
-        )
-        blameBuiltAhead(e.renderer)
-        retireVideoEpoch("picture watchdog")
-        openVideoEpoch(surface, buildAhead = false)
     }
 
     /**
@@ -3443,7 +3446,7 @@ class CarlinkManager(
             phoneSetup.onBtPhase(phase)
             val text = btPhaseText(phase)
             scope.launch {
-                if (client === c) phoneComing()
+                if (client === c) epochKeeper.phoneComing(SystemClock.elapsedRealtime())
                 if (text != null && state != State.STREAMING) setStatusText(text)
             }
         }
@@ -3514,7 +3517,7 @@ class CarlinkManager(
                     adapterPhone.absent()
                     phoneSessionEnded()
                 } else if (client === c) {
-                    phoneComing()
+                    epochKeeper.phoneComing(SystemClock.elapsedRealtime())
                 }
                 _phoneNews.update { it + 1 }
                 if (present || state == State.DISCONNECTED) return@launch

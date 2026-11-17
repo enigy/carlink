@@ -5,10 +5,10 @@ package com.carlink.av
  * last stream's setup, it holds one of the head unit's hardware decoders until the phone's video comes, and on a drive
  * without a phone that is hours. [release] says when to let it go: [idleMs] with no video since it was built, or since
  * the adapter last said a phone is coming ([phoneComing]: a Bluetooth phase of its connect, the phone on its bus),
- * whichever is later. The manager builds it again at the next such sign, seconds before the phone's video, or at the
- * next video epoch it opens.
+ * whichever is later. [EpochKeeper] builds it again at the next such sign, seconds before the phone's video, and the
+ * manager at the next video epoch it opens.
  *
- * Not thread-safe: one caller (CarlinkManager's main scope).
+ * Not thread-safe: one caller ([EpochKeeper], on CarlinkManager's main scope).
  */
 class IdleAheadWatch(
     /**

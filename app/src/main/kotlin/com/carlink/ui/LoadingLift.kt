@@ -10,7 +10,9 @@ import com.carlink.CarlinkManager
  *
  * The one exception is the picture watchdog's last resort ([fellBack], [com.carlink.av.PictureWatchdog]): when the
  * decoder drew nothing even after a rebuild, 3.20's rule holds until the next wait, the screen lifting at STREAMING with
- * or without a frame, so a live session can't stay behind it with touch blocked.
+ * or without a frame, so a session with the phone's media can't stay behind it with touch blocked. Only from STREAMING
+ * on: a keyed session that never gets the phone's media metadata stays covered, as it did under 3.20, with Settings and
+ * Reset still reachable.
  */
 object LoadingLift {
     fun lifted(

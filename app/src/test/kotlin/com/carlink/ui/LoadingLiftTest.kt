@@ -90,17 +90,23 @@ class LoadingLiftTest {
     }
 
     @Test
-    fun `a still screen whose decoder draws nothing is rebuilt, then lifted by STREAMING, so the screen never stays locked`() {
+    fun `a still screen whose decoder draws nothing is rebuilt, then lifted by STREAMING once a session has the phone's media`() {
         val dog = PictureWatchdog()
         gate.expect() // the wake's start
         gate.expect() // the phone's key: its config and first keyframe come at 10 s, and its decoder draws nothing
         val wait = gate.waiting
-        val acts = (10_000L..20_000L step 250).map { t -> t to dog.sample(t, gate.waiting, keyed = true, videoInAtMs = 10_000) }
+        var epoch = PictureWatchdog.Epoch(seq = 1, openedAtMs = 9_000, rebuiltFor = PictureGate.NONE, videoInAtMs = 10_000)
+        val acts =
+            (10_000L..25_000L step 250).map { t ->
+                val act = dog.sample(t, gate.waiting, keyed = true, epoch = epoch)
+                if (act == PictureWatchdog.Action.REBUILD) epoch = PictureWatchdog.Epoch(2, t, rebuiltFor = wait, videoInAtMs = 0)
+                t to act
+            }
         val rebuild = acts.first { it.second == PictureWatchdog.Action.REBUILD }.first
-        assertEquals("4 s after the first video", 14_000L, rebuild)
+        assertEquals("6 s after the first video", 16_000L, rebuild)
         assertFalse("locked until the fallback", lifted(State.STREAMING))
         val fallBack = acts.first { it.second == PictureWatchdog.Action.FALL_BACK }.first
-        assertEquals("3 s after the rebuild", 17_000L, fallBack)
+        assertEquals("5 s after the rebuild", 21_000L, fallBack)
         assertTrue(gate.fallBack(wait))
         assertTrue("STREAMING lifts it, and touch goes through with it", lifted(State.STREAMING))
         assertFalse(lifted(State.DEVICE_CONNECTED))
@@ -121,8 +127,9 @@ class LoadingLiftTest {
         assertTrue(lifted(state))
         gate.expect() // the phone left: the session stays DEVICE_CONNECTED, with no phone
         stamp.reset()
+        val epoch = PictureWatchdog.Epoch(seq = 1, openedAtMs = 0, rebuiltFor = PictureGate.NONE, videoInAtMs = 0)
         for (t in 0L..60_000L step 250) {
-            assertEquals("a minute with no phone", PictureWatchdog.Action.NONE, dog.sample(t, gate.waiting, stamp.phoneKeyedIn(state), 0L))
+            assertEquals("a minute with no phone", PictureWatchdog.Action.NONE, dog.sample(t, gate.waiting, stamp.phoneKeyedIn(state), epoch))
         }
         state = stamp.onMedia(state) ?: state // the next phone's media, 1.7 s before its key
         assertEquals(State.STREAMING, state)
