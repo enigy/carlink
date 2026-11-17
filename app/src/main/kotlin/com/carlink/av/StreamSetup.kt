@@ -24,13 +24,33 @@ class StreamSetup(
 
 /**
  * The last stream's setup, shared by a manager's video epochs one after another: a renderer builds its decoder ahead
- * from [last] and leaves its own stream's there as it configures. Read and written on renderers' threads, one at a time.
- * Whether to build ahead at all is [buildAhead]'s, the process's by default.
+ * from it ([aheadFrom]) and leaves its own stream's there as it configures ([last]). Read and written on renderers'
+ * threads, one at a time. Whether to build ahead at all is [buildAhead]'s, the process's by default; an epoch that builds
+ * nothing ahead is given [notAhead], the same setups, so its stream's setup is still left for the next epoch.
  */
-class StreamSetups(
-    val buildAhead: BuildAheadSwitch = BuildAheadSwitch.process,
+class StreamSetups private constructor(
+    val buildAhead: BuildAheadSwitch,
+    private val store: Store,
+    private val ahead: Boolean,
 ) {
-    @Volatile var last: StreamSetup? = null
+    constructor(buildAhead: BuildAheadSwitch = BuildAheadSwitch.process) : this(buildAhead, Store(), ahead = true)
+
+    /** The last stream's setup, shared with every view of these setups. */
+    var last: StreamSetup?
+        get() = store.last
+        set(value) {
+            store.last = value
+        }
+
+    /** What a renderer given these builds its decoder ahead from: the last setup, while building ahead is on, or none. */
+    val aheadFrom: StreamSetup? get() = store.last.takeIf { ahead && buildAhead.on }
+
+    /** These setups for an epoch that builds nothing ahead (the picture watchdog's rebuild, an idle decoder released). */
+    fun notAhead(): StreamSetups = StreamSetups(buildAhead, store, ahead = false)
+
+    private class Store {
+        @Volatile var last: StreamSetup? = null
+    }
 }
 
 /**

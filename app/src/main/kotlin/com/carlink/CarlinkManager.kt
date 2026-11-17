@@ -2983,8 +2983,8 @@ class CarlinkManager(
      * pointed at its pipe, or the first frames land in a pipe nobody is draining.
      *
      * [buildAhead] false: its decoder is built at the stream's parameter sets, not ahead (the picture watchdog's rebuild,
-     * an idle decoder dropped). [idleDropped]: it was opened to drop an idle one, and is built ahead again when a phone
-     * shows up ([phoneComing]).
+     * an idle decoder dropped), and its stream's setup is still left for the next epoch ([StreamSetups.notAhead]).
+     * [idleDropped]: it was opened to drop an idle one, and is built ahead again when a phone shows up ([phoneComing]).
      */
     @Synchronized
     private fun openVideoEpoch(
@@ -3006,9 +3006,14 @@ class CarlinkManager(
 
         val seq = videoEpochSeq.incrementAndGet()
         val pipe = SeamPipe(VIDEO_PIPE_BYTES, VIDEO_PIPE_DEPTH, name = "cp-video", log = ocbmLog)
-        val watch = PictureWatch({ pictureGate.waiting }, SystemClock::elapsedRealtime) { wait, frame -> onPictureDrawn(seq, wait, frame) }
+        val watch =
+            PictureWatch({ pictureGate.waiting }, SystemClock::elapsedRealtime, pictureGate::videoIn) { wait, frame ->
+                onPictureDrawn(seq, wait, frame)
+            }
+        // Not built ahead, its stream's setup is still left for the next epoch.
+        val setups = if (buildAhead) streamSetups else streamSetups.notAhead()
         val renderer =
-            VideoRenderer(config.width, config.height, surface, picture = watch, setups = streamSetups.takeIf { buildAhead }) {
+            VideoRenderer(config.width, config.height, surface, picture = watch, setups = setups) {
                 client?.requestKeyframe()
             }
         renderer.start()
@@ -3307,11 +3312,13 @@ class CarlinkManager(
         frame: PictureWatch.FirstFrame,
     ) {
         if (videoEpoch?.seq != seq || !pictureGate.drawn(wait, frame)) return
+        // As the gate keeps it: its video in is the wait's first, whichever epoch that reached.
+        val shown = pictureGate.picture.value ?: frame
 
-        fun before(t: Long) = if (t == 0L) "-" else "${frame.drawnAtMs - t} ms"
+        fun before(t: Long) = if (t == 0L) "-" else "${shown.drawnAtMs - t} ms"
         logInfo(
-            "[VIDEO] The phone's first frame drawn (epoch #$seq): its video came ${before(frame.videoInAtMs)} before it, " +
-                "the decoder was ready ${before(frame.decoderReadyAtMs)} before it",
+            "[VIDEO] The phone's first frame drawn (epoch #$seq): its video came ${before(shown.videoInAtMs)} before it, " +
+                "the decoder was ready ${before(shown.decoderReadyAtMs)} before it",
             tag = Logger.Tags.VIDEO,
         )
     }

@@ -19,10 +19,13 @@ class PictureGateTest {
 
     /** One epoch's watch, as CarlinkManager.openVideoEpoch builds it: it offers to the gate, which says yes once. */
     private fun watch(accept: Boolean = true) =
-        PictureWatch({ gate.waiting }, { now }) { wait, frame ->
+        PictureWatch({ gate.waiting }, { now }, gate::videoIn) { wait, frame ->
             offered += wait to frame
             if (accept) gate.drawn(wait, frame)
         }
+
+    /** A frame drawn now, judged under the gate's wait as the renderer reads it. */
+    private fun PictureWatch.draw() = drawn(now())
 
     @Test
     fun `the first frame drawn is the picture, with when its video came and when its decoder was ready`() {
@@ -33,10 +36,10 @@ class PictureGateTest {
         now = 9_050L
         w.videoIn() // the next message changes nothing
         now = 9_180L
-        w.drawn()
+        w.draw()
         assertEquals(FirstFrame(drawnAtMs = 9_180L, videoInAtMs = 9_000L, decoderReadyAtMs = 1_000L), gate.picture.value)
         now = 9_200L
-        w.drawn()
+        w.draw()
         assertEquals("the later frames change nothing", 9_180L, gate.picture.value?.drawnAtMs)
         assertEquals("and aren't even offered once it is up", 1, offered.size)
         assertEquals(PictureGate.NONE, gate.waiting)
@@ -50,7 +53,7 @@ class PictureGateTest {
         now = 9_052L
         w.decoderReady()
         now = 9_230L
-        w.drawn()
+        w.draw()
         assertEquals(FirstFrame(9_230L, 9_000L, 9_052L), gate.picture.value)
     }
 
@@ -61,18 +64,18 @@ class PictureGateTest {
         now = 9_000L
         w.videoIn()
         now = 9_100L
-        w.drawn()
+        w.draw()
         gate.expect() // the phone left
         assertNull(gate.picture.value)
         now = 40_000L
-        w.drawn() // a frame with no video since the wait began: the decoder's last, drained late
+        w.draw() // a frame with no video since the wait began: the decoder's last, drained late
         assertEquals("its video in is not known", 0L, gate.picture.value?.videoInAtMs)
 
         gate.expect() // the next phone's first video key
         now = 52_000L
         w.videoIn()
         now = 52_090L
-        w.drawn()
+        w.draw()
         assertEquals(FirstFrame(52_090L, 52_000L, 1_000L), gate.picture.value)
     }
 
@@ -92,18 +95,18 @@ class PictureGateTest {
         val retired = watch(accept = false)
         val current = watch()
         now = 2_000L
-        retired.drawn()
+        retired.draw()
         assertNull(gate.picture.value)
         now = 2_016L
-        current.drawn()
+        current.draw()
         assertEquals(2_016L, gate.picture.value?.drawnAtMs)
     }
 
     @Test
     fun `nothing is offered while the gate does not wait`() {
         val w = watch()
-        w.drawn() // the picture
-        repeat(3) { w.drawn() }
+        w.draw() // the picture
+        repeat(3) { w.draw() }
         w.videoIn()
         assertEquals(1, offered.size)
     }
@@ -111,20 +114,55 @@ class PictureGateTest {
     @Test
     fun `a frame of an access unit fed before the wait began is stale, and so is any before this wait's first`() {
         val w = watch()
-        assertTrue("nothing fed under this wait yet: any frame is an earlier one's", w.stale(ptsUs = 500))
-        w.fed(ptsUs = 1_000) // this wait's first access unit
-        assertFalse(w.stale(ptsUs = 1_000))
-        w.drawn() // its frame: the picture
-        assertFalse("never while the picture is up", w.stale(ptsUs = 500))
+        assertTrue("nothing fed under this wait yet: any frame is an earlier one's", w.stale(500, w.now()))
+        w.fed(1_000, w.now()) // this wait's first access unit
+        assertFalse(w.stale(1_000, w.now()))
+        w.draw() // its frame: the picture
+        assertFalse("never while the picture is up", w.stale(500, w.now()))
         gate.expect() // the phone left and came back on the same decoder
-        assertTrue(w.waitUnfed())
-        assertTrue("the last phone's frame, drained after the wait began", w.stale(ptsUs = 1_000))
-        w.fed(ptsUs = 2_000) // this wait's first access unit
-        assertFalse(w.waitUnfed())
-        assertTrue("fed before it", w.stale(ptsUs = 1_999))
-        assertFalse(w.stale(ptsUs = 2_000))
-        w.fed(ptsUs = 2_100)
-        assertFalse("the wait's first stays where its frames begin", w.stale(ptsUs = 2_050))
+        assertTrue(w.startsWait(w.now()))
+        assertTrue("the last phone's frame, drained after the wait began", w.stale(1_000, w.now()))
+        w.fed(2_000, w.now()) // this wait's first access unit
+        assertFalse(w.startsWait(w.now()))
+        assertTrue("fed before it", w.stale(1_999, w.now()))
+        assertFalse(w.stale(2_000, w.now()))
+        w.fed(2_100, w.now())
+        assertFalse("the wait's first stays where its frames begin", w.stale(2_050, w.now()))
+    }
+
+    @Test
+    fun `each step's one read of the wait holds for the whole step, whatever begins meanwhile`() {
+        val w = watch()
+        val before = w.now() // read for an access unit, before it is queued
+        gate.expect() // the phone leaves right as it is queued
+        w.fed(1_000, before)
+        assertTrue("not the new wait's first", w.startsWait(w.now()))
+        assertTrue("its frame is stale for the new wait", w.stale(1_000, w.now()))
+        val judged = w.now() // a frame judged under the new wait
+        gate.expect() // and another wait begins before its offer
+        w.drawn(judged)
+        assertNull("offered to the wait it was judged under, and refused", gate.picture.value)
+    }
+
+    @Test
+    fun `the picture's video in is the wait's first, whichever epoch drew it`() {
+        val wait = gate.waiting
+        val first = watch()
+        now = 9_000L
+        first.videoIn() // the wait's first video: this epoch's decoder draws nothing
+        val rebuilt = watch()
+        now = 15_000L
+        rebuilt.videoIn() // the watchdog's rebuild, its keyframe
+        now = 15_100L
+        rebuilt.draw()
+        assertEquals("the connect's video in, not the rebuilt epoch's", 9_000L, gate.picture.value?.videoInAtMs)
+        assertEquals("the epoch still reads its own, for the watchdog", 15_000L, rebuilt.firstVideoAt(wait))
+        gate.expect() // the next phone
+        now = 20_000L
+        rebuilt.videoIn()
+        now = 20_050L
+        rebuilt.draw()
+        assertEquals("a new wait's own", 20_000L, gate.picture.value?.videoInAtMs)
     }
 
     @Test

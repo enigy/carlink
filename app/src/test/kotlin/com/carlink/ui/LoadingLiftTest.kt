@@ -17,7 +17,10 @@ import org.junit.Test
 class LoadingLiftTest {
     private val gate = PictureGate()
     private var now = 0L
-    private val renderer = PictureWatch({ gate.waiting }, { now }) { wait, frame -> gate.drawn(wait, frame) }
+    private val renderer = PictureWatch({ gate.waiting }, { now }, gate::videoIn) { wait, frame -> gate.drawn(wait, frame) }
+
+    /** A frame drawn now, judged under the gate's wait as the renderer reads it. */
+    private fun PictureWatch.draw() = drawn(now())
 
     private fun lifted(state: State) = LoadingLift.lifted(state, gate.picture.value != null, gate.fallenBack.value)
 
@@ -37,7 +40,7 @@ class LoadingLiftTest {
         assertFalse(lifted(State.DEVICE_CONNECTED))
         assertFalse("STREAMING 80 ms before the frame", lifted(State.STREAMING))
         now = 8_160L
-        renderer.drawn()
+        renderer.draw()
         assertTrue(lifted(State.STREAMING))
     }
 
@@ -45,32 +48,32 @@ class LoadingLiftTest {
     fun `an app start whose box replays the last host's session lifts only at the phone's own first frame`() {
         gate.expect() // the app start's start
         now = 2_000L
-        renderer.drawn() // a frame of the replayed session, on the surface under the loading screen
+        renderer.draw() // a frame of the replayed session, on the surface under the loading screen
         assertFalse("the session is not up", lifted(State.CONNECTING))
         gate.expect() // the phone's own first video key, seconds later
         assertFalse("the last host's frame never lifts it", lifted(State.DEVICE_CONNECTED))
         now = 12_400L
-        renderer.drawn()
+        renderer.draw()
         assertTrue(lifted(State.DEVICE_CONNECTED))
     }
 
     @Test
     fun `the phone leaving brings it back until the next phone draws, whatever the state says`() {
         gate.expect()
-        renderer.drawn()
+        renderer.draw()
         assertTrue(lifted(State.STREAMING))
         gate.expect() // the phone left
         assertFalse(lifted(State.DEVICE_CONNECTED))
         assertFalse("even before the state follows", lifted(State.STREAMING))
         gate.expect() // the next phone's key
-        renderer.drawn()
+        renderer.draw()
         assertTrue(lifted(State.DEVICE_CONNECTED))
     }
 
     @Test
     fun `a session that ended takes it down at once, and the next one waits for its own frame`() {
         gate.expect()
-        renderer.drawn()
+        renderer.draw()
         assertTrue(lifted(State.STREAMING))
         assertFalse("disconnected, the last picture still held", lifted(State.DISCONNECTED))
         gate.expect() // the next start
@@ -102,7 +105,7 @@ class LoadingLiftTest {
         assertTrue("STREAMING lifts it, and touch goes through with it", lifted(State.STREAMING))
         assertFalse(lifted(State.DEVICE_CONNECTED))
         now = 21_000L
-        renderer.drawn() // the 30 s keyframe, or a touch that made CarPlay draw: the picture after all
+        renderer.draw() // the 30 s keyframe, or a touch that made CarPlay draw: the picture after all
         assertTrue(lifted(State.DEVICE_CONNECTED))
         gate.expect() // the phone left: the next one waits for its own frame, no fallback carried over
         assertFalse(lifted(State.STREAMING))
@@ -114,7 +117,7 @@ class LoadingLiftTest {
         val stamp = StreamingStamp()
         gate.expect() // the phone's key
         var state = stamp.onKeyed(State.CONNECTING) ?: State.CONNECTING
-        renderer.drawn()
+        renderer.draw()
         assertTrue(lifted(state))
         gate.expect() // the phone left: the session stays DEVICE_CONNECTED, with no phone
         stamp.reset()
@@ -128,7 +131,7 @@ class LoadingLiftTest {
         state = stamp.onKeyed(state) ?: state
         assertFalse(lifted(state))
         now = 70_000L
-        renderer.drawn()
+        renderer.draw()
         assertTrue(lifted(state))
     }
 }

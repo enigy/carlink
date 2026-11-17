@@ -36,14 +36,15 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * **The picture.** [picture] hears each message as it arrives, each decoder ready and each frame drawn, all on that
  * thread, and offers frames to the manager's [PictureGate] while it waits: what lifts the loading screen. While it
- * waits, a keyframe's own frame is looked for after its feed (a still screen sends nothing after it for 2.5 s), every
- * message looks for one, a frame of an access unit fed before the wait began is dropped unseen, and a decoder kept
- * from the last phone starts the new wait's picture at its next keyframe.
+ * waits, a keyframe's own frame is looked for after its feed (a still screen sends nothing after it for 2.5 s) unless
+ * the next message is already waiting, every message looks for one, a frame of an access unit fed before the wait began
+ * is dropped unseen, and a decoder kept from the last phone starts the new wait's picture at its next keyframe.
  *
- * **Built ahead.** Given [setups] holding the last stream's setup, [consume] configures the decoder from it before the
- * first message, exactly as that stream configured it, so on a wake (the same phone, the same parameter sets) the first
- * frame waits for no decoder. That decoder is fed nothing until this stream's own complete parameter sets prove byte for
- * byte the same; any other ones rebuild it as a mid-stream change does. Each setup a stream configures is left there.
+ * **Built ahead.** Given [setups] holding the last stream's setup ([StreamSetups.aheadFrom]), [consume] configures the
+ * decoder from it before the first message, exactly as that stream configured it, so on a wake (the same phone, the same
+ * parameter sets) the first frame waits for no decoder. That decoder is fed nothing until this stream's own complete
+ * parameter sets prove byte for byte the same; any other ones rebuild it as a mid-stream change does. Each setup a
+ * stream configures is left there, by an epoch given [StreamSetups.notAhead] too, which builds nothing ahead.
  */
 @Suppress("TooManyFunctions") // the decode loop's steps, one apiece: configure, feed and its recovery, drain and each frame drawn
 class VideoRenderer(
@@ -99,6 +100,9 @@ class VideoRenderer(
     /** The last presentation time queued, so each is later than the one before ([PictureWatch.stale] compares them). */
     private var lastPtsUs = 0L
 
+    /** The seam [consume] reads: whether its next message is already waiting ([inputWaiting]). */
+    private var input: InputStream? = null
+
     /**
      * The live decoder was built ahead, proven by its stream, fed, and has drawn nothing: what the manager's watchdogs
      * blame when they turn building ahead off for the process. A decoder never fed is not to blame for drawing nothing.
@@ -124,10 +128,14 @@ class VideoRenderer(
         /**
          * How long, while the gate waits, a keyframe's feed looks for its own frame: the emulator drew the first frame 43
          * to 48 ms after its video arrived on b7351ff's bench, and a hardware VPU decodes a 2400x960 keyframe in well under
-         * that. Only after a keyframe, while waiting: keyframes are seconds apart, so it never holds the read thread up, and
-         * the steady state drains with no wait at all, as before.
+         * that. Only after a keyframe, while waiting, and only while no next message is waiting: on a moving screen that
+         * next access unit's feed pushes the frame out, so the look ends at once, or within a [POLL_SLICE_US] slice of it
+         * coming. The steady state drains with no wait at all, as before.
          */
         const val FIRST_FRAME_POLL_US = 60_000L
+
+        /** The look's slices: a next access unit waits for at most one (a 60 fps screen sends one every 16.7 ms). */
+        const val POLL_SLICE_US = 5_000L
         const val NANOS_PER_US = 1_000L
     }
 
@@ -164,10 +172,11 @@ class VideoRenderer(
         // has no reference frames — so the IRAP gate must be re-armed. Parameter sets are KEPT: a
         // mid-stream re-dial re-sends no VideoConfig, so the cache is the only way to configure.
         sawKeyframe = false
+        input = ins
         val hdr = ByteArray(4)
         try {
             // Built ahead, before the first message (the pipe holds what comes meanwhile): see [configure].
-            val last = setups?.takeIf { it.buildAhead.on }?.last
+            val last = setups?.aheadFrom
             if (last != null && last.width == width && last.height == height) configure(last, ahead = true)
             while (running.get()) {
                 val msg = readSeamMessage(ins, hdr, log) ?: break
@@ -187,7 +196,15 @@ class VideoRenderer(
     private fun handleMessage(msg: ByteArray) {
         picture?.videoIn()
         decode(msg)
-        if (picture?.awaitingFrame() == true) codec?.let { drain(it) }
+        if (picture?.awaitingFrame() != true) return
+        val c = codec ?: return
+        // Outside feed's own recovery: a codec in error here, at a frame's release or a dequeue, would otherwise end this
+        // consumer, and the next phone's video would go into its closed pipe.
+        try {
+            drain(c)
+        } catch (e: IllegalStateException) {
+            recover(e, null, false, PictureGate.NONE)
+        }
     }
 
     /** One message = the parameter sets, or one complete access unit. */
@@ -202,9 +219,11 @@ class VideoRenderer(
         }
         absorb(c, scan)
         if (!configured || aheadUnproven) return
+        // The gate's wait, read once for this access unit, before it is queued: it is fed under this one ([feed]).
+        val wait = picture?.now() ?: PictureGate.NONE
         // A new wait for the picture on a decoder fed before (the phone left and came back on the same parameter sets):
         // its picture starts at the next keyframe, never at a frame that refers to the last phone's.
-        if (fedAny && sawKeyframe && picture?.waitUnfed() == true) {
+        if (fedAny && sawKeyframe && picture?.startsWait(wait) == true) {
             sawKeyframe = false
             log.i("a new wait for the picture on a kept decoder: from its next keyframe")
         }
@@ -222,7 +241,7 @@ class VideoRenderer(
             sawKeyframe = true
             log.i("keyframe — decoding starts")
         }
-        feed(msg, scan.keyframe)
+        feed(msg, scan.keyframe, wait)
     }
 
     /**
@@ -352,6 +371,7 @@ class VideoRenderer(
     private fun feed(
         auBytes: ByteArray,
         keyframe: Boolean,
+        wait: Long,
     ) {
         val c = codec ?: return
         try {
@@ -383,48 +403,57 @@ class VideoRenderer(
             c.queueInputBuffer(idx, 0, auBytes.size, pts, 0)
             fedAny = true
             if (builtAhead) aheadFed = true
-            picture?.fed(pts)
+            // Under the wait read before it was queued: a wait begun since doesn't take it for its first.
+            picture?.fed(pts, wait)
             // While the gate waits, a keyframe's frame comes out by its own feed, not the next access unit's: on a still
-            // screen that would be the 2.5 s keyframe.
-            drain(c, if (keyframe && picture?.awaitingFrame() == true) FIRST_FRAME_POLL_US else 0L)
+            // screen that would be the 2.5 s keyframe. Unless that next one is already waiting to be fed: it pushes it out.
+            drain(c, if (keyframe && picture?.awaitingFrame() == true && !inputWaiting()) FIRST_FRAME_POLL_US else 0L)
         } catch (e: IllegalStateException) {
-            recover(e, auBytes, keyframe)
+            recover(e, auBytes, keyframe, wait)
         }
     }
 
     /**
-     * A codec that threw mid-stream (CodecException is an ISE), on [auBytes]. Deliberately does NOT clear
-     * configureFailedAt: clearing it meant a codec that threw on every access unit rebuilt at frame rate — the codec-pool
-     * drain the backoff exists to prevent.
+     * A codec that threw (CodecException is an ISE) at a feed, on [auBytes] read under [wait], or at a drain between
+     * feeds, with none. Deliberately does NOT clear configureFailedAt: clearing it meant a codec that threw on every
+     * access unit rebuilt at frame rate — the codec-pool drain the backoff exists to prevent.
      *
      * The one exception: a decoder built ahead that fails before its first frame. Building ahead goes off for the process
      * (it would fail the same way at every wake), and a decoder built at the stream's own parameter sets gets this very
-     * access unit when it is a keyframe, so neither it nor a keyframe round trip is lost. That decoder is not built ahead,
-     * so this is once.
+     * access unit when it is a keyframe, so neither it nor a keyframe round trip is lost; otherwise the next message builds
+     * it at once. That decoder is not built ahead, so this is once, and when its configure fails, the backoff it armed holds.
      */
     private fun recover(
         e: IllegalStateException,
-        auBytes: ByteArray,
+        auBytes: ByteArray?,
         keyframe: Boolean,
+        wait: Long,
     ) {
         val ahead = builtAhead && framesRendered.get() == 0L
         log.e("codec in error state: ${e.message} — resetting" + if (ahead) " (it was built ahead)" else "")
         releaseCodec()
         if (ahead && setups?.buildAhead?.turnOff() == true) log.w("the decoder built ahead failed at its first use: not building ahead again")
-        val again = videoCodec?.takeIf { ahead && keyframe }?.let { paramSets.setup(it, width, height) }
-        if (again != null && configure(again)) {
-            feed(auBytes, keyframe)
+        val au = auBytes?.takeIf { ahead && keyframe }
+        val again = au?.let { videoCodec }?.let { paramSets.setup(it, width, height) }
+        if (au != null && again != null && configure(again)) {
+            feed(au, keyframe, wait)
             return
         }
         sawKeyframe = false
-        configureFailedAt = if (ahead) 0L else SystemClock.elapsedRealtime()
+        when {
+            !ahead -> configureFailedAt = SystemClock.elapsedRealtime()
+            // The stream's own parameter sets build one at the next message, unless a configure just now failed: the backoff
+            // it armed holds.
+            again == null -> configureFailedAt = 0L
+        }
         requestKeyframe()
     }
 
     /**
-     * Hand every decoded frame to the surface. With [firstFrameWithinUs] (a keyframe's feed while the gate waits), wait up
-     * to that long for one, and no more once one is drawn. A frame of an access unit fed before the wait began is the last
-     * phone's: released unseen, never the picture.
+     * Hand every decoded frame to the surface. With [firstFrameWithinUs] (a keyframe's feed while the gate waits), look for
+     * one up to that long, in slices, and no longer once one is drawn or the next message is waiting to be fed. A frame of
+     * an access unit fed before the wait began is the last phone's: released unseen, never the picture. A codec in error
+     * throws here, at a dequeue or a release (IllegalStateException), and every caller recovers ([recover]).
      */
     private fun drain(
         c: MediaCodec,
@@ -432,35 +461,45 @@ class VideoRenderer(
     ) {
         val info = MediaCodec.BufferInfo()
         var until = if (firstFrameWithinUs > 0L) System.nanoTime() + firstFrameWithinUs * NANOS_PER_US else 0L
-        var more = true
-        while (more) {
-            val outIdx =
-                try {
-                    c.dequeueOutputBuffer(info, microsUntil(until))
-                } catch (_: IllegalStateException) {
-                    return
-                }
-            when {
-                outIdx >= 0 -> {
-                    // render only a real frame of this wait; render=true hands it to the Surface with no CPU copy
-                    val real = info.size != 0 && picture?.stale(info.presentationTimeUs) != true
-                    c.releaseOutputBuffer(outIdx, real)
-                    if (real) {
-                        frameDrawn()
-                        until = 0L
-                    }
-                }
-                outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> log.i("output format: ${c.outputFormat}")
-                outIdx == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
-                else -> more = false // INFO_TRY_AGAIN_LATER
+        while (true) {
+            val outIdx = c.dequeueOutputBuffer(info, minOf(microsUntil(until), POLL_SLICE_US))
+            if (outIdx >= 0) {
+                if (release(c, outIdx, info)) until = 0L
+            } else if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                log.i("output format: ${c.outputFormat}")
+            } else if (outIdx != MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED && !stillLooking(until)) {
+                return // INFO_TRY_AGAIN_LATER
             }
         }
     }
 
-    /** A real frame went to the surface: counted, offered while the gate waits, and logged now and then. */
-    private fun frameDrawn() {
+    /**
+     * Output buffer [idx], to the Surface when it is a real frame of the gate's wait, read once for both the judging and
+     * the offer (a wait begun in between finds it offered to the one before, and refused); else released unseen. True
+     * when it was drawn. Render=true hands it to the Surface with no CPU copy.
+     */
+    private fun release(
+        c: MediaCodec,
+        idx: Int,
+        info: MediaCodec.BufferInfo,
+    ): Boolean {
+        val wait = picture?.now() ?: PictureGate.NONE
+        val real = info.size != 0 && picture?.stale(info.presentationTimeUs, wait) != true
+        c.releaseOutputBuffer(idx, real)
+        if (real) frameDrawn(wait)
+        return real
+    }
+
+    /** A keyframe's own frame is still looked for: time is left, and no next message waits to be fed and push it out. */
+    private fun stillLooking(until: Long): Boolean = until != 0L && microsUntil(until) > 0L && !inputWaiting()
+
+    /** The seam holds a next message already: unread bytes in its pipe. */
+    private fun inputWaiting(): Boolean = runCatching { (input?.available() ?: 0) > 0 }.getOrDefault(false)
+
+    /** A real frame, judged under [wait], went to the surface: counted, offered while that wait is open, and logged now and then. */
+    private fun frameDrawn(wait: Long) {
         val n = framesRendered.incrementAndGet()
-        picture?.drawn()
+        picture?.drawn(wait)
         if (n == 1L) log.i("FIRST FRAME RENDERED")
         if (n % LOG_EVERY_FRAMES == 0L) log.i("$n frames rendered (${bytesIn.get()} B in)")
     }
