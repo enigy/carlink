@@ -42,6 +42,25 @@ class ConnectLedgerTextTest {
     }
 
     @Test
+    fun `a picture's video in and decoder ready follow SUBSCRIBE, each only when the record has it`() {
+        val measured = wake.copy(videoInMs = 3_190, decoderReadyMs = 905)
+        assertEquals(
+            "SUBSCRIBE +612 ms, video in +3190 ms, decoder ready +905 ms, picture +3412 ms, STREAMING +4105 ms",
+            ConnectLedgerText.line(measured, utc).split(" | ")[1],
+        )
+        assertEquals(
+            "a decoder built at the first frame, its ready time not kept",
+            "SUBSCRIBE +612 ms, video in +3190 ms, picture +3412 ms, STREAMING +4105 ms",
+            ConnectLedgerText.line(wake.copy(videoInMs = 3_190), utc).split(" | ")[1],
+        )
+        assertEquals(
+            "a record kept before they were measured reads as it always did",
+            "SUBSCRIBE +612 ms, picture +3412 ms, STREAMING +4105 ms",
+            ConnectLedgerText.line(wake, utc).split(" | ")[1],
+        )
+    }
+
+    @Test
     fun `steps that never came are dashes, and each ending says why`() {
         val off = ConnectRecord(at, Kind.WAKE_NOT_LISTED, Outcome.ENDED_EARLY, endMs = 2_100, endReason = EndReason.DISPLAY_OFF, starts = 1, suspendedMs = 0)
         assertEquals(
@@ -104,6 +123,25 @@ class ConnectLedgerTextTest {
             "Display on to picture: not enough wakes with a picture yet (1 of 5). Not counted: 0 wakes with a picture whose screen " +
                 "wasn't in front within 1000 ms of the display on (marked below).",
             ConnectLedgerText.summaryLine(ConnectLedger().with(wake)),
+        )
+    }
+
+    @Test
+    fun `a wake left out of the figure keeps its video steps in its line, and still counts as left out in the header`() {
+        // The driver opened Carlink 41.5 s after the display on: the epoch opened then, its decoder built ahead, the video after.
+        val late = wake.copy(pictureMs = 42_000, endMs = 42_000, frontMs = 41_500, videoInMs = 41_610, decoderReadyMs = 41_560)
+        assertEquals(
+            "2026-11-16 07:42:13 wake, adapter listed: picture +42000 ms, not counted: Carlink's screen came to the front +41500 ms | " +
+                "SUBSCRIBE +612 ms, video in +41610 ms, decoder ready +41560 ms, picture +42000 ms, STREAMING +4105 ms | " +
+                "1 start, screen in front +41500 ms, suspended 412300 ms while off | adapter up 1802.4 s, preload done, absent pages 0, " +
+                "resets 0, nudges 0+0, PSK mismatches 0 | [timeline] v1 a=1 b=-",
+            ConnectLedgerText.line(late, utc),
+        )
+        val ledger = (1..5).fold(ConnectLedger()) { l, i -> l.with(wake.copy(pictureMs = i * 1_000L, endMs = i * 1_000L, videoInMs = i * 900L)) }.with(late)
+        assertEquals(
+            "Display on to picture, the last 5 wakes with a picture: median 3000 ms, 9 in 10 within 5000 ms (nearest rank). " +
+                "Not counted: 1 wake with a picture whose screen wasn't in front within 1000 ms of the display on (marked below).",
+            ConnectLedgerText.summaryLine(ledger),
         )
     }
 

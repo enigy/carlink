@@ -15,8 +15,14 @@ import com.carlink.audio.MicProfile
 import com.carlink.audio.MicRecovery
 import com.carlink.audio.MicrophoneCaptureManager
 import com.carlink.audio.SilenceGuard
+import com.carlink.av.EpochKeeper
+import com.carlink.av.IdleAheadWatch
 import com.carlink.av.MediaAudioPlayer
+import com.carlink.av.PictureGate
+import com.carlink.av.PictureWatch
+import com.carlink.av.PictureWatchdog
 import com.carlink.av.SkipAftermath
+import com.carlink.av.StreamSetups
 import com.carlink.av.TransientFocusPolicy
 import com.carlink.av.VideoCodec
 import com.carlink.av.VideoCodecs
@@ -151,6 +157,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -432,8 +439,8 @@ class CarlinkManager(
         fun onPairingCodeChanged(code: String?) {}
 
         /**
-         * The phone left the session on screen (`SEV_PHONE_ABSENT`): the UI covers its last frame again
-         * until a frame of the next session is drawn. Main thread.
+         * The phone left the session on screen (`SEV_PHONE_ABSENT`). Its last frame is covered again by [picture] going
+         * null, until a frame of the next session is drawn; the UI drops the touches it holds. Main thread.
          */
         fun onPhoneLeft() {}
     }
@@ -744,12 +751,26 @@ class CarlinkManager(
      * is exactly why `VideoSeam`'s pipe is swappable while the seam itself (holding the session's
      * decrypt key) is not.
      */
-    private class VideoEpoch(
-        val seq: Int,
+    private data class VideoEpoch(
+        override val seq: Int,
         val pipe: SeamPipe,
         val renderer: VideoRenderer,
         val thread: Thread,
-    )
+        /** Its renderer's side of the picture: the picture watchdog reads its first video. */
+        val watch: PictureWatch,
+        override val openedAtMs: Long,
+        /** The wait the picture watchdog's rebuild opened it for ([EpochKeeper.Reopen.PICTURE]), else none. */
+        override val rebuiltFor: Long = PictureGate.NONE,
+        /** Opened without building ahead because the one before held a decoder built ahead with no phone ([EpochKeeper.Reopen.IDLE]). */
+        override val idleDropped: Boolean = false,
+    ) : EpochKeeper.Epoch {
+        override val idleAheadSince: Long get() = renderer.idleAheadSince
+
+        // Unread video in the pipe counts: a phone's VideoConfig waiting there would be closed with it, and the seam never re-sends it.
+        override val hasVideo: Boolean get() = renderer.bytesIn.get() != 0L || pipe.available() > 0
+
+        override fun firstVideoAt(wait: Long): Long = watch.firstVideoAt(wait)
+    }
 
     @Volatile private var videoEpoch: VideoEpoch? = null
     private val videoEpochSeq =
@@ -760,6 +781,64 @@ class CarlinkManager(
 
     /** True when video start is deferred until a session exists and a valid Surface is present. */
     private var codecDeferred = true
+
+    /** The phone's first frame, which lifts the loading screen: a wait started at each session, each phone's key, each phone leaving. */
+    private val pictureGate = PictureGate()
+
+    /**
+     * The last stream's decoder setup, as its renderer configured for it: each new video epoch builds its decoder from it
+     * before its stream ([VideoRenderer]), so a wake's first frame (the same phone, the same parameter sets) waits for no
+     * decoder. Memory only, this manager's life; none for a new process.
+     */
+    private val streamSetups = StreamSetups()
+
+    /**
+     * The first frame the decoder drew for the phone's session now on, or null while there is none: what lifts the loading
+     * screen and lets touch through (MainScreen, with [LoadingLift][com.carlink.ui.LoadingLift]). Set from the renderer's
+     * thread as the frame is handed to the surface; reset on the USB read thread at the phone's first video key.
+     */
+    val picture: StateFlow<PictureWatch.FirstFrame?> get() = pictureGate.picture
+
+    /**
+     * The picture watchdog's last resort for this wait ([PictureWatchdog]): the screen lifts by 3.20's rule, at STREAMING,
+     * with no frame, until the next session, phone or phone key.
+     */
+    val pictureFallback: StateFlow<Boolean> get() = pictureGate.fallenBack
+
+    /**
+     * The picture watchdog ([PictureWatchdog]) and a decoder built ahead with no phone ([IdleAheadWatch]), over the current
+     * epoch: it decides, and [reopenVideoEpoch] does. Main thread ([watchPicture], [watchVideoStall], the phone's signs).
+     */
+    private val epochKeeper =
+        EpochKeeper(
+            pictureGate,
+            object : EpochKeeper.Epochs {
+                override val current: EpochKeeper.Epoch? get() = videoEpoch
+                override val phoneKeyed: Boolean get() = streamingStamp.phoneKeyedIn(state)
+                override val canBuildAhead: Boolean get() = streamSetups.buildAhead.on && streamSetups.last != null
+
+                override fun reopen(
+                    epoch: EpochKeeper.Epoch,
+                    why: EpochKeeper.Reopen,
+                    forWait: Long,
+                ): Boolean = reopenVideoEpoch(epoch, why, forWait)
+
+                override fun blame(epoch: EpochKeeper.Epoch) {
+                    (epoch as? VideoEpoch)?.let { blameBuiltAhead(it.renderer) }
+                }
+
+                override fun keyframeSoon() = scheduleDelayedKeyframe()
+
+                override fun fellBack(wait: Long) =
+                    logWarn(
+                        "[LIFECYCLE] still no frame of the phone's: the loading screen goes by STREAMING, as 3.20's did, until the " +
+                            "next phone or session",
+                        tag = Logger.Tags.VIDEO,
+                    )
+            },
+        )
+
+    @Volatile private var pictureDogJob: Job? = null
 
     /** Rebuilds a video epoch that takes access units and draws nothing (9 Nov bench). Main thread. */
     private val videoStall = VideoStallWatch()
@@ -984,6 +1063,9 @@ class CarlinkManager(
             it.appVisible(true, SystemClock.elapsedRealtime())
         }
 
+    /** The adapter's USB attaches ([onUsbDeviceAttached]): a not-listed wake connects at one, and the adapter search looks again. */
+    private val usbAttaches = UsbAttaches()
+
     /** The starts, the display wake's and the undo of one a display OFF cut short ([WakeStarts]). */
     private val starts =
         WakeStarts(
@@ -1017,6 +1099,7 @@ class CarlinkManager(
                     adapterListed: Boolean,
                 ) = connectTimer.wake(displayOnMs, adapterListed, SystemClock.elapsedRealtime()) // ledger
             },
+            attaches = usbAttaches,
         )
 
     /** The adapter's boot radio preload state, logged once per session. */
@@ -1587,19 +1670,21 @@ class CarlinkManager(
     }
 
     /**
-     * The adapter from `UsbManager.deviceList` (no permission needed), polled for up to ~30 s: the OCBM
-     * adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the conversion,
-     * or else a shared stick that looks like an adapter's, for which the conversion shows guidance
-     * ([StockConversion.strayStick]). A conversion's USB stick never comes this way ([openConversionStick]).
+     * The adapter from `UsbManager.deviceList` (no permission needed), looked for up to ~30 s, every 3 s and at once as an
+     * adapter attaches: the OCBM adapter, or else a stock one on Carlinkit firmware, which [takeStockAdapter] hands to the
+     * conversion, or else a shared stick that looks like an adapter's, for which the conversion shows guidance
+     * ([StockConversion.strayStick]). A conversion's USB stick never comes this way ([openConversionStick]). Before the
+     * attach ended the wait, an adapter that came during it waited out the rest of the 3 s (12 Nov, 08:00:10: 1.8 s).
      */
     private suspend fun awaitAdapterListed(): UsbDevice? {
-        var attempts = 0
-        while (attempts < USB_FIND_ATTEMPTS) {
+        val deadline = SystemClock.elapsedRealtime() + USB_FIND_ATTEMPTS * USB_WAIT_PERIOD_MS
+        while (true) {
+            val seen = usbAttaches.seen
             (BridgeBulkTransport.findAdapter(context) ?: StockAdapters.find(context) ?: strayStick())?.let { return it }
-            attempts++
-            delay(USB_WAIT_PERIOD_MS)
+            val left = deadline - SystemClock.elapsedRealtime()
+            if (left <= 0L) return null
+            usbAttaches.await(seen, minOf(USB_WAIT_PERIOD_MS, left))
         }
-        return null
     }
 
     /** A shared stick for which the conversion now shows "take the stick out" guidance; it is never opened. */
@@ -1728,6 +1813,7 @@ class CarlinkManager(
             return
         }
         connectTimer.startBegan(SystemClock.elapsedRealtime()) // ledger
+        pictureGate.expect() // a session of its own: no picture until its phone draws one
         // The coroutine running this start, for [disconnect] to cancel: it may sit ~30 s looking for the adapter.
         startingJob = currentCoroutineContext()[Job]
 
@@ -2627,6 +2713,11 @@ class CarlinkManager(
             client?.reannounceKeyed()
             streamingStamp.reset()
             r.mode?.let(::applyProjMode)
+            // The epoch opens now, as it does once a live state is known, not at the phone's own key seconds later: opened
+            // there, on main, it lost the race with the read thread, and the phone's first codec config and frames went to
+            // no pipe (15 Nov, 10:24:30: nopipe=3, the decoder waited for the next config; the 16 Nov 17:15 app start opened
+            // it only as the key's handler ran on main). The last host's replay came before this NONE, with no pipe to go to.
+            startCodecIfDeferred()
             return
         }
         logInfo("[SESSION] the box's state at SUBSCRIBE is live ($why)", tag = Logger.Tags.ADAPTR)
@@ -2732,11 +2823,19 @@ class CarlinkManager(
      */
     fun onUsbDeviceAttached() {
         if (released) return
-        ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
+        val now = SystemClock.elapsedRealtime()
+        ColdStart.process.adapterSeen(now)
         val since = rebootAtMs
         if (since != 0L) {
             rebootAtMs = 0L
             logInfo("[REBOOT] adapter back on USB ${(android.os.SystemClock.elapsedRealtime() - since) / 1000}s after the reboot", tag = Logger.Tags.USB)
+        }
+        // Ends a display-on wake's wait for it, and an adapter search's wait between its looks, at once.
+        usbAttaches.attached(now)
+        if (starts.awaitingAttach) {
+            // That wake connects to it with its short HELLO; a start of this one's would take the lock first, with 20 s.
+            logInfo("[USB] Adapter attached — the display-on wake connects to it", tag = Logger.Tags.USB)
+            return
         }
         scope.launch { startIfDisconnected("Adapter attached") }
     }
@@ -2920,9 +3019,19 @@ class CarlinkManager(
      *
      * Ordering is load-bearing: the renderer must be constructed and started before the seam is
      * pointed at its pipe, or the first frames land in a pipe nobody is draining.
+     *
+     * [buildAhead] false: its decoder is built at the stream's parameter sets, not ahead (the picture watchdog's rebuild,
+     * an idle decoder released), and its stream's setup is still left for the next epoch ([StreamSetups.notAhead]).
+     * [rebuiltFor]: the wait the picture watchdog's rebuild opened it for. [idleDropped]: it was opened to release an idle
+     * one, and is built ahead again when a phone shows up ([EpochKeeper.phoneComing]).
      */
     @Synchronized
-    private fun openVideoEpoch(surface: Surface) {
+    private fun openVideoEpoch(
+        surface: Surface,
+        buildAhead: Boolean = true,
+        rebuiltFor: Long = PictureGate.NONE,
+        idleDropped: Boolean = false,
+    ) {
         val lanes = client?.lanes ?: return
         if (videoEpoch != null) return
         if (helloReplay.holding) {
@@ -2936,16 +3045,22 @@ class CarlinkManager(
         }
 
         val seq = videoEpochSeq.incrementAndGet()
+        val openedAt = SystemClock.elapsedRealtime()
         val pipe = SeamPipe(VIDEO_PIPE_BYTES, VIDEO_PIPE_DEPTH, name = "cp-video", log = ocbmLog)
+        val watch =
+            PictureWatch({ pictureGate.waiting }, SystemClock::elapsedRealtime, pictureGate::videoIn) { wait, frame ->
+                onPictureDrawn(seq, wait, frame)
+            }
+        val setups = if (buildAhead) streamSetups else streamSetups.notAhead()
         val renderer =
-            VideoRenderer(config.width, config.height, surface) {
+            VideoRenderer(config.width, config.height, surface, picture = watch, setups = setups) {
                 client?.requestKeyframe()
             }
         renderer.start()
         val thread = lanes.runConsumer("cp-video", pipe) { renderer.consume(it) }
+        // The current epoch before any video can reach it: its first frame is offered as the picture only as the current one's.
+        videoEpoch = VideoEpoch(seq, pipe, renderer, thread, watch, openedAt, rebuiltFor, idleDropped)
         lanes.videoSeam.attach(pipe)
-
-        videoEpoch = VideoEpoch(seq, pipe, renderer, thread)
         codecDeferred = false
 
         // Every epoch MUST ask for one, and it has to happen here rather than at the call sites.
@@ -2960,13 +3075,15 @@ class CarlinkManager(
         // Throttled at 500 ms client-side, so the paths that already request are unharmed.
         client?.requestKeyframe()
 
-        logInfo("[LIFECYCLE] Video epoch #$seq open at ${config.width}x${config.height}", tag = Logger.Tags.VIDEO)
+        logInfo("[LIFECYCLE] Video epoch #$seq open at ${config.width}x${config.height}" + if (buildAhead) "" else " (not built ahead)", tag = Logger.Tags.VIDEO)
         watchVideoStall(seq)
+        watchPicture()
     }
 
     /**
      * Rebuild epoch [seq] if access units keep arriving and it draws nothing ([VideoStallWatch]): on the 9 Nov bench a
      * decoder latched to the wrong codec froze the frame, with touch dead, until the overlay watchdog happened to run.
+     * The same 2 s look releases a decoder built ahead that has waited with no phone ([EpochKeeper.idleLook]).
      */
     private fun watchVideoStall(seq: Int) {
         scope.launch {
@@ -2975,18 +3092,92 @@ class CarlinkManager(
                 val e = videoEpoch ?: return@launch
                 if (e.seq != seq) return@launch
                 val r = e.renderer
-                if (!videoStall.sample(seq, SystemClock.elapsedRealtime(), r.bytesIn.get(), r.framesRendered.get())) continue
+                val now = SystemClock.elapsedRealtime()
+                if (epochKeeper.idleLook(now, e)) return@launch
+                if (!videoStall.sample(seq, now, r.bytesIn.get(), r.framesRendered.get())) continue
                 logWarn(
                     "[LIFECYCLE] Video epoch #$seq: access units arriving and no frame drawn for ${videoStall.timing.stallMs} ms " +
                         "(${r.videoCodec?.label ?: "no codec"}) — rebuilding the decoder",
                     tag = Logger.Tags.VIDEO,
                 )
+                blameBuiltAhead(r)
                 val surface = videoSurface ?: return@launch
                 retireVideoEpoch("stall watchdog")
                 openVideoEpoch(surface)
                 return@launch
             }
         }
+    }
+
+    /**
+     * [r]'s decoder, built ahead, proven by its stream and fed, drew nothing: whatever the cause, this head unit's decoders
+     * are built as they always were, at the stream's parameter sets, for the rest of the process. One failure, not one a
+     * wake. A decoder never fed (its stream's parameter sets never came) is not blamed.
+     */
+    private fun blameBuiltAhead(r: VideoRenderer) {
+        if (r.builtAheadDrewNothing && streamSetups.buildAhead.turnOff()) {
+            logWarn("[LIFECYCLE] the decoder built ahead was fed and drew nothing: not building ahead again in this process", tag = Logger.Tags.VIDEO)
+        }
+    }
+
+    /**
+     * [EpochKeeper]'s act on [epoch]: retired only while it is still the current one (the read thread may just have swapped
+     * it, for a codec change, and that epoch is left alone), and the next opened for [why]. Under this manager's lock, as
+     * every retire and open is. False when [epoch] was no longer current, or no next epoch opened.
+     */
+    private fun reopenVideoEpoch(
+        epoch: EpochKeeper.Epoch,
+        why: EpochKeeper.Reopen,
+        forWait: Long,
+    ): Boolean {
+        val surface = videoSurface ?: return false
+        synchronized(this) {
+            if (videoEpoch !== epoch) return false
+            when (why) {
+                EpochKeeper.Reopen.PICTURE -> {
+                    logWarn(
+                        "[LIFECYCLE] Video epoch #${epoch.seq}: no frame of the phone's with the loading screen up — rebuilding its " +
+                            "decoder at the stream's parameter sets",
+                        tag = Logger.Tags.VIDEO,
+                    )
+                    retireVideoEpoch("picture watchdog")
+                    openVideoEpoch(surface, buildAhead = false, rebuiltFor = forWait)
+                }
+                EpochKeeper.Reopen.IDLE -> {
+                    logInfo(
+                        "[LIFECYCLE] Video epoch #${epoch.seq}: its decoder built ahead had no video for ${epochKeeper.idle.idleMs / 1000} s " +
+                            "— released until a phone shows up",
+                        tag = Logger.Tags.VIDEO,
+                    )
+                    retireVideoEpoch("idle decoder built ahead")
+                    openVideoEpoch(surface, buildAhead = false, idleDropped = true)
+                }
+                EpochKeeper.Reopen.AHEAD -> {
+                    logInfo("[LIFECYCLE] a phone is coming: building the decoder ahead again", tag = Logger.Tags.VIDEO)
+                    retireVideoEpoch("a phone is coming")
+                    openVideoEpoch(surface)
+                }
+            }
+            return videoEpoch != null
+        }
+    }
+
+    /**
+     * The picture watchdog, once per manager ([EpochKeeper.look]): asleep while the picture is up and once it fell back for
+     * a wait, it looks at each wait until its picture comes or a new wait begins. The look reads the gate's wait itself,
+     * after the delay, so a picture drawn meanwhile is answered with nothing. It acts on whatever epoch is current, so its
+     * second look carries over the epoch its rebuild opened.
+     */
+    private fun watchPicture() {
+        if (pictureDogJob?.isActive == true) return
+        pictureDogJob =
+            scope.launch {
+                while (true) {
+                    pictureGate.waits.first { it != PictureGate.NONE && it != epochKeeper.settled }
+                    delay(epochKeeper.lookEveryMs())
+                    epochKeeper.look(SystemClock.elapsedRealtime())
+                }
+            }
     }
 
     /**
@@ -3001,6 +3192,8 @@ class CarlinkManager(
         if (latched == codec) return
         logWarn("[LIFECYCLE] Video epoch #${e.seq} decodes ${latched.label}; the stream is now ${codec.label}: a fresh epoch", tag = Logger.Tags.VIDEO)
         val surface = videoSurface
+        // Not built ahead as the codec it is leaving: these parameter sets come next, and they build it.
+        if (streamSetups.last?.codec != codec) streamSetups.last = null
         retireVideoEpoch("codec ${latched.label} -> ${codec.label}")
         if (surface != null) openVideoEpoch(surface)
     }
@@ -3107,31 +3300,40 @@ class CarlinkManager(
     }
 
     /**
-     * Frames the current video epoch has handed to the Surface (0 with no epoch). A UI-side read
-     * only: the loading overlay hides once video is actually on screen, which under OCBM happens
-     * BEFORE [State.STREAMING] (that edge is the first media metadata, [markStreamingIfFirstMedia]),
-     * and the overlay open/close path logs it so a frozen feed is distinguishable from a stale frame.
+     * Frames the current video epoch has handed to the Surface (0 with no epoch), for the Settings overlay's open and close
+     * lines, so a frozen feed is told from a stale frame. The loading screen goes by [picture], not by this count.
      */
     fun videoFramesRendered(): Long = videoEpoch?.renderer?.framesRendered?.get() ?: 0L
 
     /**
-     * Where rendering has got to: the video epoch's number and the frames it has drawn, so a caller
-     * can wait for a frame drawn after a given moment even across a decoder rebuild (a new epoch
-     * counts from zero).
+     * The renderer's thread: epoch [seq] drew a frame while the gate waited for [wait]. The current epoch's first one is the
+     * picture; a retired epoch's is not (its surface may already be another's).
      */
-    fun videoFrameMark(): Pair<Int, Long> {
-        val e = videoEpoch
-        return (e?.seq ?: 0) to (e?.renderer?.framesRendered?.get() ?: 0L)
+    private fun onPictureDrawn(
+        seq: Int,
+        wait: Long,
+        frame: PictureWatch.FirstFrame,
+    ) {
+        if (videoEpoch?.seq != seq || !pictureGate.drawn(wait, frame)) return
+        // As the gate keeps it: its video in is the wait's first, whichever epoch that reached.
+        val shown = pictureGate.picture.value ?: frame
+
+        fun before(t: Long) = if (t == 0L) "-" else "${shown.drawnAtMs - t} ms"
+        logInfo(
+            "[VIDEO] The phone's first frame drawn (epoch #$seq): its video came ${before(shown.videoInAtMs)} before it, " +
+                "the decoder was ready ${before(shown.decoderReadyAtMs)} before it",
+            tag = Logger.Tags.VIDEO,
+        )
     }
 
-    /** When the current video epoch handed its first frame to the Surface (elapsedRealtime); 0 before it has one. */
-    fun firstFrameDrawnAt(): Long = videoEpoch?.renderer?.firstFrameAtMs ?: 0L
-
     /**
-     * The first video frame is on screen at [atMs] (MainScreen: the loading screen lifting over a frame the decoder drew):
-     * the connect ledger's picture. It only watches.
+     * The loading screen started to lift at [atMs] (MainScreen), over [frame], the phone's first one: the connect ledger's
+     * picture, with that frame's video in and decoder ready. It only watches.
      */
-    fun pictureShown(atMs: Long) = connectTimer.picture(atMs, SystemClock.elapsedRealtime())
+    fun pictureShown(
+        atMs: Long,
+        frame: PictureWatch.FirstFrame,
+    ) = connectTimer.picture(atMs, SystemClock.elapsedRealtime(), frame.videoInAtMs, frame.decoderReadyAtMs)
 
     /**
      * Recover video after the settings overlay closes.
@@ -3229,47 +3431,8 @@ class CarlinkManager(
         c.onLanesRetired = { onLanesRetired() }
         c.onTunnel = { op, payload -> tunnels.onMessage(op, payload) }
 
-        // The first per-stream key is the earliest truthful "a paired, keyed session exists"
-        // signal — earlier than the first decoded frame, and unlike phone presence it proves the
-        // crypto handshake completed.
-        c.onSessionKeyed = {
-            scope.launch {
-                // The key event and a link death can coincide (a connector jiggle at handshake).
-                // Without this the stale post lands DEVICE_CONNECTED after the error path already
-                // set DISCONNECTED, and both the reconnect backoff and the USB-attach intent are
-                // gated on DISCONNECTED — so the app wedges at "Phone connected" with no session.
-                if (client !== c) return@launch
-                if (helloReplay.onKeyed()) {
-                    sessionKeyed()
-                } else {
-                    logInfo("[SESSION] first video key held: the box's state at SUBSCRIBE isn't known to be live yet", tag = Logger.Tags.ADAPTR)
-                }
-            }
-        }
-
-        c.onPhonePresence = { present ->
-            scope.launch {
-                if (!present) {
-                    markPhoneLeft()
-                    adapterPhone.absent()
-                    phoneSessionEnded()
-                }
-                _phoneNews.update { it + 1 }
-                if (present || state == State.DISCONNECTED) return@launch
-                // Drop out of STREAMING. MainScreen keys both the loading overlay and touch
-                // forwarding on STREAMING, so staying there leaves the last decoded frame frozen
-                // on screen with touch still live and this very status text invisible behind it.
-                // The OCBM session itself stays up by design; only the UI state reflects reality.
-                if (state == State.STREAMING) setState(State.DEVICE_CONNECTED)
-                // A session that dropped before its first media never reached STREAMING, so the line
-                // above changes nothing and the screen kept the last frame over this text (bench
-                // 2026-11-02, 11:17). Tell the screen outright.
-                callback?.onPhoneLeft()
-                videoPlayback.reset()
-                forgetPhoneProxy("the phone left")
-                setStatusText("Waiting for phone...")
-            }
-        }
+        wireSessionKeyed(c)
+        wirePhonePresence(c)
 
         // Advisory only — the client's own backoff re-subscribes and tearing down here would
         // fight that recovery. Surfacing it just keeps the UI honest during the gap.
@@ -3282,7 +3445,10 @@ class CarlinkManager(
         c.onBtPhase = { phase ->
             phoneSetup.onBtPhase(phase)
             val text = btPhaseText(phase)
-            if (text != null) scope.launch { if (state != State.STREAMING) setStatusText(text) }
+            scope.launch {
+                if (client === c) epochKeeper.phoneComing(SystemClock.elapsedRealtime())
+                if (text != null && state != State.STREAMING) setStatusText(text)
+            }
         }
 
         wirePairingCode(c)
@@ -3313,6 +3479,60 @@ class CarlinkManager(
         // FATAL only. A box-side SEV_HOST_GONE is recoverable and the client's own backoff
         // re-subscribes; tearing down on it would fight that recovery.
         c.onLinkDead = { reason -> handleError("usb — link dead: $reason") }
+    }
+
+    /**
+     * The first per-stream key is the earliest truthful "a paired, keyed session exists"
+     * signal — earlier than the first decoded frame, and unlike phone presence it proves the
+     * crypto handshake completed.
+     */
+    private fun wireSessionKeyed(c: OcbmClient) {
+        c.onSessionKeyed = {
+            // Here on the read thread, before any of this phone's video is decoded: only a frame drawn from now on lifts
+            // the loading screen, never the last phone's or the last host's still on the surface (or drawn just now).
+            if (client === c) pictureGate.expect()
+            scope.launch {
+                // The key event and a link death can coincide (a connector jiggle at handshake).
+                // Without this the stale post lands DEVICE_CONNECTED after the error path already
+                // set DISCONNECTED, and both the reconnect backoff and the USB-attach intent are
+                // gated on DISCONNECTED — so the app wedges at "Phone connected" with no session.
+                if (client !== c) return@launch
+                if (helloReplay.onKeyed()) {
+                    sessionKeyed()
+                } else {
+                    logInfo("[SESSION] first video key held: the box's state at SUBSCRIBE isn't known to be live yet", tag = Logger.Tags.ADAPTR)
+                }
+            }
+        }
+    }
+
+    /** SEV_PHONE_PRESENT / SEV_PHONE_ABSENT: the phone came or went within the session. */
+    private fun wirePhonePresence(c: OcbmClient) {
+        c.onPhonePresence = { present ->
+            scope.launch {
+                if (!present) {
+                    // The loading screen is back, as the screen's onPhoneLeft always brought it, until a phone draws again.
+                    if (client === c) pictureGate.expect()
+                    markPhoneLeft()
+                    adapterPhone.absent()
+                    phoneSessionEnded()
+                } else if (client === c) {
+                    epochKeeper.phoneComing(SystemClock.elapsedRealtime())
+                }
+                _phoneNews.update { it + 1 }
+                if (present || state == State.DISCONNECTED) return@launch
+                // Drop out of STREAMING: the phone's media is gone with it (the media session, the car's Play). The loading
+                // screen and touch go by the picture, which the wait above took down, so the last decoded frame is
+                // covered and this very status text shows. The OCBM session itself stays up by design.
+                if (state == State.STREAMING) setState(State.DEVICE_CONNECTED)
+                // The screen drops the touches it holds (bench 2026-11-02, 11:17: a session that dropped before its first
+                // media never reached STREAMING, so the line above changed nothing).
+                callback?.onPhoneLeft()
+                videoPlayback.reset()
+                forgetPhoneProxy("the phone left")
+                setStatusText("Waiting for phone...")
+            }
+        }
     }
 
     /** Main thread. The session's first video key, once [helloReplay] lets it through: a paired, keyed phone is here. */

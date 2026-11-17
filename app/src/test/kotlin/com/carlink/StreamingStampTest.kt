@@ -2,7 +2,9 @@ package com.carlink
 
 import com.carlink.CarlinkManager.State
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** When a phone's session reaches STREAMING, its media or its key first (9 Nov bench, 67c038db). */
@@ -46,5 +48,20 @@ class StreamingStampTest {
     fun `media with no session is not remembered`() {
         assertNull(stamp.onMedia(State.DISCONNECTED))
         assertEquals(State.DEVICE_CONNECTED, stamp.onKeyed(State.CONNECTING))
+    }
+
+    @Test
+    fun `a keyed phone is here from its key until its session ends, whatever state the session is left in`() {
+        assertFalse("no key yet", stamp.phoneKeyedIn(State.DEVICE_CONNECTED))
+        stamp.onKeyed(State.CONNECTING)
+        assertTrue(stamp.phoneKeyedIn(State.DEVICE_CONNECTED))
+        assertTrue(stamp.phoneKeyedIn(State.STREAMING))
+        assertFalse("the session ended", stamp.phoneKeyedIn(State.DISCONNECTED))
+        stamp.reset() // the phone left: the session stays DEVICE_CONNECTED
+        assertFalse(stamp.phoneKeyedIn(State.DEVICE_CONNECTED))
+        assertEquals("the next phone's media, before its key", State.STREAMING, stamp.onMedia(State.DEVICE_CONNECTED))
+        assertFalse("STREAMING, and still no phone keyed", stamp.phoneKeyedIn(State.STREAMING))
+        assertNull(stamp.onKeyed(State.STREAMING))
+        assertTrue("its key", stamp.phoneKeyedIn(State.STREAMING))
     }
 }

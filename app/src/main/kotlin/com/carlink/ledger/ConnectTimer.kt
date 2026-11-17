@@ -54,6 +54,8 @@ class ConnectTimer(
         var sessionUp = false
         var downAt: Long? = null
         var pictureAt: Long? = null
+        var videoInAt: Long? = null
+        var decoderReadyAt: Long? = null
         var streamingAt: Long? = null
         var frontAt: Long? = null
         var suspendedMs: Long? = null
@@ -212,17 +214,23 @@ class ConnectTimer(
     }
 
     /**
-     * The first video frame on screen at [atMs] (MainScreen: the loading screen lifting over a frame the decoder drew, or
-     * the frame drawn after it lifted). Counts for the connect in flight once it has sent SUBSCRIBE, within [WINDOW_MS].
+     * The first video frame on screen at [atMs] (MainScreen: the loading screen starting to lift, which it does only over a
+     * frame the decoder drew for the phone's session). [videoInAtMs] and [decoderReadyAtMs] are that frame's video epoch's,
+     * observed only: when its first video from the adapter reached the decoder's thread, and when the decoder that drew it
+     * was ready; 0 when not known. Counts for the connect in flight once it has sent SUBSCRIBE, within [WINDOW_MS].
      */
     @Synchronized
     fun picture(
         atMs: Long,
         nowMs: Long,
+        videoInAtMs: Long = 0L,
+        decoderReadyAtMs: Long = 0L,
     ) {
         val a = open
         if (a != null && a.pictureAt == null && counts(a, atMs)) {
             a.pictureAt = atMs
+            a.videoInAt = videoInAtMs.takeIf { it > 0L }
+            a.decoderReadyAt = decoderReadyAtMs.takeIf { it > 0L }
             a.frontAt = frontSince
             schedule(atMs + SETTLE_MS)
         }
@@ -335,6 +343,8 @@ class ConnectTimer(
                 endMs = endAtMs - origin,
                 endReason = reason,
                 subscribeMs = from(a.subscribeAt),
+                videoInMs = if (outcome == Outcome.PICTURE) from(a.videoInAt) else null,
+                decoderReadyMs = if (outcome == Outcome.PICTURE) from(a.decoderReadyAt) else null,
                 pictureMs = if (outcome == Outcome.PICTURE) from(a.pictureAt) else null,
                 streamingMs = from(a.streamingAt),
                 starts = a.starts,

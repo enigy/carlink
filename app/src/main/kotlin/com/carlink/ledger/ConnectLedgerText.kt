@@ -11,11 +11,13 @@ import java.util.TimeZone
  * The ledger as readable text, for Save Logs and the log line each connect gets: a two-line header, then one line per
  * connect, newest first. A line, for a wake that showed a picture:
  *
- *     2026-11-16 07:42:13 wake, adapter listed: picture +3412 ms | SUBSCRIBE +612 ms, picture +3412 ms, STREAMING +4105 ms
- *     | 1 start, screen in front +214 ms, not suspended | adapter up 1802.4 s, preload done, absent pages 0, resets 0,
- *     nudges 0+0, PSK mismatches 0 | [timeline] v1 a=1 b=2
+ *     2026-11-16 07:42:13 wake, adapter listed: picture +3412 ms | SUBSCRIBE +612 ms, video in +3190 ms, decoder ready
+ *     +905 ms, picture +3412 ms, STREAMING +4105 ms | 1 start, screen in front +214 ms, not suspended | adapter up
+ *     1802.4 s, preload done, absent pages 0, resets 0, nudges 0+0, PSK mismatches 0 | [timeline] v1 a=1 b=2
  *
- * (one line in the file). Times are from the connect's origin; "-" is a step that never came.
+ * (one line in the file). Times are from the connect's origin; "-" is a step that never came. "video in" (the first
+ * video from the adapter reaching the decoder) and "decoder ready" are there only when the record has them: a connect
+ * with no picture, or one kept before they were measured, reads as it always did.
  */
 object ConnectLedgerText {
     private const val MS_PER_S = 1000
@@ -54,7 +56,8 @@ object ConnectLedgerText {
         zone: TimeZone = TimeZone.getDefault(),
     ): String {
         val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply { timeZone = zone }.format(Date(r.startedAtMs))
-        val steps = "SUBSCRIBE ${at(r.subscribeMs)}, picture ${at(r.pictureMs)}, STREAMING ${at(r.streamingMs)}"
+        val video = r.videoInMs?.let { ", video in ${at(it)}" }.orEmpty() + r.decoderReadyMs?.let { ", decoder ready ${at(it)}" }.orEmpty()
+        val steps = "SUBSCRIBE ${at(r.subscribeMs)}$video, picture ${at(r.pictureMs)}, STREAMING ${at(r.streamingMs)}"
         val starts = if (r.starts == 1) "1 start" else "${r.starts} starts"
         val front =
             when (r.frontMs) {

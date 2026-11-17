@@ -88,6 +88,42 @@ class ConnectTimerTest {
     }
 
     @Test
+    fun `the picture keeps its epoch's video in and decoder ready, from the origin`() {
+        val t = timer()
+        t.offThenOn(onAt = 700_000L)
+        t.wake(displayOnMs = 700_000L, adapterListed = true, nowMs = 700_010L)
+        t.startBegan(700_020L)
+        t.subscribed(700_170L)
+        // The decoder was built ahead at 700.43 s, from the last stream's parameter sets; the video came at 707.95 s.
+        t.picture(atMs = 708_160L, nowMs = 708_170L, videoInAtMs = 707_950L, decoderReadyAtMs = 700_430L)
+        t.picture(atMs = 709_000L, nowMs = 709_000L, videoInAtMs = 708_900L, decoderReadyAtMs = 708_950L) // a later one changes nothing
+        t.tick(708_160L + SETTLE_MS)
+        val r = committed.single()
+        assertEquals(7_950L, r.videoInMs)
+        assertEquals("ready before the video came", 430L, r.decoderReadyMs)
+        assertEquals(8_160L, r.pictureMs)
+    }
+
+    @Test
+    fun `a picture whose epoch's stamps aren't known, or no picture, keeps neither`() {
+        val t = timer()
+        t.startBegan(15_000L)
+        t.subscribed(16_000L)
+        t.picture(atMs = 18_000L, nowMs = 18_000L)
+        t.closing(19_000L)
+        assertNull(committed.single().videoInMs)
+        assertNull(committed.single().decoderReadyMs)
+
+        t.startBegan(30_000L)
+        t.subscribed(30_500L)
+        t.picture(atMs = 30_200L, nowMs = 30_200L, videoInAtMs = 30_100L, decoderReadyAtMs = 30_150L) // before SUBSCRIBE: not this connect's
+        t.closing(31_000L)
+        assertEquals(Outcome.ENDED_EARLY, committed[1].outcome)
+        assertNull(committed[1].videoInMs)
+        assertNull(committed[1].decoderReadyMs)
+    }
+
+    @Test
     fun `a wake with the adapter not listed is its own kind`() {
         val t = timer()
         t.offThenOn(onAt = 200_000L)
@@ -416,6 +452,47 @@ class ConnectTimerTest {
         assertEquals(2_500L, second.pictureMs)
         assertEquals(3_000L, second.streamingMs)
         assertEquals("no start of its own", 0, second.starts)
+    }
+
+    @Test
+    fun `a wake that takes its cut start's session keeps its picture's video in and decoder ready`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L) // its HELLO and SUBSCRIBE block
+        t.displayOff(301_000L, 0L)
+        t.subscribed(301_400L) // lands with no connect open
+        t.displayOn(302_000L, 0L)
+        t.wake(302_000L, adapterListed = true, nowMs = 302_050L) // takes the session that is up
+        // The surface came back with the display: the epoch opened and built its decoder ahead; the phone's video came later.
+        t.picture(atMs = 304_500L, nowMs = 304_500L, videoInAtMs = 304_300L, decoderReadyAtMs = 302_430L)
+        t.tick(304_500L + SETTLE_MS)
+        val r = committed.last()
+        assertEquals(Outcome.PICTURE, r.outcome)
+        assertEquals("up before this display on", 0L, r.subscribeMs)
+        assertEquals(2_300L, r.videoInMs)
+        assertEquals(430L, r.decoderReadyMs)
+        assertEquals(2_500L, r.pictureMs)
+        assertEquals(0, r.starts)
+    }
+
+    @Test
+    fun `a not-in-front connect keeps no video steps, even after a picture that didn't count`() {
+        val t = timer()
+        t.offThenOn(onAt = 300_000L)
+        t.appVisible(false, 300_000L)
+        t.wake(300_000L, adapterListed = true, nowMs = 300_000L)
+        t.startBegan(300_010L)
+        t.picture(atMs = 300_300L, nowMs = 300_300L, videoInAtMs = 300_200L, decoderReadyAtMs = 300_100L) // before SUBSCRIBE: not its own
+        t.subscribed(300_600L)
+        t.streaming(304_000L)
+        t.tick(300_000L + WINDOW_MS)
+        val r = committed.single()
+        assertEquals(Outcome.NOT_IN_FRONT, r.outcome)
+        assertNull(r.videoInMs)
+        assertNull(r.decoderReadyMs)
+        val stored = ConnectLedgerCodec.encodeRecord(r)
+        assertFalse(stored, stored.contains("videoInMs") || stored.contains("decoderReadyMs"))
     }
 
     @Test

@@ -90,6 +90,18 @@ object VideoCodecs {
             val p = pps ?: return null
             return if (c == VideoCodec.HEVC) vps?.let { it + s + p } else s + p
         }
+
+        /** The complete setup for [c] at [width]x[height], or null while a parameter set it needs is still missing. */
+        fun setup(
+            c: VideoCodec,
+            width: Int,
+            height: Int,
+        ): StreamSetup? {
+            val s = sps ?: return null
+            val p = pps ?: return null
+            if (c == VideoCodec.HEVC && vps == null) return null
+            return StreamSetup(c, width, height, vps, s, p)
+        }
     }
 
     fun nalType(

@@ -12,6 +12,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -32,6 +33,8 @@ class WakeStartsTest {
         val suspendAt: CompletableDeferred<Unit>? = null,
         val answers: Boolean = true,
         val subscribeFirst: Boolean = false,
+        /** False: the port couldn't be opened, and the start is back at DISCONNECTED (CarlinkManager.handleFailedStart). */
+        val opens: Boolean = true,
     )
 
     private class FakeSession : WakeStarts.Host {
@@ -85,6 +88,10 @@ class WakeStartsTest {
             hellos += helloMs
             subscribedNow = false
             state = S.CONNECTING
+            if (!s.opens) {
+                state = S.DISCONNECTED
+                return
+            }
             if (s.subscribeFirst) subscribe()
             s.block?.await() // not cancellable, as a blocking HELLO isn't
             s.suspendAt?.await() // cancellable
@@ -115,6 +122,12 @@ class WakeStartsTest {
     private val session = FakeSession()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val starts = WakeStarts(scope, Mutex(), session, settleMs = 50).also { session.starts = it }
+
+    /** The adapter's attaches, as CarlinkManager hears them, for a [waking] that waits on them. */
+    private val attaches = UsbAttaches()
+
+    /** Wakes whose not-listed wait is on [attaches], bounded by [settleMs]. */
+    private fun waking(settleMs: Long) = WakeStarts(scope, Mutex(), session, settleMs = settleMs, attaches = attaches).also { session.starts = it }
 
     @After
     fun end() = scope.cancel()
@@ -398,6 +411,77 @@ class WakeStartsTest {
         session.subscribedNow = false
         lock.unlock()
         eventually("the start after the stop") { session.begun.get() == 2 && session.state == S.STREAMING }
+    }
+
+    @Test
+    fun a_wake_with_the_adapter_not_listed_connects_as_it_attaches_with_the_short_hello_not_after_the_settle() {
+        val w = waking(settleMs = 60_000) // a bound no test waits out
+        session.listed = false
+        w.displayOn(wasDormant = true, nowMs = 1_000)
+        eventually("the wake waits for the attach") { w.awaitingAttach }
+        assertEquals(0, session.begun.get())
+        session.listed = true
+        attaches.attached(atMs = 1_900)
+        eventually("it streams") { session.state == S.STREAMING }
+        assertEquals(listOf(DisplayOff.WAKE_HELLO_MS), session.hellos.toList())
+        assertEquals("the ledger hears a wake with the adapter not listed", listOf(1_000L to false), session.wakes.toList())
+        assertFalse(w.awaitingAttach)
+        assertEquals("[startup] wake: display on to STREAMING 9000 ms (as the adapter attached, not listed at display on)", w.streaming(10_000))
+    }
+
+    @Test
+    fun a_wake_with_no_attach_within_the_settle_makes_the_usual_start_as_before() {
+        val w = waking(settleMs = 50)
+        session.listed = false
+        w.displayOn(wasDormant = true, nowMs = 1)
+        eventually("the usual start streams") { session.state == S.STREAMING }
+        assertEquals("the usual HELLO wait", listOf(20_000L), session.hellos.toList())
+        assertFalse(w.awaitingAttach)
+        assertEquals("[startup] wake: display on to STREAMING 4999 ms (after the settle, the adapter not listed)", w.streaming(5_000))
+    }
+
+    @Test
+    fun an_open_as_the_adapter_attached_that_does_not_connect_tries_again_after_the_settle() {
+        // Listed, not yet usable: the open at the attach fails, and the start after the settle is today's retry.
+        val w = waking(settleMs = 200)
+        session.listed = false
+        session.scripts += Script(opens = false)
+        w.displayOn(wasDormant = true, nowMs = 1)
+        eventually("the wake waits for the attach") { w.awaitingAttach }
+        session.listed = true
+        attaches.attached(atMs = 600)
+        eventually("the retry streams") { session.state == S.STREAMING }
+        assertEquals(listOf(DisplayOff.WAKE_HELLO_MS, 20_000L), session.hellos.toList())
+        assertEquals("[startup] wake: display on to STREAMING 4999 ms (after the settle, the open as the adapter attached failed)", w.streaming(5_000))
+    }
+
+    @Test
+    fun the_display_going_off_while_a_wake_waits_for_the_attach_ends_the_wait_and_starts_nothing() {
+        val w = waking(settleMs = 60_000)
+        session.listed = false
+        w.displayOn(wasDormant = true, nowMs = 1)
+        eventually("the wake waits for the attach") { w.awaitingAttach }
+        session.on = false
+        w.displayOff()
+        eventually("the wait ended") { !w.awaitingAttach }
+        session.listed = true
+        attaches.attached(atMs = 900) // not the cut wake's: CarlinkManager starts for it as it always has
+        settled()
+        assertEquals(0, session.begun.get())
+        session.on = true
+        w.displayOn(wasDormant = true, nowMs = 2)
+        eventually("the next wake opens the listed adapter at once") { session.state == S.STREAMING }
+        assertEquals(listOf(DisplayOff.WAKE_HELLO_MS), session.hellos.toList())
+    }
+
+    @Test
+    fun a_listed_adapter_whose_open_at_once_fails_still_tries_again_after_the_settle() {
+        val w = waking(settleMs = 50)
+        session.scripts += Script(opens = false)
+        w.displayOn(wasDormant = true, nowMs = 1)
+        eventually("the retry streams") { session.state == S.STREAMING }
+        assertEquals(listOf(DisplayOff.WAKE_HELLO_MS, 20_000L), session.hellos.toList())
+        assertEquals("[startup] wake: display on to STREAMING 4999 ms (after the settle, the open at once failed)", w.streaming(5_000))
     }
 
     @Test

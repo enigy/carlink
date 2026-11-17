@@ -33,11 +33,26 @@ import java.util.concurrent.atomic.AtomicLong
  * **Threading contract.** [consume] owns the codec for its whole life: it configures, feeds, drains and
  * releases on its own thread. [stop] only flips the flag — it never touches the codec, because
  * MediaCodec lifecycle calls racing a dequeue crash natively.
+ *
+ * **The picture.** [picture] hears each message as it arrives, each decoder ready and each frame drawn, all on that
+ * thread, and offers frames to the manager's [PictureGate] while it waits: what lifts the loading screen. While it
+ * waits, a keyframe's own frame is looked for after its feed (a still screen sends nothing after it for 2.5 s) unless
+ * the next message is already waiting, every message looks for one, a frame of an access unit fed before the wait began
+ * is dropped unseen, and a decoder kept from the last phone starts the new wait's picture at its next keyframe.
+ *
+ * **Built ahead.** Given [setups] holding the last stream's setup ([StreamSetups.aheadFrom]), [consume] configures the
+ * decoder from it before the first message, exactly as that stream configured it, so on a wake (the same phone, the same
+ * parameter sets) the first frame waits for no decoder. That decoder is fed nothing until this stream's own complete
+ * parameter sets prove byte for byte the same; any other ones rebuild it as a mid-stream change does. Each setup a
+ * stream configures is left there, by an epoch given [StreamSetups.notAhead] too, which builds nothing ahead.
  */
+@Suppress("TooManyFunctions") // the decode loop's steps, one apiece: configure, feed and its recovery, drain and each frame drawn
 class VideoRenderer(
     private val width: Int,
     private val height: Int,
     private val surface: Surface,
+    private val picture: PictureWatch? = null,
+    private val setups: StreamSetups? = null,
     private val onKeyframeNeeded: () -> Unit = {},
 ) {
     private val log = ProbeLog.sub("video")
@@ -57,16 +72,48 @@ class VideoRenderer(
     val bytesIn = AtomicLong(0)
     val ausDropped = AtomicLong(0)
 
-    /** When this renderer handed its first frame to the Surface (SystemClock.elapsedRealtime); 0 before. The connect ledger's. */
-    @Volatile var firstFrameAtMs = 0L
-        private set
-
     private val paramSets = VideoCodecs.ParamSets()
     private var sawKeyframe = false
     private var lastKeyframeReq = 0L
 
     /** The parameter sets actually baked into the live codec, to detect a mid-session change. */
     private var configuredCsd: ByteArray? = null
+
+    /** The live codec was built ahead ([configure]) and this stream's own parameter sets haven't yet proven it: feed nothing. */
+    @Volatile private var aheadUnproven = false
+
+    /** The codec the live decoder was built ahead as. */
+    private var aheadCodec: VideoCodec? = null
+
+    /** The live codec was built ahead: a failure before its first frame builds one at once, without the backoff. */
+    @Volatile private var builtAhead = false
+
+    /** The live codec built ahead has been fed (so its own stream's parameter sets proved it): only then is it to blame. */
+    @Volatile private var aheadFed = false
+
+    /** When the live codec was built ahead (elapsedRealtime). */
+    @Volatile private var aheadBuiltAt = 0L
+
+    /** Any access unit went to a decoder in this epoch: a new wait on it is a kept decoder's. */
+    private var fedAny = false
+
+    /** The last presentation time queued, so each is later than the one before ([PictureWatch.stale] compares them). */
+    private var lastPtsUs = 0L
+
+    /** The seam [consume] reads: whether its next message is already waiting ([inputWaiting]). */
+    private var input: InputStream? = null
+
+    /**
+     * The live decoder was built ahead, proven by its stream, fed, and has drawn nothing: what the manager's watchdogs
+     * blame when they turn building ahead off for the process. A decoder never fed is not to blame for drawing nothing.
+     */
+    val builtAheadDrewNothing: Boolean get() = builtAhead && aheadFed && framesRendered.get() == 0L
+
+    /**
+     * Since when the live decoder, built ahead, has waited with no video at all (elapsedRealtime), 0 when it isn't one:
+     * the manager releases it after a minute with no phone ([IdleAheadWatch]), and builds it again when one shows up.
+     */
+    val idleAheadSince: Long get() = if (builtAhead && aheadUnproven && bytesIn.get() == 0L) aheadBuiltAt else 0L
 
     private companion object {
         const val CONFIGURE_RETRY_MS = 5_000L // don't re-attempt configure per NAL (codec-pool leak)
@@ -77,6 +124,19 @@ class VideoRenderer(
         const val MAX_INPUT_SIZE = MAX_SEAM_MESSAGE
         const val INPUT_DEQUEUE_US = 100_000L
         const val LOG_EVERY_FRAMES = 300L
+
+        /**
+         * How long, while the gate waits, a keyframe's feed looks for its own frame: the emulator drew the first frame 43
+         * to 48 ms after its video arrived on b7351ff's bench, and a hardware VPU decodes a 2400x960 keyframe in well under
+         * that. Only after a keyframe, while waiting, and only while no next message is waiting: on a moving screen that
+         * next access unit's feed pushes the frame out, so the look ends at once, or within a [POLL_SLICE_US] slice of it
+         * coming. The steady state drains with no wait at all, as before.
+         */
+        const val FIRST_FRAME_POLL_US = 60_000L
+
+        /** The look's slices: a next access unit waits for at most one (a 60 fps screen sends one every 16.7 ms). */
+        const val POLL_SLICE_US = 5_000L
+        const val NANOS_PER_US = 1_000L
     }
 
     fun start() {
@@ -87,6 +147,10 @@ class VideoRenderer(
         sawKeyframe = false
         configured = false
         configureFailedAt = 0L
+        aheadUnproven = false
+        builtAhead = false
+        aheadFed = false
+        fedAny = false
         running.set(true)
     }
 
@@ -108,8 +172,12 @@ class VideoRenderer(
         // has no reference frames — so the IRAP gate must be re-armed. Parameter sets are KEPT: a
         // mid-stream re-dial re-sends no VideoConfig, so the cache is the only way to configure.
         sawKeyframe = false
+        input = ins
         val hdr = ByteArray(4)
         try {
+            // Built ahead, before the first message (the pipe holds what comes meanwhile): see [configure].
+            val last = setups?.aheadFrom
+            if (last != null && last.width == width && last.height == height) configure(last, ahead = true)
             while (running.get()) {
                 val msg = readSeamMessage(ins, hdr, log) ?: break
                 bytesIn.addAndGet((msg.size + 4).toLong())
@@ -124,8 +192,23 @@ class VideoRenderer(
         }
     }
 
-    /** One message = the parameter sets, or one complete access unit. */
+    /** One message, as it arrives: decoded, and while the gate waits, a look for a frame (a parameter-set message feeds nothing). */
     private fun handleMessage(msg: ByteArray) {
+        picture?.videoIn()
+        decode(msg)
+        if (picture?.awaitingFrame() != true) return
+        val c = codec ?: return
+        // Outside feed's own recovery: a codec in error here, at a frame's release or a dequeue, would otherwise end this
+        // consumer, and the next phone's video would go into its closed pipe.
+        try {
+            drain(c)
+        } catch (e: IllegalStateException) {
+            recover(e, null, false, PictureGate.NONE)
+        }
+    }
+
+    /** One message = the parameter sets, or one complete access unit. */
+    private fun decode(msg: ByteArray) {
         val scan = VideoCodecs.scan(videoCodec, msg)
         val c = scan.codec
         if (c == null) {
@@ -135,7 +218,15 @@ class VideoRenderer(
             return
         }
         absorb(c, scan)
-        if (!configured) return
+        if (!configured || aheadUnproven) return
+        // The gate's wait, read once for this access unit, before it is queued: it is fed under this one ([feed]).
+        val wait = picture?.now() ?: PictureGate.NONE
+        // A new wait for the picture on a decoder fed before (the phone left and came back on the same parameter sets):
+        // its picture starts at the next keyframe, never at a frame that refers to the last phone's.
+        if (fedAny && sawKeyframe && picture?.startsWait(wait) == true) {
+            sawKeyframe = false
+            log.i("a new wait for the picture on a kept decoder: from its next keyframe")
+        }
         // Skip only a PURE parameter-set message — csd already carries those. A mixed message
         // (parameter sets + VCL slices, which IDR access units routinely are) must be fed whole:
         // MediaCodec accepts in-band parameter sets inside an Annex-B AU, and dropping it would throw
@@ -150,14 +241,15 @@ class VideoRenderer(
             sawKeyframe = true
             log.i("keyframe — decoding starts")
         }
-        feed(msg)
+        feed(msg, scan.keyframe, wait)
     }
 
     /**
      * Latch the codec, merge any parameter sets the message carried, and (re)configure once the set
      * the codec needs is complete. Reconfigures if the parameter sets CHANGED mid-session (iOS
      * re-SETUP / resolution change): feeding new-stream AUs into a codec configured for the old ones
-     * decodes garbage indefinitely with no self-heal.
+     * decodes garbage indefinitely with no self-heal. A decoder built ahead is this stream's only once
+     * its complete parameter sets are the very ones it was built with.
      */
     private fun absorb(
         c: VideoCodec,
@@ -169,13 +261,22 @@ class VideoRenderer(
         }
         paramSets.absorb(scan)
         if (scan.sawParamSet) log.i("parameter sets: ${paramSets.describe()}")
-        val csd = paramSets.csd(c) ?: return
-        if (configured && !csd.contentEquals(configuredCsd)) {
+        val setup = paramSets.setup(c, width, height) ?: return
+        if (aheadUnproven) {
+            aheadUnproven = false
+            if (c == aheadCodec && setup.csd.contentEquals(configuredCsd)) {
+                log.i("the decoder built ahead takes this stream: the same ${c.label} parameter sets")
+                return
+            }
+            log.i("the decoder built ahead had other parameter sets: building one for this ${c.label} stream")
+            releaseCodec()
+            sawKeyframe = false
+        } else if (configured && !setup.csd.contentEquals(configuredCsd)) {
             log.i("parameter sets changed — reconfiguring decoder")
             releaseCodec() // sets configured = false
             sawKeyframe = false
         }
-        if (!configured) maybeConfigure(c, csd)
+        if (!configured) configure(setup)
     }
 
     private fun requestKeyframe() {
@@ -190,51 +291,88 @@ class VideoRenderer(
         val c = codec ?: return
         codec = null
         configured = false
+        aheadUnproven = false
+        builtAhead = false
+        aheadFed = false
         runCatching { c.stop() }
         runCatching { c.release() }
     }
 
-    private fun maybeConfigure(
-        vc: VideoCodec,
-        csd: ByteArray,
-    ) {
+    /**
+     * Configure and start a decoder for [s] on the surface: true when it runs. The stream's own setup waits out the backoff
+     * after a failure, arms it on one, and is left in [setups] for the next epoch.
+     *
+     * Built [ahead], from the last stream's setup before this stream's first message: the very configure that stream made,
+     * so when this one brings the same parameter sets its first frame waits for no decoder. It is fed nothing until
+     * [absorb] has this stream's own and finds them the same, and it neither waits for nor arms the backoff, so when it
+     * fails it costs the stream nothing: the stream's own parameter sets build the decoder as they always have.
+     */
+    private fun configure(
+        s: StreamSetup,
+        ahead: Boolean = false,
+    ): Boolean {
         val now = SystemClock.elapsedRealtime()
-        if (configureFailedAt != 0L && now - configureFailedAt < CONFIGURE_RETRY_MS) return
+        if (!ahead && configureFailedAt != 0L && now - configureFailedAt < CONFIGURE_RETRY_MS) return false
         var c: MediaCodec? = null
-        runCatching {
-            val fmt = MediaFormat.createVideoFormat(vc.mime, width, height)
-            if (vc == VideoCodec.HEVC) {
-                // HEVC: ONE csd-0 holding VPS+SPS+PPS. Splitting them the way H.264 does fails here.
-                fmt.setByteBuffer("csd-0", ByteBuffer.wrap(csd))
-            } else {
-                fmt.setByteBuffer("csd-0", ByteBuffer.wrap(paramSets.sps!!))
-                fmt.setByteBuffer("csd-1", ByteBuffer.wrap(paramSets.pps!!))
+        val failure =
+            runCatching {
+                val fmt = MediaFormat.createVideoFormat(s.codec.mime, width, height)
+                if (s.codec == VideoCodec.HEVC) {
+                    // HEVC: ONE csd-0 holding VPS+SPS+PPS. Splitting them the way H.264 does fails here.
+                    fmt.setByteBuffer("csd-0", ByteBuffer.wrap(s.csd))
+                } else {
+                    fmt.setByteBuffer("csd-0", ByteBuffer.wrap(s.sps))
+                    fmt.setByteBuffer("csd-1", ByteBuffer.wrap(s.pps))
+                }
+                // Without this the input buffer is a vendor default; the NAL most likely to overflow it is
+                // the IDR, and losing that costs every frame until the next one.
+                fmt.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_INPUT_SIZE)
+                val mc = MediaCodec.createDecoderByType(s.codec.mime)
+                c = mc
+                mc.configure(fmt, surface, null, 0)
+                mc.start()
+                codec = mc
+                configuredCsd = s.csd
+                configured = true
+                picture?.decoderReady()
+                log.i("MediaCodec configured: ${s.codec.mime} ${width}x$height csd=${s.csd.size} B, decoder=${mc.name}")
+            }.exceptionOrNull()
+        when {
+            failure == null && ahead -> {
+                // Its time before the flags: the manager's thread that reads them set (idleAheadSince) reads it too.
+                aheadBuiltAt = SystemClock.elapsedRealtime()
+                aheadUnproven = true
+                aheadCodec = s.codec
+                builtAhead = true
+                log.i("decoder built ahead from the last stream's ${s.codec.label} parameter sets in ${aheadBuiltAt - now} ms")
             }
-            // Without this the input buffer is a vendor default; the NAL most likely to overflow it is
-            // the IDR, and losing that costs every frame until the next one.
-            fmt.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_INPUT_SIZE)
-            val mc = MediaCodec.createDecoderByType(vc.mime)
-            c = mc
-            mc.configure(fmt, surface, null, 0)
-            mc.start()
-            codec = mc
-            configuredCsd = csd
-            configured = true
-            configureFailedAt = 0L
-            log.i("MediaCodec configured: ${vc.mime} ${width}x$height csd=${csd.size} B, decoder=${mc.name}")
-        }.onFailure { e ->
-            // runCatching, not catch Exception: an OutOfMemoryError while the framework allocates the
-            // input buffers is an Error, and catching only Exception let it escape with the native
-            // codec never released AND configureFailedAt never armed — so the next producer re-dial
-            // leaked another one, walking the global codec pool down to a permanent black screen.
-            // Bare release is correct HERE: stop() is invalid from the Configured state.
-            runCatching { c?.release() }
-            configureFailedAt = now
-            log.e("configure failed (retry in ${CONFIGURE_RETRY_MS}ms): ${e.message}")
+            failure == null -> {
+                configureFailedAt = 0L
+                setups?.last = s
+            }
+            else -> {
+                // runCatching, not catch Exception: an OutOfMemoryError while the framework allocates the
+                // input buffers is an Error, and catching only Exception let it escape with the native
+                // codec never released AND configureFailedAt never armed — so the next producer re-dial
+                // leaked another one, walking the global codec pool down to a permanent black screen.
+                // Bare release is correct HERE: stop() is invalid from the Configured state.
+                runCatching { c?.release() }
+                if (ahead) {
+                    log.w("the decoder could not be built ahead (${failure.message}): the stream's own parameter sets build it")
+                } else {
+                    configureFailedAt = now
+                    log.e("configure failed (retry in ${CONFIGURE_RETRY_MS}ms): ${failure.message}")
+                }
+            }
         }
+        return failure == null
     }
 
-    private fun feed(auBytes: ByteArray) {
+    private fun feed(
+        auBytes: ByteArray,
+        keyframe: Boolean,
+        wait: Long,
+    ) {
         val c = codec ?: return
         try {
             var idx = -1
@@ -259,49 +397,116 @@ class VideoRenderer(
                 return
             }
             ib.put(auBytes)
-            c.queueInputBuffer(idx, 0, auBytes.size, SystemClock.uptimeMillis() * 1000, 0)
-            drain(c)
+            // Later than every one before it, so a frame tells which wait its access unit was fed under (PictureWatch.stale).
+            val pts = maxOf(lastPtsUs + 1, SystemClock.uptimeMillis() * 1000)
+            lastPtsUs = pts
+            c.queueInputBuffer(idx, 0, auBytes.size, pts, 0)
+            fedAny = true
+            if (builtAhead) aheadFed = true
+            // Under the wait read before it was queued: a wait begun since doesn't take it for its first.
+            picture?.fed(pts, wait)
+            // While the gate waits, a keyframe's frame comes out by its own feed, not the next access unit's: on a still
+            // screen that would be the 2.5 s keyframe. Unless that next one is already waiting to be fed: it pushes it out.
+            drain(c, if (keyframe && picture?.awaitingFrame() == true && !inputWaiting()) FIRST_FRAME_POLL_US else 0L)
         } catch (e: IllegalStateException) {
-            // Recover from a codec that threw mid-stream (CodecException is an ISE). Deliberately
-            // does NOT clear configureFailedAt: clearing it meant a codec that threw on every access
-            // unit rebuilt at frame rate — the codec-pool drain the backoff exists to prevent.
-            log.e("codec in error state: ${e.message} — resetting")
-            releaseCodec()
-            sawKeyframe = false
-            configureFailedAt = SystemClock.elapsedRealtime()
-            requestKeyframe()
+            recover(e, auBytes, keyframe, wait)
         }
     }
 
-    private fun drain(c: MediaCodec) {
+    /**
+     * A codec that threw (CodecException is an ISE) at a feed, on [auBytes] read under [wait], or at a drain between
+     * feeds, with none. Deliberately does NOT clear configureFailedAt: clearing it meant a codec that threw on every
+     * access unit rebuilt at frame rate — the codec-pool drain the backoff exists to prevent.
+     *
+     * The one exception: a decoder built ahead that fails before its first frame. Building ahead goes off for the process
+     * (it would fail the same way at every wake), and a decoder built at the stream's own parameter sets gets this very
+     * access unit when it is a keyframe, so neither it nor a keyframe round trip is lost; otherwise the next message builds
+     * it at once. That decoder is not built ahead, so this is once, and when its configure fails, the backoff it armed holds.
+     */
+    private fun recover(
+        e: IllegalStateException,
+        auBytes: ByteArray?,
+        keyframe: Boolean,
+        wait: Long,
+    ) {
+        val ahead = builtAhead && framesRendered.get() == 0L
+        log.e("codec in error state: ${e.message} — resetting" + if (ahead) " (it was built ahead)" else "")
+        releaseCodec()
+        if (ahead && setups?.buildAhead?.turnOff() == true) log.w("the decoder built ahead failed at its first use: not building ahead again")
+        val au = auBytes?.takeIf { ahead && keyframe }
+        val again = au?.let { videoCodec }?.let { paramSets.setup(it, width, height) }
+        if (au != null && again != null && configure(again)) {
+            feed(au, keyframe, wait)
+            return
+        }
+        sawKeyframe = false
+        when {
+            !ahead -> configureFailedAt = SystemClock.elapsedRealtime()
+            // The stream's own parameter sets build one at the next message, unless a configure just now failed: the backoff
+            // it armed holds.
+            again == null -> configureFailedAt = 0L
+        }
+        requestKeyframe()
+    }
+
+    /**
+     * Hand every decoded frame to the surface. With [firstFrameWithinUs] (a keyframe's feed while the gate waits), look for
+     * one up to that long, in slices, and no longer once one is drawn or the next message is waiting to be fed. A frame of
+     * an access unit fed before the wait began is the last phone's: released unseen, never the picture. A codec in error
+     * throws here, at a dequeue or a release (IllegalStateException), and every caller recovers ([recover]).
+     */
+    private fun drain(
+        c: MediaCodec,
+        firstFrameWithinUs: Long = 0L,
+    ) {
         val info = MediaCodec.BufferInfo()
-        var more = true
-        while (more) {
-            val outIdx =
-                try {
-                    c.dequeueOutputBuffer(info, 0)
-                } catch (_: IllegalStateException) {
-                    return
-                }
-            when {
-                outIdx >= 0 -> {
-                    // render only a real frame; render=true hands it to the Surface with no CPU copy
-                    val real = info.size != 0
-                    c.releaseOutputBuffer(outIdx, real)
-                    val n = if (real) framesRendered.incrementAndGet() else 0L
-                    if (n == 1L) {
-                        firstFrameAtMs = SystemClock.elapsedRealtime()
-                        log.i("FIRST FRAME RENDERED")
-                    }
-                    if (n > 0L && n % LOG_EVERY_FRAMES == 0L) log.i("$n frames rendered (${bytesIn.get()} B in)")
-                }
-                outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> log.i("output format: ${c.outputFormat}")
-                outIdx == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
-                else -> more = false // INFO_TRY_AGAIN_LATER
+        var until = if (firstFrameWithinUs > 0L) System.nanoTime() + firstFrameWithinUs * NANOS_PER_US else 0L
+        while (true) {
+            val outIdx = c.dequeueOutputBuffer(info, minOf(microsUntil(until), POLL_SLICE_US))
+            if (outIdx >= 0) {
+                if (release(c, outIdx, info)) until = 0L
+            } else if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                log.i("output format: ${c.outputFormat}")
+            } else if (outIdx != MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED && !stillLooking(until)) {
+                return // INFO_TRY_AGAIN_LATER
             }
         }
     }
+
+    /**
+     * Output buffer [idx], to the Surface when it is a real frame of the gate's wait, read once for both the judging and
+     * the offer (a wait begun in between finds it offered to the one before, and refused); else released unseen. True
+     * when it was drawn. Render=true hands it to the Surface with no CPU copy.
+     */
+    private fun release(
+        c: MediaCodec,
+        idx: Int,
+        info: MediaCodec.BufferInfo,
+    ): Boolean {
+        val wait = picture?.now() ?: PictureGate.NONE
+        val real = info.size != 0 && picture?.stale(info.presentationTimeUs, wait) != true
+        c.releaseOutputBuffer(idx, real)
+        if (real) frameDrawn(wait)
+        return real
+    }
+
+    /** A keyframe's own frame is still looked for: time is left, and no next message waits to be fed and push it out. */
+    private fun stillLooking(until: Long): Boolean = until != 0L && microsUntil(until) > 0L && !inputWaiting()
+
+    /** The seam holds a next message already: unread bytes in its pipe. */
+    private fun inputWaiting(): Boolean = runCatching { (input?.available() ?: 0) > 0 }.getOrDefault(false)
+
+    /** A real frame, judged under [wait], went to the surface: counted, offered while that wait is open, and logged now and then. */
+    private fun frameDrawn(wait: Long) {
+        val n = framesRendered.incrementAndGet()
+        picture?.drawn(wait)
+        if (n == 1L) log.i("FIRST FRAME RENDERED")
+        if (n % LOG_EVERY_FRAMES == 0L) log.i("$n frames rendered (${bytesIn.get()} B in)")
+    }
 }
+
+/** Microseconds left until [untilNanos] (System.nanoTime), none when it is 0 or past: a drain's wait for a first frame. */
+private fun microsUntil(untilNanos: Long): Long = if (untilNanos == 0L) 0L else ((untilNanos - System.nanoTime()) / 1_000L).coerceAtLeast(0L)
 
 /**
  * One `[u32 BE len][payload]` seam message, or null on EOF / an implausible length (the caller drops

@@ -18,6 +18,16 @@ data class ConnectRecord(
     val endReason: EndReason? = null,
     /** Origin to the last CT_SUBSCRIBE Carlink sent for it. */
     val subscribeMs: Long? = null,
+    /**
+     * Origin to the first video data from the adapter reaching the decoder's thread, before any decoding, in the video
+     * epoch that drew the picture. Only with [Outcome.PICTURE]; null in a record kept before it was measured.
+     */
+    val videoInMs: Long? = null,
+    /**
+     * Origin to that epoch's decoder being ready (configured and started) for the frame it drew: before [videoInMs] when it
+     * was built ahead from the last stream's parameter sets. Only with [Outcome.PICTURE]; null in an older record.
+     */
+    val decoderReadyMs: Long? = null,
     /** Origin to the first video frame on screen ([ConnectTimer.picture]); only with [Outcome.PICTURE]. */
     val pictureMs: Long? = null,
     /** Origin to STREAMING: the phone's first media once keyed, or its key when the media came first. */

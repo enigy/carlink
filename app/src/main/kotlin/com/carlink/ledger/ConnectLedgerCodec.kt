@@ -10,14 +10,18 @@ import org.json.JSONObject
  * The ledger's stored form, JSON:
  *
  *     {"v":1,"connects":[{"startedAtMs":1795330933000,"origin":"display_on","kind":"wake_listed","outcome":"picture",
- *       "endMs":3412,"subscribeMs":612,"pictureMs":3412,"streamingMs":4105,"starts":1,"frontMs":214,"suspendedMs":0,
- *       "adapter":{"uptimeMs":1802400,"preload":"done","absentPages":0,"resets":0,"firstNudges":0,"secondNudges":0,
- *       "pskMismatches":0},"timeline":"[timeline] v1 a=1 b=2"}]}
+ *       "endMs":3412,"subscribeMs":612,"videoInMs":3190,"decoderReadyMs":905,"pictureMs":3412,"streamingMs":4105,
+ *       "starts":1,"frontMs":214,"suspendedMs":0,"adapter":{"uptimeMs":1802400,"preload":"done","absentPages":0,
+ *       "resets":0,"firstNudges":0,"secondNudges":0,"pskMismatches":0},"timeline":"[timeline] v1 a=1 b=2"}]}
  *
  * Oldest first. Only these keys are ever written, with numbers, booleans, the enums' codes and the two checked texts
  * (the preload word, the timeline line); a field that is null is left out. A document written by one version is read by
  * the next, so [decode] never throws: an unreadable document is null, and a record it can't read, or a text that fails
  * its check, is dropped. Keys it doesn't know are ignored, so nothing else a file might carry is read back.
+ *
+ * `videoInMs` and `decoderReadyMs` came later (the wake path, 16 Nov) within the same schema version: a record kept
+ * before them simply lacks them and reads back with both null, and a Carlink from before them reads a newer file and
+ * ignores them.
  */
 object ConnectLedgerCodec {
     const val SCHEMA_VERSION = 1
@@ -43,6 +47,8 @@ object ConnectLedgerCodec {
         f.number("endMs", r.endMs)
         f.text("endReason", r.endReason?.code)
         f.number("subscribeMs", r.subscribeMs)
+        f.number("videoInMs", r.videoInMs)
+        f.number("decoderReadyMs", r.decoderReadyMs)
         f.number("pictureMs", r.pictureMs)
         f.number("streamingMs", r.streamingMs)
         f.number("starts", r.starts.toLong())
@@ -91,6 +97,8 @@ object ConnectLedgerCodec {
             endMs = long(o, "endMs") ?: return null,
             endReason = EndReason.entries.firstOrNull { it.code == o.optString("endReason") },
             subscribeMs = long(o, "subscribeMs"),
+            videoInMs = long(o, "videoInMs"),
+            decoderReadyMs = long(o, "decoderReadyMs"),
             pictureMs = long(o, "pictureMs"),
             streamingMs = long(o, "streamingMs"),
             starts = count(o, "starts") ?: 0,
