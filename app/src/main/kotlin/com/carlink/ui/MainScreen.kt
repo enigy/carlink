@@ -120,6 +120,9 @@ private class SessionUiState {
     /** The phone's first frame drawn ([CarlinkManager.picture], collected in [SessionEffects]), or null while there is none. */
     var picture by mutableStateOf<PictureWatch.FirstFrame?>(null)
 
+    /** The picture watchdog fell back for this wait ([CarlinkManager.pictureFallback]): 3.20's rule lifts the screen. */
+    var fellBack by mutableStateOf(false)
+
     /** The wireless pairing code awaiting Pair / Cancel (CT_PAIRING_CODE), or null. */
     var pairingCode by mutableStateOf<String?>(null)
 
@@ -129,6 +132,7 @@ private class SessionUiState {
             connectionState = manager.state
             manager.statusText.takeIf { it.isNotEmpty() }?.let { statusText = it }
             picture = manager.picture.value
+            fellBack = manager.pictureFallback.value
             pairingCode = manager.pairingCode
         }
 
@@ -136,10 +140,11 @@ private class SessionUiState {
      * carlink_native hid its loading overlay (and forwarded touch) from the FIRST VIDEO FRAME, which
      * was its STREAMING edge. OCBM stamps STREAMING on the first media metadata instead, so the same
      * behaviour goes by the frame itself: the phone's first frame drawn, in a session that is up
-     * ([LoadingLift]). The manager hands it over as it is drawn, not polled.
+     * ([LoadingLift]). The manager hands it over as it is drawn, not polled. Its picture watchdog's
+     * last resort brings back 3.20's rule ([fellBack]).
      */
     val projecting: Boolean
-        get() = LoadingLift.lifted(connectionState, picture != null)
+        get() = LoadingLift.lifted(connectionState, picture != null, fellBack)
 
     // Plain fields, not snapshot state: only the touch handler reads/mutates them on the UI thread.
     var lastTouchTime = 0L
@@ -287,11 +292,14 @@ private fun SessionEffects(
     // DEVICE_CONNECTED or STREAMING alike, and never on STREAMING without one. It goes null at the next session, the next
     // phone's key and the phone leaving, so the last frozen frame never lifts it (2026-10-22).
     LaunchedEffect(carlinkManager) { carlinkManager.picture.collect { ui.picture = it } }
+    LaunchedEffect(carlinkManager) { carlinkManager.pictureFallback.collect { ui.fellBack = it } }
 
     // Touch reaches CarPlay only while projecting: pointers held as it stops would come back as phantom MOVEs.
     LaunchedEffect(ui.projecting) {
-        if (ui.projecting) {
+        if (ui.projecting && ui.picture != null) {
             logInfo("[UI_STATE] The phone's first frame is on screen — lifting the loading screen (${ui.connectionState})", tag = "UI")
+        } else if (ui.projecting) {
+            logInfo("[UI_STATE] No frame, the watchdog's fallback — lifting the loading screen at STREAMING, as 3.20 did", tag = "UI")
         } else {
             ui.activeTouches.clear()
         }
@@ -370,9 +378,10 @@ private fun SessionEffects(
 
 /**
  * The connect ledger's "first video frame on screen" ([CarlinkManager.pictureShown]): the moment the loading screen starts
- * to lift ([SessionUiState.projecting]), which it does only over the phone's first frame drawn, so never before the
- * decoder handed it to the surface (the later of the two is kept all the same). It hands the ledger that frame's video in
- * and decoder ready too. It only watches; the lift is [LoadingLift]'s.
+ * to lift ([SessionUiState.projecting]) over the phone's first frame, so never before the decoder handed it to the surface
+ * (the later of the two is kept all the same). It hands the ledger that frame's video in and decoder ready too. After the
+ * watchdog's fallback lifted it with no frame, the picture is the frame when it comes. It only watches; the lift is
+ * [LoadingLift]'s.
  */
 @Composable
 private fun PictureForLedger(
@@ -380,9 +389,9 @@ private fun PictureForLedger(
     ui: SessionUiState,
 ) {
     val projecting = ui.projecting
-    LaunchedEffect(carlinkManager, projecting) {
-        if (!projecting) return@LaunchedEffect
-        val frame = ui.picture ?: return@LaunchedEffect
+    val frame = ui.picture
+    LaunchedEffect(carlinkManager, projecting, frame) {
+        if (!projecting || frame == null) return@LaunchedEffect
         carlinkManager.pictureShown(maxOf(SystemClock.elapsedRealtime(), frame.drawnAtMs), frame)
     }
 }

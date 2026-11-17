@@ -12,7 +12,7 @@ package com.carlink.av
  *
  * Pulled, not pushed: each call asks the gate for its current wait ([waiting]), so a renderer opened or retired while the
  * gate starts a new wait can never be left watching for an old one. Plain Kotlin on an injected [clock], so its rules
- * are tested off the head unit. Not thread-safe: the renderer's own thread makes every call.
+ * are tested off the head unit. The renderer's own thread makes every call except [firstVideoAt], which any thread may.
  */
 class PictureWatch(
     /** The gate's current wait, or [PictureGate.NONE] while the picture is up. */
@@ -30,8 +30,10 @@ class PictureWatch(
         val decoderReadyAtMs: Long,
     )
 
-    private var videoInAt = 0L
-    private var videoInWait = PictureGate.NONE
+    // Written in this order on the renderer's thread, read in the other by the manager's watchdog (firstVideoAt).
+    @Volatile private var videoInAt = 0L
+
+    @Volatile private var videoInWait = PictureGate.NONE
 
     private var decoderReadyAt = 0L
 
@@ -86,4 +88,7 @@ class PictureWatch(
         if (wait == PictureGate.NONE) return false
         return wait != fedWait || ptsUs < fedWaitFirstPtsUs
     }
+
+    /** When this epoch's first video for wait [wait] came (elapsedRealtime), 0 when none has: the watchdog's. Any thread. */
+    fun firstVideoAt(wait: Long): Long = if (videoInWait == wait) videoInAt else 0L
 }

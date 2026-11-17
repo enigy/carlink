@@ -256,6 +256,15 @@ class VideoRendererTest {
     }
 
     @Test
+    fun `an epoch rebuilt by the picture watchdog builds nothing ahead and leaves the last setup as it was`() {
+        val r = run(hevcSetup, vps + otherSps + pps, idr, renderSetups = null)
+        assertEquals("one configure, at the stream's parameter sets", listOf(VideoCodec.HEVC.mime), configures)
+        assertEquals(1L, r.framesRendered.get())
+        assertTrue(gate.picture.value!!.decoderReadyAtMs > gate.picture.value!!.videoInAtMs)
+        assertSame(hevcSetup, setups.last)
+    }
+
+    @Test
     fun `building ahead is the process's to turn off, once`() {
         assertSame("every manager's setups share the process's switch", StreamSetups().buildAhead, StreamSetups().buildAhead)
         assertSame(BuildAheadSwitch.process, StreamSetups().buildAhead)

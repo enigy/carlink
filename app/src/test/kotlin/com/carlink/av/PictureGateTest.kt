@@ -126,4 +126,41 @@ class PictureGateTest {
         w.fed(ptsUs = 2_100)
         assertFalse("the wait's first stays where its frames begin", w.stale(ptsUs = 2_050))
     }
+
+    @Test
+    fun `the watchdog reads the epoch's first video for a wait from any thread, and none for another wait`() {
+        val w = watch()
+        val first = gate.waiting
+        assertEquals(0L, w.firstVideoAt(first))
+        now = 7_000L
+        w.videoIn()
+        assertEquals(7_000L, w.firstVideoAt(first))
+        gate.expect()
+        assertEquals("another wait's", 0L, w.firstVideoAt(gate.waiting))
+    }
+
+    @Test
+    fun `the fallback holds for its wait only, refused for an older one or with the picture up, and a later frame is still the picture`() {
+        val first = gate.waiting
+        assertTrue(gate.fallBack(first))
+        assertTrue(gate.fallenBack.value)
+        assertFalse("once", gate.fallBack(first))
+        assertTrue("still waiting: a frame now is the picture", gate.drawn(first, FirstFrame(9_000L, 8_950L, 8_900L)))
+        assertEquals(9_000L, gate.picture.value?.drawnAtMs)
+        gate.expect()
+        assertFalse("a new wait starts without it", gate.fallenBack.value)
+        assertFalse("an older wait's", gate.fallBack(first))
+        assertTrue(gate.drawn(gate.waiting, FirstFrame(10_000L, 0L, 0L)))
+        assertFalse("the picture is up", gate.fallBack(gate.waiting))
+    }
+
+    @Test
+    fun `the gate's waits go to none with the picture and to the next one at each new wait`() {
+        val first = gate.waits.value
+        assertEquals(gate.waiting, first)
+        gate.drawn(first, FirstFrame(1L, 0L, 0L))
+        assertEquals(PictureGate.NONE, gate.waits.value)
+        gate.expect()
+        assertTrue(gate.waits.value > first)
+    }
 }

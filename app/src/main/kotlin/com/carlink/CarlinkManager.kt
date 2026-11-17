@@ -18,6 +18,7 @@ import com.carlink.audio.SilenceGuard
 import com.carlink.av.MediaAudioPlayer
 import com.carlink.av.PictureGate
 import com.carlink.av.PictureWatch
+import com.carlink.av.PictureWatchdog
 import com.carlink.av.SkipAftermath
 import com.carlink.av.StreamSetups
 import com.carlink.av.TransientFocusPolicy
@@ -154,6 +155,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -752,6 +754,8 @@ class CarlinkManager(
         val pipe: SeamPipe,
         val renderer: VideoRenderer,
         val thread: Thread,
+        /** Its renderer's side of the picture: the picture watchdog reads its first video. */
+        val watch: PictureWatch,
     )
 
     @Volatile private var videoEpoch: VideoEpoch? = null
@@ -780,6 +784,17 @@ class CarlinkManager(
      * thread as the frame is handed to the surface; reset on the USB read thread at the phone's first video key.
      */
     val picture: StateFlow<PictureWatch.FirstFrame?> get() = pictureGate.picture
+
+    /**
+     * The picture watchdog's last resort for this wait ([PictureWatchdog]): the screen lifts by 3.20's rule, at STREAMING,
+     * with no frame, until the next session, phone or phone key.
+     */
+    val pictureFallback: StateFlow<Boolean> get() = pictureGate.fallenBack
+
+    /** The picture watchdog's rules and state; sampled on the main scope while the gate waits ([watchPicture]). */
+    private val pictureDog = PictureWatchdog()
+
+    @Volatile private var pictureDogJob: Job? = null
 
     /** Rebuilds a video epoch that takes access units and draws nothing (9 Nov bench). Main thread. */
     private val videoStall = VideoStallWatch()
@@ -2960,9 +2975,14 @@ class CarlinkManager(
      *
      * Ordering is load-bearing: the renderer must be constructed and started before the seam is
      * pointed at its pipe, or the first frames land in a pipe nobody is draining.
+     *
+     * [buildAhead] false: its decoder is built at the stream's parameter sets, not ahead (the picture watchdog's rebuild).
      */
     @Synchronized
-    private fun openVideoEpoch(surface: Surface) {
+    private fun openVideoEpoch(
+        surface: Surface,
+        buildAhead: Boolean = true,
+    ) {
         val lanes = client?.lanes ?: return
         if (videoEpoch != null) return
         if (helloReplay.holding) {
@@ -2979,13 +2999,13 @@ class CarlinkManager(
         val pipe = SeamPipe(VIDEO_PIPE_BYTES, VIDEO_PIPE_DEPTH, name = "cp-video", log = ocbmLog)
         val watch = PictureWatch({ pictureGate.waiting }, SystemClock::elapsedRealtime) { wait, frame -> onPictureDrawn(seq, wait, frame) }
         val renderer =
-            VideoRenderer(config.width, config.height, surface, picture = watch, setups = streamSetups) {
+            VideoRenderer(config.width, config.height, surface, picture = watch, setups = streamSetups.takeIf { buildAhead }) {
                 client?.requestKeyframe()
             }
         renderer.start()
         val thread = lanes.runConsumer("cp-video", pipe) { renderer.consume(it) }
         // The current epoch before any video can reach it: its first frame is offered as the picture only as the current one's.
-        videoEpoch = VideoEpoch(seq, pipe, renderer, thread)
+        videoEpoch = VideoEpoch(seq, pipe, renderer, thread, watch)
         lanes.videoSeam.attach(pipe)
         codecDeferred = false
 
@@ -3001,8 +3021,9 @@ class CarlinkManager(
         // Throttled at 500 ms client-side, so the paths that already request are unharmed.
         client?.requestKeyframe()
 
-        logInfo("[LIFECYCLE] Video epoch #$seq open at ${config.width}x${config.height}", tag = Logger.Tags.VIDEO)
+        logInfo("[LIFECYCLE] Video epoch #$seq open at ${config.width}x${config.height}" + if (buildAhead) "" else " (not built ahead)", tag = Logger.Tags.VIDEO)
         watchVideoStall(seq)
+        watchPicture()
     }
 
     /**
@@ -3040,6 +3061,69 @@ class CarlinkManager(
         if (r.builtAheadDrewNothing && streamSetups.buildAhead.turnOff()) {
             logWarn("[LIFECYCLE] the decoder built ahead was fed and drew nothing: not building ahead again in this process", tag = Logger.Tags.VIDEO)
         }
+    }
+
+    /**
+     * The picture watchdog ([PictureWatchdog]), once per manager: asleep while the picture is up, it looks at each wait
+     * until its picture comes, a new wait begins, or it falls back. It acts on whatever epoch is current, so its second
+     * look carries over the epoch its rebuild opened.
+     */
+    private fun watchPicture() {
+        if (pictureDogJob?.isActive == true) return
+        pictureDogJob =
+            scope.launch {
+                while (true) {
+                    val wait = pictureGate.waits.first { it != PictureGate.NONE }
+                    watchWait(wait)
+                    pictureGate.waits.first { it != wait }
+                }
+            }
+    }
+
+    /**
+     * Main scope. Look at [wait] until its picture comes, a new wait begins, or it fell back. Its clock runs only while a
+     * keyed phone is here ([StreamingStamp.phoneKeyedIn]): a phone that left leaves the session DEVICE_CONNECTED, and a
+     * fallback armed with no phone would lift the screen at the next phone's media, before its key and over the last
+     * phone's frame.
+     */
+    private suspend fun watchWait(wait: Long) {
+        while (pictureGate.waiting == wait) {
+            val keyed = streamingStamp.phoneKeyedIn(state)
+            delay(if (keyed) pictureDog.timing.sampleMs else pictureDog.timing.idleSampleMs)
+            val e = videoEpoch ?: continue
+            val keyedNow = streamingStamp.phoneKeyedIn(state)
+            when (pictureDog.sample(SystemClock.elapsedRealtime(), wait, keyedNow, e.watch.firstVideoAt(wait))) {
+                PictureWatchdog.Action.NONE -> Unit
+                PictureWatchdog.Action.REBUILD -> rebuildForPicture(e)
+                PictureWatchdog.Action.FALL_BACK -> {
+                    if (pictureGate.fallBack(wait)) {
+                        logWarn(
+                            "[LIFECYCLE] still no frame of the phone's: the loading screen goes by STREAMING, as 3.20's did, until the " +
+                                "next phone or session",
+                            tag = Logger.Tags.VIDEO,
+                        )
+                    }
+                    return
+                }
+            }
+        }
+    }
+
+    /**
+     * The picture watchdog's first answer: epoch [e] took the phone's video and drew nothing for [PictureWatchdog.Timing.rebuildMs].
+     * A fresh decoder, built at the stream's parameter sets (not ahead), and a keyframe asked (openVideoEpoch). Built
+     * ahead, proven and fed, it is blamed for the process.
+     */
+    private fun rebuildForPicture(e: VideoEpoch) {
+        val surface = videoSurface ?: return
+        logWarn(
+            "[LIFECYCLE] Video epoch #${e.seq}: no frame ${pictureDog.timing.rebuildMs} ms after its video came, the loading screen up — " +
+                "rebuilding its decoder at the stream's parameter sets",
+            tag = Logger.Tags.VIDEO,
+        )
+        blameBuiltAhead(e.renderer)
+        retireVideoEpoch("picture watchdog")
+        openVideoEpoch(surface, buildAhead = false)
     }
 
     /**

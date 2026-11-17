@@ -15,26 +15,39 @@ import kotlinx.coroutines.flow.asStateFlow
  * read thread, before any of its video can be decoded, so the last session's or the last host's frames never count), and
  * when the phone leaves. Each renderer's [PictureWatch] offers its frames to [drawn] while [waiting] says it waits; the
  * first one offered for the current wait is the picture, which [picture] carries to the screen. Thread-safe.
+ *
+ * A wait the decoder never answers is CarlinkManager's picture watchdog's ([PictureWatchdog]): its last resort,
+ * [fallBack], lets the screen lift by 3.20's rule (at STREAMING) until the next wait, so a live session can't stay
+ * behind the loading screen with touch blocked.
  */
 class PictureGate {
     private var wait = FIRST // guarded by this
 
-    @Volatile private var open = FIRST
+    private val waitState = MutableStateFlow(FIRST)
 
     private val state = MutableStateFlow<PictureWatch.FirstFrame?>(null)
+
+    private val fallen = MutableStateFlow(false)
 
     /** The first frame of the phone's session now on, or null while there is none and the loading screen stays. */
     val picture: StateFlow<PictureWatch.FirstFrame?> = state.asStateFlow()
 
-    /** The wait frames are offered to, or [NONE] while the picture is up. A volatile read: renderers ask per frame. */
-    val waiting: Long get() = open
+    /** [waiting] as it changes: the watchdog sleeps while the picture is up, and wakes at the next wait. */
+    val waits: StateFlow<Long> = waitState.asStateFlow()
 
-    /** A new wait: no picture until a frame drawn from now on. */
+    /** The wait frames are offered to, or [NONE] while the picture is up. A volatile read: renderers ask per frame. */
+    val waiting: Long get() = waitState.value
+
+    /** The watchdog gave up on a frame for this wait: the screen lifts by 3.20's rule, at STREAMING, until the next wait. */
+    val fallenBack: StateFlow<Boolean> = fallen.asStateFlow()
+
+    /** A new wait: no picture until a frame drawn from now on, and no fallback. */
     @Synchronized
     fun expect() {
         wait++
         state.value = null
-        open = wait
+        fallen.value = false
+        waitState.value = wait
     }
 
     /** A frame drawn for wait [forWait]: true when it is the picture, the first offered while that wait is open. */
@@ -43,9 +56,20 @@ class PictureGate {
         forWait: Long,
         frame: PictureWatch.FirstFrame,
     ): Boolean {
-        if (forWait != wait || open == NONE) return false
-        open = NONE
+        if (forWait != wait || waitState.value == NONE) return false
+        waitState.value = NONE
         state.value = frame
+        return true
+    }
+
+    /**
+     * The watchdog's last resort for wait [forWait], still open with no frame: true when it falls back now. The wait stays
+     * open, so a frame that comes later is still the picture (and the ledger's).
+     */
+    @Synchronized
+    fun fallBack(forWait: Long): Boolean {
+        if (forWait != wait || waitState.value == NONE || fallen.value) return false
+        fallen.value = true
         return true
     }
 

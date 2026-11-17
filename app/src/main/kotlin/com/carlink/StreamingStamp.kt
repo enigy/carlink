@@ -10,10 +10,16 @@ import com.carlink.CarlinkManager.State
  * own Play waits for STREAMING, and so does night mode's push to CarPlay. So the key never moves a streaming session
  * back, and a phone whose media came first is stamped at its key. [reset] when the phone's session or the session
  * ends. Synchronized; CarlinkManager calls it from its main scope.
+ *
+ * It also says whether a keyed phone is here at all ([phoneKeyedIn]), which the state alone can't: a phone that leaves
+ * leaves the session in DEVICE_CONNECTED, and the next phone's media, before its key, moves that on to STREAMING.
  */
 internal class StreamingStamp {
     // This phone's media came before its key, while the session was still connecting.
     private var mediaFirst = false
+
+    // This phone's video key came, and neither its session nor the session has ended since.
+    private var keyed = false
 
     /** A media frame in [state]: [State.STREAMING] to move to, or null to stay. */
     @Synchronized
@@ -30,15 +36,24 @@ internal class StreamingStamp {
     /** The phone's first video key in [state]: the state to move to, or null to stay. */
     @Synchronized
     fun onKeyed(state: State): State? {
+        keyed = true
         if (state == State.STREAMING) return null
         val first = mediaFirst
         mediaFirst = false
         return if (first) State.STREAMING else State.DEVICE_CONNECTED
     }
 
+    /**
+     * A keyed phone's session is up in [state]: its key came, it hasn't ended since, and the session is keyed or
+     * streaming. What the picture watchdog counts its waits from (CarlinkManager).
+     */
+    @Synchronized
+    fun phoneKeyedIn(state: State): Boolean = keyed && (state == State.DEVICE_CONNECTED || state == State.STREAMING)
+
     /** The phone's session ended, or the whole session: the next phone starts over. */
     @Synchronized
     fun reset() {
         mediaFirst = false
+        keyed = false
     }
 }
