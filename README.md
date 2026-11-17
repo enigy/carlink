@@ -1,6 +1,6 @@
 # Carlink
 
-The Carlink app makes the Apple Carplay experience on a 2024+ Chevy Silverado or GMC Sierra functionally similar to the native Android Auto (AA) experience.  It enables you to have a full screen Carplay experience, with HUD features that previously were only AA capable.  In addition to enabling these features, this app enhances the HUD by allowing you to customize many of the HUD settings to your preference.
+The Carlink app makes the Apple Carplay experience on a 2023+ Chevy Silverado or GMC Sierra functionally similar to the native Android Auto (AA) experience.  It enables you to have a full screen Carplay experience, with HUD features that previously were only AA capable.  In addition to enabling these features, this app enhances the HUD by allowing you to customize many of the HUD settings to your preference.
 
 It also has a Media side pane that is much more functional and appealing than the Carplay NowPlaying Widget.  This media side pane also includes the ability to display lyrics, for those trips that your passengers need assistance with! ;)
 
@@ -145,7 +145,7 @@ Below them are the logs:
 
 ### Adapter and about
 
-The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
+The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. **Connect time** says how long CarPlay took from the display coming on to the picture, over your last 20 wakes. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
 
 ## Install in four steps
 
@@ -183,7 +183,7 @@ Each [GitHub Release](https://github.com/enigy/carlink/releases) also attaches t
 
 ## Under the hood
 
-**Version 3.20**, out through Google Play internal testing and tested in the truck with every release. `:app`, `:bridge` and `:bridge-api` build; ktlint, detekt, Android lint and **939 unit tests** pass.
+**Version 3.21**, out through Google Play internal testing and tested in the truck with every release. `:app`, `:bridge` and `:bridge-api` build; ktlint, detekt, Android lint and **1025 unit tests** pass.
 
 ### Adapter
 

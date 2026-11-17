@@ -35,21 +35,21 @@ object AdapterUpdates {
      */
     val PINNED: PinnedPackage? =
         PinnedPackage(
-            tag = "v2.6.0",
-            url = "https://github.com/enigy/ocbm/releases/download/v2.6.0/ocbm-update-2.6.0.tgz",
-            sizeBytes = 2_142_494L,
-            sha256 = "140dccbffaabf4eca66ae3d0d44dd7261ee9395afb271b7e4be4e3161bdbf69d",
-            // 2.6.0 from 1.0.1: 18 files; from 2.5.0 it places 8 (btd, carplayd, ocbmd and five scripts). The Mac's build of
-            // main at e472eb1 with the benched programs (2.0.0's bytes for the unchanged iap2d and iap_role_switch).
+            tag = "v2.6.1",
+            url = "https://github.com/enigy/ocbm/releases/download/v2.6.1/ocbm-update-2.6.1.tgz",
+            sizeBytes = 2_157_486L,
+            sha256 = "017ea30abc8e5f95af2fea1452a73a490373031532c8dd3c9d4e04c0eb8b7662",
+            // 2.6.1 from 1.0.1: 18 files; from 2.6.0 it places 6 (btd, carplayd, ocbmd and three scripts). The Mac's build of
+            // main at 3d289a5 with the benched programs (2.0.0's bytes for the unchanged iap2d and iap_role_switch).
             // ROOM trial=no: a trial adapter finishes its install first.
             pkg =
                 UpdatePackage(
-                    version = "2.6.0",
+                    version = "2.6.1",
                     fromMin = "1.0.1",
-                    needKb = 3190,
+                    needKb = 3208,
                     notes =
-                        "A change of iPhone now connects in seconds, not a minute or more. From older versions it also brings " +
-                            "faster wireless connects, and 2.0.0's video from your iPhone on the car's screen while parked.",
+                        "Times each step of a connect, for Connect time and Save Logs; nothing else changes from 2.6.0. From 2.5.0 " +
+                            "or older it also brings the quick change of iPhone, and from older versions faster wireless connects.",
                 ),
         )
 
