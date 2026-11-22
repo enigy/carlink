@@ -35,21 +35,21 @@ object AdapterUpdates {
      */
     val PINNED: PinnedPackage? =
         PinnedPackage(
-            tag = "v2.6.5",
-            url = "https://github.com/enigy/ocbm/releases/download/v2.6.5/ocbm-update-2.6.5.tgz",
-            sizeBytes = 2_203_819L,
-            sha256 = "effdedb68322d96314066714b7797dda54559164d06a4e02e63b5836a812ec26",
-            // 2.6.5 from 1.0.1: 18 files; from 2.6.1 it places 7 (btd, carplayd and five scripts). The Mac's build of
-            // main at 1974bb0 with the benched programs (2.0.0's bytes for the unchanged iap2d and iap_role_switch).
+            tag = "v2.7.0",
+            url = "https://github.com/enigy/ocbm/releases/download/v2.7.0/ocbm-update-2.7.0.tgz",
+            sizeBytes = 2_228_560L,
+            sha256 = "9df3ec31ab68170bd8f04ecd62f7ceacf7cc0aab4184a02399a75d2e10f92a0a",
+            // 2.7.0 from 1.0.1: 18 files; from 2.6.5 it places 9 (btd and eight scripts). The Mac's build of
+            // main at f2486c9 with the benched programs (2.0.0's bytes for the unchanged iap2d and iap_role_switch).
             // ROOM trial=no: a trial adapter finishes its install first.
             pkg =
                 UpdatePackage(
-                    version = "2.6.5",
+                    version = "2.7.0",
                     fromMin = "1.0.1",
-                    needKb = 3281,
+                    needKb = 3331,
                     notes =
-                        "Connects sooner: Bluetooth waits ready but invisible while the adapter is idle, and its Wi-Fi and CarPlay " +
-                            "start earlier. From 2.6.0 or older it also times each connect step, for Connect time and Save Logs.",
+                        "Ready sooner after the adapter gets power: its two radios load side by side, and earlier in its start. " +
+                            "From 2.6.1 or older it also connects sooner at a wake, as 2.6.5 does.",
                 ),
         )
 
