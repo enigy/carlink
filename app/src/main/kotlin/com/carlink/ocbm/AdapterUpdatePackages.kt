@@ -35,21 +35,22 @@ object AdapterUpdates {
      */
     val PINNED: PinnedPackage? =
         PinnedPackage(
-            tag = "v2.7.0",
-            url = "https://github.com/enigy/ocbm/releases/download/v2.7.0/ocbm-update-2.7.0.tgz",
-            sizeBytes = 2_228_560L,
-            sha256 = "9df3ec31ab68170bd8f04ecd62f7ceacf7cc0aab4184a02399a75d2e10f92a0a",
-            // 2.7.0 from 1.0.1: 18 files; from 2.6.5 it places 9 (btd and eight scripts). The Mac's build of
-            // main at f2486c9 with the benched programs (2.0.0's bytes for the unchanged iap2d and iap_role_switch).
+            tag = "v2.7.1",
+            url = "https://github.com/enigy/ocbm/releases/download/v2.7.1/ocbm-update-2.7.1.tgz",
+            sizeBytes = 2_240_080L,
+            sha256 = "7d2ce724fb5eff16b494ec4e00a050efe1d132211343d29df9149a0b2c0e4f8d",
+            // 2.7.1 from 1.0.1: 18 files; from 2.7.0 it places 5 (btd, carplayd and three scripts). The Mac's build of
+            // main at 7012dcf with the benched programs (2.0.0's bytes for the unchanged iap2d and iap_role_switch).
             // ROOM trial=no: a trial adapter finishes its install first.
             pkg =
                 UpdatePackage(
-                    version = "2.7.0",
+                    version = "2.7.1",
                     fromMin = "1.0.1",
-                    needKb = 3331,
+                    needKb = 3349,
                     notes =
-                        "Ready sooner after the adapter gets power: its two radios load side by side, and earlier in its start. " +
-                            "From 2.6.1 or older it also connects sooner at a wake, as 2.6.5 does.",
+                        "A failed Bluetooth start no longer leaves the adapter without Bluetooth until it loses power, " +
+                            "and a phone that is slow to answer connects on the first try more often. " +
+                            "From 2.6.5 or older it is also ready sooner after the adapter gets power, as 2.7.0 is.",
                 ),
         )
 
