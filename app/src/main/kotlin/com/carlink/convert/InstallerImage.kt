@@ -40,15 +40,15 @@ object InstallerImage {
      */
     val PINNED: PinnedImage? =
         PinnedImage(
-            // 2.7.0, the Mac's build of main at f2486c9 with the benched programs: its files match the pinned update package.
-            tag = "installer-2.7.0",
-            url = "https://github.com/enigy/ocbm/releases/download/installer-2.7.0/A15W_Update.img",
-            sizeBytes = 2_244_259L,
-            sha256 = "e3821ae20cc230e81672195b08914af7901bf3b4c2cc1308b44a3114b1db2c1c",
+            // 2.7.1, the Mac's build of main at 7012dcf with the benched programs: its files match the pinned update package.
+            tag = "installer-2.7.1",
+            url = "https://github.com/enigy/ocbm/releases/download/installer-2.7.1/A15W_Update.img",
+            sizeBytes = 2_259_337L,
+            sha256 = "1a785314935505ae3d19f0b5eb565196d0384418214a3602f194250442c89d52",
         )
 
     /** Where the stick guide is: the installer image's release page (M7). A build with the switch off points at it. */
-    const val STICK_GUIDE = "github.com/enigy/ocbm/releases/tag/installer-2.7.0"
+    const val STICK_GUIDE = "github.com/enigy/ocbm/releases/tag/installer-2.7.1"
 
     /** The name the stock firmware installs from, at the root of a stick in the adapter. */
     const val FILE_NAME = "A15W_Update.img"
