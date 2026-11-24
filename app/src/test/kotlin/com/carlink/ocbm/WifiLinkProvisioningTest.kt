@@ -15,6 +15,8 @@ class WifiLinkProvisioningTest {
         assertEquals("f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e", WifiLinkProvisioning.wpaPsk("password", "IEEE"))
         assertEquals("0dc0d6eb90555ed6419756b9a15ec3e3209b63df707dd508d14581f8982721af", WifiLinkProvisioning.wpaPsk("ThisIsAPassword", "ThisIsASSID"))
         assertEquals("becb93866bb8c3832cb777c2f559807c8c59afcb6eae734885001300a981cc62", WifiLinkProvisioning.wpaPsk("a".repeat(32), "Z".repeat(32)))
+        // A name with the iPhone's curly apostrophe (3 UTF-8 bytes); the value is Python's hashlib.pbkdf2_hmac.
+        assertEquals("5d4c12cad9e8f86d6f2ee86ad184545bc82853ad25fc6a6032c24452ee2c6203", WifiLinkProvisioning.wpaPsk("correct horse 9!", "Sam\u2019s iPhone"))
     }
 
     @Test
