@@ -1846,7 +1846,9 @@ class CarlinkManager(
     /**
      * M2: over Wi-Fi the adapter already runs the phone's CarPlay session, its video parked (the box's live CT_PROJ_MODE
      * right after its SUBSCRIBE replay, or the replay hold running out: [HelloReplay]). Ask for the screen (requestUI) and
-     * a keyframe, and show the phone as connected: there is no phone to wait for.
+     * a keyframe, and show the phone as connected: there is no phone to wait for. Main thread, before the held key (if
+     * any) is released: the phone's first now-playing record went out before Carlink attached, so STREAMING comes at the
+     * key ([StreamingStamp.onAttached]), not at a media frame that may never come.
      */
     private fun attachToRunningSession() {
         val c = client ?: return
@@ -1855,6 +1857,7 @@ class CarlinkManager(
         c.sendCommand(Ocbm.CMD_REQUEST_UI)
         c.requestKeyframe()
         setStatusText("Phone connected")
+        if (streamingStamp.onAttached(state) == State.STREAMING) markStreaming()
     }
 
     /** A Wi-Fi link found, this start's: the search is over, its address kept for next time. */

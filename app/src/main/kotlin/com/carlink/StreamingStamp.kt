@@ -13,6 +13,9 @@ import com.carlink.CarlinkManager.State
  *
  * It also says whether a keyed phone is here at all ([phoneKeyedIn]), which the state alone can't: a phone that leaves
  * leaves the session in DEVICE_CONNECTED, and the next phone's media, before its key, moves that on to STREAMING.
+ *
+ * An attach to a phone's session the adapter already runs ([onAttached], M2 over Wi-Fi) counts as that phone's media
+ * coming first: its first now-playing record, a normal start's STREAMING edge, went out before Carlink was there.
  */
 internal class StreamingStamp {
     // This phone's media came before its key, while the session was still connecting.
@@ -32,6 +35,17 @@ internal class StreamingStamp {
             }
             else -> null
         }
+
+    /**
+     * Carlink attached to a phone's session that was running before it ([com.carlink.link.WifiAttach.Action.ATTACH]) in
+     * [state]: the state to move to, or null to stay. A normal start reaches STREAMING at the phone's first now-playing
+     * record, which the phone sends when the adapter subscribes to its now-playing at the start of its session. On an
+     * attach that record went out before any host held the box (into the box's sink) and the box replays none, so with
+     * nothing playing no media frame ever came and the session sat in DEVICE_CONNECTED (bench 24 Nov, 12:22: picture
+     * drawn, "STREAMING -"). So the attach is this phone's media come first: STREAMING at its key, or now if it is keyed.
+     */
+    @Synchronized
+    fun onAttached(state: State): State? = onMedia(state)
 
     /** The phone's first video key in [state]: the state to move to, or null to stay. */
     @Synchronized
