@@ -61,8 +61,15 @@ class SetupNetworkPort(
             }
         val asked = runCatching { c.requestNetwork(request, callback) }.onFailure { log.w("set-up network request refused: ${it.message}") }.isSuccess
         if (!asked) return null
-        val network = withTimeoutOrNull(joinMs) { got.await() }
         val release = { runCatching { c.unregisterNetworkCallback(callback) }.let { } }
+        // A set-up cancelled while Android is asked (the pane closed, Carlink released) lets the request go too.
+        val network =
+            try {
+                withTimeoutOrNull(joinMs) { got.await() }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                release()
+                throw e
+            }
         if (network == null) {
             release()
             log.w("set-up network: Android joined none within ${joinMs / 1000} s")

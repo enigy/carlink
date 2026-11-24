@@ -175,30 +175,34 @@ class WifiBoxFinder(
             val n = nsd ?: return null
             val done = CountDownLatch(1)
             var out: NsdServiceInfo? = null
-            val started =
-                runCatching {
-                    n.resolveService(
-                        info,
-                        object : NsdManager.ResolveListener {
-                            override fun onResolveFailed(
-                                serviceInfo: NsdServiceInfo,
-                                errorCode: Int,
-                            ) {
-                                logLine("[WIFI] couldn't resolve ${serviceInfo.serviceName} (error $errorCode)")
-                                done.countDown()
-                            }
+            val listener =
+                object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(
+                        serviceInfo: NsdServiceInfo,
+                        errorCode: Int,
+                    ) {
+                        logLine("[WIFI] couldn't resolve ${serviceInfo.serviceName} (error $errorCode)")
+                        done.countDown()
+                    }
 
-                            override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                                out = serviceInfo
-                                done.countDown()
-                            }
-                        },
-                    )
-                }.isSuccess
+                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                        out = serviceInfo
+                        done.countDown()
+                    }
+                }
+            val started = runCatching { n.resolveService(info, listener) }.isSuccess
             if (!started) return null
-            done.await(RESOLVE_MS, TimeUnit.MILLISECONDS)
+            if (!done.await(RESOLVE_MS, TimeUnit.MILLISECONDS)) stopResolving(n, listener)
             return out
         }
+    }
+
+    /** A resolve that timed out lets its listener go: API 34 can stop it; before that NSD ends it on its own timeout. */
+    private fun stopResolving(
+        n: NsdManager,
+        listener: NsdManager.ResolveListener,
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) runCatching { n.stopServiceResolution(listener) }
     }
 
     private companion object {

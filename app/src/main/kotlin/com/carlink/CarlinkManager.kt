@@ -1738,9 +1738,18 @@ class CarlinkManager(
             return null
         }
         setStatusText(WIFI_SEARCH_STATUS)
+        // A start cancelled as the search links (Close app, a display OFF) must not leave that link open with the box.
+        var linked: RawBulkTransport? = null
         val outcome =
-            withContext(Dispatchers.IO) {
-                wifiSearch.find(key, SystemClock.elapsedRealtime() + WIFI_SEARCH_MS) { SystemClock.elapsedRealtime() }
+            try {
+                withContext(Dispatchers.IO) {
+                    wifiSearch.find(key, SystemClock.elapsedRealtime() + WIFI_SEARCH_MS) { SystemClock.elapsedRealtime() }.also {
+                        if (it is WifiBoxSearch.Outcome.Found) linked = it.transport
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                linked?.stop()
+                throw e
             }
         return when (outcome) {
             is WifiBoxSearch.Outcome.Found -> {

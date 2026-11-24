@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import java.io.IOException
 
 /**
  * M3 (approved 24 Nov): the first Wi-Fi set-up of an adapter Carlink has no other session with (no USB bridge, USB
@@ -90,10 +89,14 @@ class SetupOverNetwork(
     ): Result {
         phaseState.value = Phase.EXCHANGING
         try {
+            // Any failure of the platform's (a socket, the EC provider) ends in plain words, never in the Settings coroutine.
+            @Suppress("TooGenericExceptionCaught")
             val t =
                 try {
                     withContext(Dispatchers.IO) { port.connect(joined) }
-                } catch (e: IOException) {
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
                     log.w("set-up port: ${e.javaClass.simpleName}: ${e.message}")
                     return Result.NO_ADAPTER
                 }
