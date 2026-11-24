@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * at once.
  */
 @Suppress("TooManyFunctions") // One setter per Vehicle setting, each persisted and published the same way.
-class VehicleStore private constructor(
+class VehicleStore internal constructor(
     context: Context,
 ) {
     private val prefs: SharedPreferences = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -43,6 +43,7 @@ class VehicleStore private constructor(
     private val stationSourceState = MutableStateFlow(StationSource.of(prefs.getString(KEY_STATION_SOURCE, null)))
     private val radiusState = MutableStateFlow(prefs.getInt(KEY_RADIUS_MI, DEFAULT_RADIUS_MI))
     private val discountsState = MutableStateFlow(FuelDiscounts.decode(prefs.getString(KEY_FUEL_DISCOUNTS, null)))
+    private val reportedFuelTypesState = MutableStateFlow(decodeTypes(prefs.getString(KEY_REPORTED_FUEL_TYPES, null)))
 
     /** Whether the head unit's GPS goes to the phone. */
     val carGps: StateFlow<Boolean> = gpsState.asStateFlow()
@@ -76,6 +77,21 @@ class VehicleStore private constructor(
 
     /** The discount programs the driver is in ([FuelDiscount]); none by default, and each amount the driver's own. */
     val fuelDiscounts: StateFlow<List<FuelDiscount>> = discountsState.asStateFlow()
+
+    /**
+     * The fuel types the car last reported (INFO_FUEL_TYPE), kept across starts: with no engine picked, each start's
+     * SUBSCRIBE carries the engine types they give from its first connect ([com.carlink.car.StartFuelTypes]), so the
+     * config doesn't change as the car's report arrives mid-start (an M2 adapter restarts the phone's session for any
+     * other byte). Null until the car has reported once.
+     */
+    val reportedFuelTypes: StateFlow<List<Int>?> = reportedFuelTypesState.asStateFlow()
+
+    /** The car reported [types]: kept when they differ from the kept ones; an empty report (refused, unknown) keeps the last. */
+    fun keepReportedFuelTypes(types: List<Int>) {
+        if (types.isEmpty() || types == reportedFuelTypesState.value) return
+        prefs.edit().putString(KEY_REPORTED_FUEL_TYPES, types.joinToString(",")).apply()
+        reportedFuelTypesState.value = types
+    }
 
     fun setCarGps(on: Boolean) {
         prefs.edit().putBoolean(KEY_GPS, on).apply()
@@ -150,6 +166,7 @@ class VehicleStore private constructor(
         private const val KEY_STATION_SOURCE = "fuel_station_source"
         private const val KEY_RADIUS_MI = "fuel_search_radius_mi"
         private const val KEY_FUEL_DISCOUNTS = "fuel_discounts"
+        private const val KEY_REPORTED_FUEL_TYPES = "reported_fuel_types"
         const val DEFAULT_RADIUS_MI = 5
 
         /** The radii Settings › Vehicle offers, miles. */
@@ -159,6 +176,8 @@ class VehicleStore private constructor(
         private const val KEY_OUTSIDE = "share_outside_temperature"
 
         @Volatile private var instance: VehicleStore? = null
+
+        private fun decodeTypes(text: String?): List<Int>? = text?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.takeIf { it.isNotEmpty() }
 
         fun get(context: Context): VehicleStore =
             instance ?: synchronized(this) {

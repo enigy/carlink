@@ -36,6 +36,7 @@ import com.carlink.car.AppFocusClaimer
 import com.carlink.car.CarGpsFeed
 import com.carlink.car.DriveStateMonitor
 import com.carlink.car.DrivingState
+import com.carlink.car.StartFuelTypes
 import com.carlink.car.VehicleReadings
 import com.carlink.car.VehicleStatusFeed
 import com.carlink.car.VehicleStatusValues
@@ -170,8 +171,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -2270,7 +2273,7 @@ class CarlinkManager(
                 // always the engine type, the car's own unless the driver picked one.
                 location = if (vehicle.carGps.value && CarGpsFeed.permitted(context)) CarGpsFeed.DECLARED else emptyList(),
                 vehicleStatus = VehicleStatusValues.declared(shares),
-                engineTypes = VehicleStatusValues.declaredEngines(vehicle.engineChoice.value.engines, VehicleReadings.state.value.fuelTypes),
+                engineTypes = VehicleStatusValues.declaredEngines(vehicle.engineChoice.value.engines, startFuelTypes.forConnect(VehicleReadings.state.value.fuelTypes)),
             )
         logInfo("[VEHICLE] declared: location=${spec.location} vehicleStatus=${spec.vehicleStatus} engineTypes=${spec.engineTypes}", tag = Logger.Tags.ADAPTR)
         dockOnRight = spec.rightHandDrive
@@ -2279,6 +2282,20 @@ class CarlinkManager(
         if (askLanes) logWarn("[LANES] asking the iPhone for lane guidance: tier extended, skip ${VehicleConfigSpec.LANES_ONLY_SKIP}", tag = Logger.Tags.NAVI)
         logInfo("[CONFIG] ${g.describe()}", tag = Logger.Tags.ADAPTR)
         return spec
+    }
+
+    /** The fuel types this start's SUBSCRIBEs carry: the kept report as it stood at the first connect ([StartFuelTypes]). */
+    private val startFuelTypes = StartFuelTypes { VehicleStore.get(context).reportedFuelTypes.value }
+
+    init {
+        // The car's fuel types, kept across starts as it reports them (here, after [scope] exists): the next start sends
+        // a changed report; this one keeps what its first connect sent. No re-SUBSCRIBE mid-session, as before.
+        scope.launch {
+            VehicleReadings.state
+                .map { it.fuelTypes }
+                .distinctUntilChanged()
+                .collect { types -> if (!types.isNullOrEmpty()) VehicleStore.get(context).keepReportedFuelTypes(types) }
+        }
     }
 
     /** Lazily rendered once per manager; the launcher icon cannot change under a running process. */

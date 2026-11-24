@@ -114,3 +114,26 @@ object VehicleStatusValues {
     private const val FUEL_CNG = 8
     private const val FUEL_ELECTRIC = 10
 }
+
+/**
+ * The car's fuel types one start's SUBSCRIBEs carry, when the driver picked no engine: the kept report
+ * ([com.carlink.ui.settings.VehicleStore.reportedFuelTypes]) as it stood at the start's first connect, the same at every
+ * connect of the start, so the config's bytes don't change when the car's report comes in mid-start. A report that
+ * differs is kept, and the next start sends it. With nothing kept (a first-ever start) it is the car's live reading at
+ * each connect, as before.
+ */
+class StartFuelTypes(
+    private val kept: () -> List<Int>?,
+) {
+    private var taken = false
+    private var snapshot: List<Int>? = null
+
+    @Synchronized
+    fun forConnect(live: List<Int>?): List<Int>? {
+        if (!taken) {
+            snapshot = kept()
+            taken = true
+        }
+        return snapshot ?: live
+    }
+}
