@@ -1645,8 +1645,8 @@ class CarlinkManager(
     ): RawBulkTransport? {
         if (bridge && handedOver()) return null
         // M2: in Wi-Fi mode the bridge waits until the Wi-Fi searches have found nothing for a while ([WifiAttach]).
-        val fallbackDue = WifiAttach.usbFallbackDue(wifiSearchingSince, SystemClock.elapsedRealtime())
-        val routes = ConnectOrder.routes(settings, bridge).filter { it != ConnectOrder.Route.USB_BRIDGE || !settings.wifiActive || fallbackDue }
+        val usbNow = WifiAttach.mayTryUsb(settings.wifiActive, wifiSearchingSince, SystemClock.elapsedRealtime())
+        val routes = ConnectOrder.routes(settings, bridge).filter { it == ConnectOrder.Route.WIFI || usbNow }
         for (route in routes) {
             val t =
                 when (route) {
@@ -1802,7 +1802,7 @@ class CarlinkManager(
             delay(WifiAttach.SEARCH_GAP_MS)
             if (!stillLookingOnWifi()) return
             val now = SystemClock.elapsedRealtime()
-            if (CarlinkBridge.isInstalled(context) && WifiAttach.usbFallbackDue(wifiSearchingSince, now)) {
+            if (CarlinkBridge.isInstalled(context) && WifiAttach.mayTryUsb(wifiLink.current.wifiActive, wifiSearchingSince, now)) {
                 startIfDisconnected("no adapter on Wi-Fi for ${WifiAttach.USB_FALLBACK_MS / 1000} s: USB through the bridge")
                 return
             }
@@ -2246,7 +2246,7 @@ class CarlinkManager(
         val now = SystemClock.elapsedRealtime()
         if (overWifi && wifiSearchingSince == 0L) wifiSearchingSince = now
         val bridgeNext = overWifi && !released && CarlinkBridge.isInstalled(context)
-        if (bridgeNext && WifiAttach.usbFallbackDue(wifiSearchingSince, now)) {
+        if (bridgeNext && WifiAttach.mayTryUsb(wifiLink.current.wifiActive, wifiSearchingSince, now)) {
             logInfo("[WIFI] no CT_HELLO_ACK over Wi-Fi: USB through the bridge", tag = Logger.Tags.USB)
             closeClient(c)
             val usb = openClient(acquireBridgeTransport() ?: return null)

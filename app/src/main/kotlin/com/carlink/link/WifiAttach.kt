@@ -43,6 +43,19 @@ object WifiAttach {
      */
     const val USB_FALLBACK_MS = 45_000L
 
+    /**
+     * Whether Carlink may speak on USB to the adapter at all: always outside Wi-Fi mode; in Wi-Fi mode only once the Wi-Fi
+     * searches have found nothing for [USB_FALLBACK_MS]. A USB host takes the box from a Wi-Fi host at once (the adapter
+     * side, 24 Nov night), so a USB frame while the Wi-Fi link is healthy would cut Carlink's own link; a link taken over
+     * Wi-Fi resets [searchingSinceMs] to 0, so this is false for as long as that link lasts. Every way to USB goes through
+     * here: the start's routes, the fall-back after a refused Wi-Fi HELLO, and the quiet search's hand-over.
+     */
+    fun mayTryUsb(
+        wifiActive: Boolean,
+        searchingSinceMs: Long,
+        nowMs: Long,
+    ): Boolean = !wifiActive || usbFallbackDue(searchingSinceMs, nowMs)
+
     /** Whether a start may give Wi-Fi up for the bridge: the searches have found nothing since [searchingSinceMs]. */
     fun usbFallbackDue(
         searchingSinceMs: Long,

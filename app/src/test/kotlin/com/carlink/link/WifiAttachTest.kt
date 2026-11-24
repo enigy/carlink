@@ -55,4 +55,21 @@ class WifiAttachTest {
         assertTrue("Wi-Fi mode, fallen back to the bridge", WifiAttach.detachEndsSession(wifiChosen = true, overUsb = true))
         assertFalse("Wi-Fi mode, linked over Wi-Fi or still searching", WifiAttach.detachEndsSession(wifiChosen = true, overUsb = false))
     }
+
+    @Test
+    fun `in Wi-Fi mode Carlink never speaks on USB while its Wi-Fi link is healthy, and only after 45 s of finding nothing`() {
+        // A link taken over Wi-Fi resets the clock to 0: USB stays shut for as long as it lasts.
+        assertFalse(WifiAttach.mayTryUsb(wifiActive = true, searchingSinceMs = 0, nowMs = 1_000_000))
+        assertFalse(WifiAttach.mayTryUsb(wifiActive = true, searchingSinceMs = 5_000, nowMs = 5_000 + WifiAttach.USB_FALLBACK_MS - 1))
+        assertTrue(WifiAttach.mayTryUsb(wifiActive = true, searchingSinceMs = 5_000, nowMs = 5_000 + WifiAttach.USB_FALLBACK_MS))
+        assertTrue("USB and USB (direct) users: as always", WifiAttach.mayTryUsb(wifiActive = false, searchingSinceMs = 0, nowMs = 0))
+    }
+
+    @Test
+    fun `a start in Wi-Fi mode takes only Wi-Fi until USB may be spoken`() {
+        val wifi = WifiLinkSettings(link = AdapterLink.WIFI, ssid = "MyCar", keyStored = true)
+        val routes = ConnectOrder.routes(wifi, bridgeInstalled = true)
+        val usbShut = WifiAttach.mayTryUsb(wifi.wifiActive, searchingSinceMs = 0, nowMs = 60_000)
+        assertEquals(listOf(ConnectOrder.Route.WIFI), routes.filter { it == ConnectOrder.Route.WIFI || usbShut })
+    }
 }
