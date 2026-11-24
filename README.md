@@ -20,7 +20,7 @@ It runs on GM's AAOS head unit (GM Info 3.7) with a Carlinkit CPC200-CCPA adapte
 
 ![How Carlink works: iPhone to every screen](docs/readme/how-it-works.svg)
 
-The iPhone talks to the adapter wirelessly, and the adapter plugs in over USB. The app has no USB access of its own, so the bridge relays the raw stream to it over a socket. Carlink renders CarPlay, runs the media card and feeds GM's Templates Host, which draws the cluster and HUD.
+The iPhone talks to the adapter wirelessly, and the adapter plugs in over USB. On the GM head unit Android won't let the app open USB itself, so the sideloaded bridge relays the raw stream to it over a socket. Carlink can also reach the adapter over Wi-Fi, on the iPhone's Personal Hotspot, with no bridge at all (**Settings › Adapter and about › Adapter connection**). Carlink renders CarPlay, runs the media card and feeds GM's Templates Host, which draws the cluster and HUD.
 
 ## Your Carplay, upgraded
 
@@ -145,7 +145,7 @@ Below them are the logs:
 
 ### Adapter and about
 
-The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. **Connect time** says how long CarPlay took from the display coming on to the picture, over your last 20 wakes. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
+The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. **Connect time** says how long CarPlay took from the display coming on to the picture, over your last 20 wakes. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them. **Adapter connection** picks how Carlink reaches the adapter: **Wi-Fi** (the adapter joins your iPhone's hotspot: send its name and password once, over USB or, with no USB at all, over the adapter's own set-up Wi-Fi), **USB (direct)** (Carlink opens the adapter itself, where Android lets it) or **USB (bridge app)**, the default. With Wi-Fi the bridge is optional; without it the cluster and HUD show no turn icons. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
 
 ## Install in four steps
 
@@ -155,6 +155,8 @@ First, the adapter needs lvalen91's OCBM userspace, installed per his documentat
 2. Copy [`app/carlink_bridge.apk`](app/carlink_bridge.apk) (Carlink USB Bridge 1.0.9) to a USB drive. It is also attached to the 2.24 release as [`carlink_bridge-1.0.9.apk`](https://github.com/enigy/carlink/releases/download/v224/carlink_bridge-1.0.9.apk). SHA-256: `3b9bbd18466da0d3b894a9914e55d7606b8fb7bf272f6680061b108122a4c6ee`
 3. While parked, open Carlink. It shows **USB bridge not installed** with an **Open Files** button that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK. If asked, allow Files to install apps.
 4. When the install finishes, tap the Carlink notification (or press Home and open Carlink).
+
+Can't sideload the bridge? Choose **Wi-Fi** under **Settings › Adapter and about › Adapter connection** instead: the adapter needs firmware with the Wi-Fi link, and the cluster and HUD then show no turn icons.
 
 ### About the bridge
 
@@ -201,7 +203,7 @@ Removed from OCBM: `:projection` (Raspberry Pi target), `:car-system-stubs` (sys
 
 ### Engineering notes
 
-- **Transport:** the bridge relays the adapter's bulk stream raw (API 3), and the app reaches it through `BridgeBulkTransport`, an implementation of OCBM's `RawBulkTransport`; `OcbmClient` is unchanged. The bridge is required: the app has no USB access of its own (no USB permission, no USB dialog, no claim on the device), like Carlink-legacy since its [204]. The bridge gets USB permission silently on every attach and shows a one-tap prompt for an adapter that attached during boot.
+- **Transport:** three implementations of OCBM's `RawBulkTransport`, under an unchanged `OcbmClient`. `BridgeBulkTransport`: the bridge relays the adapter's bulk stream raw (API 3); it gets USB permission silently on every attach and shows a one-tap prompt for an adapter that attached during boot. `UsbDirectTransport`: Carlink opens the adapter itself after Android's own permission prompt, where Android shows one (not on the GM head unit). `WifiBulkTransport`: OCBM over TCP on the iPhone's hotspot inside OCBW v1 (a link key set once, ChaCha20-Poly1305 records; the adapter found by mDNS), with no bridge needed. The link key is kept sealed by an Android Keystore key.
 - **Cluster/HUD navigation:** Carlink-legacy's Templates Host pipeline (`cluster/`, `navigation/`, the compose icon store) is the base. `navigation/OcbmNavigationFeed` turns the box's `routeGuidance` / `maneuver` JSON (`CH_METADATA`) into the `NavigationState` it renders, including the exit label ("Exit 123 · John Smith Rd") and the lanes. Junction spoke angles (`junctionAngles` / `junctionExitAngle`) are consumed when the box emits them, which OCBM does since it took the ExitInfo selector; against an older box, roundabout icons fall back to the static glyph per maneuver type.
 - **CI and protocol drift:** `.github/workflows/gate.yml` runs the same gate as local on every push and PR. It first runs `tools/proto_check.py`, which compares the Kotlin `OcbmProto.kt` against the reference copy of OCBM's canonical table in `proto/` (OCBM's own checker only sees clients inside its repo). Refresh `proto/ocbm-proto.lib.rs` whenever the box is rebuilt from a newer OCBM.
 - **AAOS integration:** [docs/ANDROID_AND_AAOS.md](docs/ANDROID_AND_AAOS.md) — why the app stays third-party, the USB permission route through `android.car.usb.handler`, and the GM head unit's limits. It moved here from OCBM with OCBM 1.0.5.
