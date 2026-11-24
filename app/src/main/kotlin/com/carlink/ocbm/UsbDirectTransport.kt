@@ -10,7 +10,7 @@ import com.carlink.logging.ProbeLog
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * USB (direct): [RawBulkTransport] over Android's own USB host API, in Carlink's process, for head units where Android
+ * USB direct: [RawBulkTransport] over Android's own USB host API, in Carlink's process, for head units where Android
  * grants Carlink the adapter itself ([com.carlink.usb.DirectUsbPermission]). It came back on 24 Nov (removed in
  * a55158c, when the bridge became the only way) with what the bridge's transfer loop has learned since (bridge
  * UsbSession): every transfer bounded; a read that returns nothing (an idle link, or a failure: bulkTransfer can't tell)
@@ -181,7 +181,7 @@ class UsbDirectTransport private constructor(
             runCatching { it.join(JOIN_MS) }
         }
         readThread = null
-        log.i("USB (direct) transport on $deviceName closed ($bytesRead B read)")
+        log.i("USB direct transport on $deviceName closed ($bytesRead B read)")
     }
 
     override fun diagnostics(): String = "usb direct $deviceName: $bytesRead B in, $writeFailures write failures in a row, ended ${endReason ?: "no"}"

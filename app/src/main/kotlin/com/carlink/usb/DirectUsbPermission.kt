@@ -13,7 +13,7 @@ import com.carlink.logging.logInfo
 import com.enigy.carlink2.bridge.BridgeContract
 
 /**
- * USB (direct): Android's own USB permission prompt, asked by Carlink itself, for head units where it works (the owner,
+ * USB direct: Android's own USB permission prompt, asked by Carlink itself, for head units where it works (the owner,
  * 24 Nov). The bridge's rules ([UsbPermissionWait.Port], bridge PermissionPrompt): one prompt per device instance, and
  * a denial sticks until the adapter re-enumerates (a new /dev/bus/usb path), so Deny never starts a prompt loop.
  *

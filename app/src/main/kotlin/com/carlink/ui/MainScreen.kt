@@ -542,7 +542,7 @@ private fun ConnectingWords(
 ) {
     val access by BridgeAccessHub.state.collectAsState()
     val handedTo = access.handedToLabel
-    // Once Wi-Fi or USB (direct) is chosen, nothing asks for the bridge (the Wi-Fi link plan's addendum 1); for USB (bridge
+    // Once Wi-Fi or USB direct is chosen, nothing asks for the bridge (the Wi-Fi link plan's addendum 1); for USB (bridge
     // app) the panel comes once Android has refused Carlink the adapter itself (addendum 3).
     val wifiLink by carlinkManager.wifiLink.flow.collectAsState()
     val directUsb by carlinkManager.directUsb.collectAsState()

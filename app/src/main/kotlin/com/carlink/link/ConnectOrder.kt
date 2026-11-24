@@ -3,8 +3,8 @@ package com.carlink.link
 /**
  * Which ways to the adapter a start tries, in order (the Wi-Fi link plan, Carlink side, and its addenda 1 and 3):
  *
- * - USB (bridge app): the bridge, as Carlink always has; with no bridge installed, Android asked for the adapter directly.
- * - USB (direct): Android asked for the adapter directly, bridge or no bridge.
+ * - USB bridge: the bridge, as Carlink always has; with no bridge installed, Android asked for the adapter directly.
+ * - USB direct: Android asked for the adapter directly, bridge or no bridge.
  * - Wi-Fi chosen and set up: Wi-Fi, then the bridge only when it is installed.
  * - Wi-Fi chosen, not set up: a session to set it up through, the bridge's or a direct one.
  *

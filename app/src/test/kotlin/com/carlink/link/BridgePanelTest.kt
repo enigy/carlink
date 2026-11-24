@@ -13,12 +13,12 @@ class BridgePanelTest {
     private fun shown(link: AdapterLink) = DirectUsb.entries.filter { BridgePanel.shows(installed = false, link = link, direct = it) }
 
     @Test
-    fun `USB (bridge app) asks at once, as before, except while Android is asked or has given the adapter`() {
+    fun `USB bridge asks at once, as before, except while Android is asked or has given the adapter`() {
         assertEquals(listOf(IDLE, REFUSED, STOCK), shown(AdapterLink.USB_BRIDGE))
     }
 
     @Test
-    fun `USB (direct) asks only for a stock adapter's conversion`() {
+    fun `USB direct asks only for a stock adapter's conversion`() {
         assertEquals(listOf(STOCK), shown(AdapterLink.USB_DIRECT))
     }
 

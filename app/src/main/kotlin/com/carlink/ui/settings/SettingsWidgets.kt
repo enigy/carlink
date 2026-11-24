@@ -4,10 +4,13 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -283,20 +287,22 @@ internal fun <T : Labelled> ChoiceRow(
     label: (T) -> String = { it.label },
 ) {
     val colors = MaterialTheme.colorScheme
-    SingleChoiceSegmentedButtonRow(modifier = modifier.fillMaxWidth()) {
+    // Every option gets the same width and the same height (the tallest's), its label centred: options whose labels
+    // differ in length used to come out as buttons of different sizes (owner, 24 Nov 2026).
+    SingleChoiceSegmentedButtonRow(modifier = modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
         options.forEachIndexed { index, option ->
             SegmentedButton(
                 selected = option == selected,
                 onClick = { onSelect(option) },
                 shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
-                modifier = Modifier.heightIn(min = 72.dp),
+                modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 72.dp),
                 colors =
                     SegmentedButtonDefaults.colors(
                         activeContainerColor = colors.primaryContainer,
                         activeContentColor = colors.onPrimaryContainer,
                         inactiveContainerColor = Color.Transparent,
                     ),
-            ) { Text(label(option), style = SettingsStyle.Action) }
+            ) { Text(label(option), style = SettingsStyle.Action, textAlign = TextAlign.Center, maxLines = 2) }
         }
     }
 }

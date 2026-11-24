@@ -13,8 +13,8 @@ import kotlinx.coroutines.flow.asStateFlow
  * Persisted by [code], never ordinal.
  *
  * - Wi-Fi: the link over the phone's hotspot ([com.carlink.ocbm.WifiBulkTransport]).
- * - USB (direct): Carlink opens the adapter itself, where Android lets it ([com.carlink.ocbm.UsbDirectTransport]).
- * - USB (bridge app): through the sideloaded USB bridge, the way Carlink has always reached it, and the default; code "usb",
+ * - USB direct: Carlink opens the adapter itself, where Android lets it ([com.carlink.ocbm.UsbDirectTransport]).
+ * - USB bridge: through the sideloaded USB bridge, the way Carlink has always reached it, and the default; code "usb",
  *   as before. With no bridge installed it asks Android for the adapter itself too (the owner, 24 Nov).
  */
 enum class AdapterLink(
@@ -22,8 +22,8 @@ enum class AdapterLink(
     override val label: String,
 ) : Labelled {
     WIFI("wifi", "Wi-Fi"),
-    USB_DIRECT("usb_direct", "USB (direct)"),
-    USB_BRIDGE("usb", "USB (bridge app)"),
+    USB_DIRECT("usb_direct", "USB direct"),
+    USB_BRIDGE("usb", "USB bridge"),
     ;
 
     companion object {
@@ -58,7 +58,7 @@ data class WifiLinkSettings(
     val wifiActive: Boolean get() = wifiChosen && setUp
 
     /**
-     * The USB bridge is asked for only for USB (bridge app). Once the driver chose Wi-Fi, set up or not, or USB (direct),
+     * The USB bridge is asked for only for USB bridge. Once the driver chose Wi-Fi, set up or not, or USB direct,
      * no screen asks for it (the owner, 23 Nov: some users cannot sideload it).
      */
     val bridgeNeeded: Boolean get() = link == AdapterLink.USB_BRIDGE
@@ -200,7 +200,7 @@ class WifiLinkStore internal constructor(
         state.value = state.value.copy(lastHost = host, lastPort = port)
     }
 
-    /** Remove: the key, the hotspot and the address go, and the connection is USB (bridge app) again, the default. */
+    /** Remove: the key, the hotspot and the address go, and the connection is USB bridge again, the default. */
     @Synchronized
     fun forget() {
         prefs

@@ -62,7 +62,7 @@ class WifiAttachTest {
         assertFalse(WifiAttach.mayTryUsb(wifiActive = true, searchingSinceMs = 0, nowMs = 1_000_000))
         assertFalse(WifiAttach.mayTryUsb(wifiActive = true, searchingSinceMs = 5_000, nowMs = 5_000 + WifiAttach.USB_FALLBACK_MS - 1))
         assertTrue(WifiAttach.mayTryUsb(wifiActive = true, searchingSinceMs = 5_000, nowMs = 5_000 + WifiAttach.USB_FALLBACK_MS))
-        assertTrue("USB and USB (direct) users: as always", WifiAttach.mayTryUsb(wifiActive = false, searchingSinceMs = 0, nowMs = 0))
+        assertTrue("USB and USB direct users: as always", WifiAttach.mayTryUsb(wifiActive = false, searchingSinceMs = 0, nowMs = 0))
     }
 
     @Test

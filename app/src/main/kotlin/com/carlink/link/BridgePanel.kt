@@ -1,6 +1,6 @@
 package com.carlink.link
 
-/** Where Carlink's own USB attempt stands (USB (direct), or USB (bridge app) with no bridge installed). */
+/** Where Carlink's own USB attempt stands (USB direct, or USB bridge with no bridge installed). */
 enum class DirectUsb {
     /** Nothing tried yet: no adapter listed since the start. */
     IDLE,

@@ -15,14 +15,14 @@ class ConnectOrderTest {
     private val direct = WifiLinkSettings(link = AdapterLink.USB_DIRECT)
 
     @Test
-    fun `USB (bridge app) is the bridge, as always, and Android asked directly when there is no bridge`() {
+    fun `USB bridge is the bridge, as always, and Android asked directly when there is no bridge`() {
         assertEquals(listOf(Route.USB_BRIDGE), ConnectOrder.routes(usb, bridgeInstalled = true))
         assertEquals(listOf(Route.USB_DIRECT), ConnectOrder.routes(usb, bridgeInstalled = false))
         assertEquals(listOf(Route.USB_BRIDGE), ConnectOrder.routes(usbSetUp, bridgeInstalled = true))
     }
 
     @Test
-    fun `USB (direct) is always Android asked directly`() {
+    fun `USB direct is always Android asked directly`() {
         assertEquals(listOf(Route.USB_DIRECT), ConnectOrder.routes(direct, bridgeInstalled = true))
         assertEquals(listOf(Route.USB_DIRECT), ConnectOrder.routes(direct, bridgeInstalled = false))
     }
@@ -41,7 +41,7 @@ class ConnectOrderTest {
     }
 
     @Test
-    fun `only USB (bridge app) ever asks for the bridge`() {
+    fun `only USB bridge ever asks for the bridge`() {
         assertEquals(true, usb.bridgeNeeded)
         assertEquals(false, direct.bridgeNeeded)
         assertEquals(false, wifiNotSetUp.bridgeNeeded)

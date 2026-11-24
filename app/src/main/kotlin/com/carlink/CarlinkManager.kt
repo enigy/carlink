@@ -292,7 +292,7 @@ class CarlinkManager(
         /** Between SUBSCRIBE and the phone: the box waking its radios, or (M2, over Wi-Fi) a session it already runs. */
         private const val STARTING_PROJECTION_STATUS = "Starting projection..."
 
-        /** USB (direct): Android said no, or never answered (the GM head unit). The bridge's own wording starts the first. */
+        /** USB direct: Android said no, or never answered (the GM head unit). The bridge's own wording starts the first. */
         private const val USB_DIRECT_DENIED_STATUS = "USB permission denied — unplug and replug the adapter, or use Wi-Fi"
         private const val USB_DIRECT_NO_ANSWER_STATUS = "Android didn't let Carlink open the adapter — use Wi-Fi, or the USB bridge app"
 
@@ -805,7 +805,7 @@ class CarlinkManager(
             r
         }
 
-    /** Android's own USB prompt, for USB (direct). */
+    /** Android's own USB prompt, for USB direct. */
     private val directUsbPermission by lazy { DirectUsbPermission(context) }
 
     private val directUsbState = MutableStateFlow(DirectUsb.IDLE)
@@ -1616,9 +1616,9 @@ class CarlinkManager(
     /**
      * Find the adapter and open it through the USB bridge, or null if we should abandon the start.
      *
-     * With the bridge installed and USB (bridge app) chosen, the default, this is the way Carlink has always connected:
+     * With the bridge installed and USB bridge chosen, the default, this is the way Carlink has always connected:
      * no USB permission or dialog of its own. Otherwise [acquireByRoutes]: Wi-Fi, or Android asked for the adapter
-     * directly (USB (direct), back on 24 Nov), whose refusal brings up the bridge's setup panel when the bridge app is
+     * directly (USB direct, back on 24 Nov), whose refusal brings up the bridge's setup panel when the bridge app is
      * chosen; MainActivity starts again once the bridge is installed.
      *
      * The [released] re-checks in [acquireBridgeTransport] matter: finding the adapter can take
@@ -1629,15 +1629,15 @@ class CarlinkManager(
     private suspend fun acquireTransport(): RawBulkTransport? {
         val settings = wifiLink.current
         val bridge = CarlinkBridge.isInstalled(context)
-        // USB (bridge app), the default, with the bridge there: exactly the way Carlink has always connected.
+        // USB bridge, the default, with the bridge there: exactly the way Carlink has always connected.
         if (settings.link == AdapterLink.USB_BRIDGE && bridge) return acquireBridgeTransport()
         return acquireByRoutes(settings, bridge)
     }
 
     /**
      * The other ways ([ConnectOrder]): Wi-Fi first when it is chosen and set up, then the bridge only when installed; USB
-     * with no bridge installed (or USB (direct) chosen) asks Android for the adapter itself. The bridge is never asked for
-     * once Wi-Fi or USB (direct) is chosen. A handover to another app (a bridge's) leaves the adapter alone on every road.
+     * with no bridge installed (or USB direct chosen) asks Android for the adapter itself. The bridge is never asked for
+     * once Wi-Fi or USB direct is chosen. A handover to another app (a bridge's) leaves the adapter alone on every road.
      */
     private suspend fun acquireByRoutes(
         settings: WifiLinkSettings,
@@ -1668,7 +1668,7 @@ class CarlinkManager(
     }
 
     /**
-     * USB (direct): the adapter from the USB list, Android's own permission (asked once per attach, as the bridge asks;
+     * USB direct: the adapter from the USB list, Android's own permission (asked once per attach, as the bridge asks;
      * an answer that comes late still connects: [UsbPermissionWait.watch]), then the adapter opened in Carlink's process.
      * Where Android refuses, or never answers (the GM head unit), it says so and points to Wi-Fi ([directUsb]).
      */
