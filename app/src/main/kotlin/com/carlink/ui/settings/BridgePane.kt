@@ -35,9 +35,10 @@ import kotlinx.coroutines.launch
 import java.util.Date
 
 /**
- * Adapter and about › USB bridge (bridge 1.0.8, API 6): the bridge's version, and the owner's opt-in that lets apps
+ * Adapter › USB bridge (bridge 1.0.8, API 6): the bridge's version, and the owner's opt-in that lets apps
  * they approve use the adapter. Turning it on is for parked, behind the risk dialog; turning it off works while
  * driving and needs no dialog. From 2.24, the bridge this Carlink pins when it is newer ([BridgeUpdateRows]).
+ * In Adapter, not Bridge Configuration: that pane is listed only while this switch is on.
  */
 @Composable
 internal fun UsbBridgeGroup(

@@ -12,7 +12,7 @@ import com.carlink.ledger.ConnectLedgerStore
 import com.carlink.ledger.ConnectStats
 
 /**
- * Settings › Adapter and about › Connect time (the connect ledger, M2): how long the CarPlay picture took to appear after
+ * Settings › Adapter › Connect time (the connect ledger, M2): how long the CarPlay picture took to appear after
  * the display came on, over the last [ConnectStats.WINDOW] wakes that showed one with Carlink's screen in front from the
  * start ([ConnectStats.leftOutOfFigure]), read from the ledger the head unit keeps ([ConnectLedgerStore]). Read-only; it
  * follows the ledger as each connect is added.

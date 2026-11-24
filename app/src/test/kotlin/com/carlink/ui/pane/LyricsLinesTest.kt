@@ -121,7 +121,7 @@ class LyricsLinesTest {
 
     @Test
     fun with_look_up_lyrics_off_the_card_has_no_lyrics_button_and_no_lyrics() {
-        // Owner, 10-30: Settings › Adapter and about › Look up lyrics off keeps every song on the head unit.
+        // Owner, 10-30: Settings › About › Look up lyrics off keeps every song on the head unit.
         val info = NowPlayingInfo(title = "Kept Song", artist = "Band", album = "", appName = "Music", durationMs = 61_000L)
         val key = requireNotNull(LyricsKey.of(info))
         LrcLib.find(key, api = { path, _ -> if (path == "get-cached") """{"syncedLyrics": "[00:01.00] kept"}""" else null })

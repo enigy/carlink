@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Settings › Adapter and about › Lyrics (owner, 10-30): Look up lyrics, the switch that keeps every song
+ * Settings › About › Lyrics (owner, 10-30): Look up lyrics, the switch that keeps every song
  * name on the head unit when off ([MusicStore.lookUpFlow]; the privacy policy points to it); where the
  * music card's lyrics come from (LRCLIB); how many songs' lyrics the head unit keeps ([LyricsDiskCache])
  * and the space they take; and Clear, which deletes them all, so each is looked up again the next time

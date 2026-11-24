@@ -7,7 +7,7 @@ import com.carlink.ledger.ConnectRecord.Outcome
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Settings › Adapter and about › Connect time, in each state: being read, not enough connects yet, and the figure. */
+/** Settings › Adapter › Connect time, in each state: being read, not enough connects yet, and the figure. */
 class ConnectTimeTextTest {
     private fun ledgerOf(vararg pictures: Long) =
         pictures.fold(ConnectLedger()) { l, ms ->

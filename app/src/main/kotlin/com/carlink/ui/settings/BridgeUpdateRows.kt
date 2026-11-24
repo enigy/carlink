@@ -20,7 +20,7 @@ import com.carlink.usb.BridgeUpdateStep
 import com.carlink.usb.PinnedBridge
 
 /**
- * Adapter and about › USB bridge, below the installed version: the bridge this Carlink pins when it is newer. For a
+ * Adapter › USB bridge, below the installed version: the bridge this Carlink pins when it is newer. For a
  * bridge of API 7 or later, Update (parked only) behind a confirm, then each step and the outcome in the row; for an
  * older one, or where the head unit won't let the bridge install apps, the manual route. Nothing at all when the bridge
  * is current.

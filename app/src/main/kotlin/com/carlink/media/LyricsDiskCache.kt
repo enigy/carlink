@@ -73,7 +73,7 @@ class LyricsDiskCache(
         }
     }
 
-    /** What Settings › Adapter and about shows: how many songs are kept, and the bytes they take (what [maxBytes] is held against). */
+    /** What Settings › About shows: how many songs are kept, and the bytes they take (what [maxBytes] is held against). */
     data class Usage(
         val songs: Int,
         val bytes: Long,
