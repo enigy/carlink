@@ -1732,6 +1732,11 @@ class CarlinkManager(
 
     /** The adapter over the Wi-Fi link, found by [WifiBoxSearch] within [WIFI_SEARCH_MS]; null when it wasn't. */
     private suspend fun acquireWifiTransport(): RawBulkTransport? {
+        foundOnWifi?.let { found ->
+            foundOnWifi = null
+            if (!released) return takeWifi(found)
+            found.transport.stop()
+        }
         val key = withContext(Dispatchers.IO) { wifiLink.linkKey() }
         if (key == null) {
             logWarn("[WIFI] the link key can't be read on this head unit: Wi-Fi needs setting up again", tag = Logger.Tags.USB)
@@ -1757,11 +1762,7 @@ class CarlinkManager(
                     outcome.transport.stop()
                     return null
                 }
-                wifiMissState.value = null
-                wifiSearchingSince = 0L
-                if (outcome.at.remember) wifiLink.rememberAddress(outcome.at.host, outcome.at.port)
-                ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
-                outcome.transport
+                takeWifi(outcome)
             }
             is WifiBoxSearch.Outcome.NotFound -> {
                 wifiMissState.value = outcome.why
@@ -1778,21 +1779,68 @@ class CarlinkManager(
      * up. Not after Close app or a handover ([disconnect], [handOverImpl] cancel it), nor while the display is off.
      */
     private fun keepLookingOnWifi() {
-        val stopped = released || dormantForDisplayOff || !isInteractive()
-        if (!WifiAttach.keepLooking(wifiLink.current.wifiActive, state == State.DISCONNECTED, stopped)) return
+        if (!stillLookingOnWifi()) return
         cancelReconnect()
         wifiSearchJob?.cancel()
-        wifiSearchJob =
-            scope.launch {
-                delay(WifiAttach.SEARCH_GAP_MS)
-                startIfDisconnected("still looking for the adapter on Wi-Fi")
-            }
+        wifiSearchJob = scope.launch { lookQuietly() }
     }
+
+    private fun stillLookingOnWifi(): Boolean {
+        val stopped = released || dormantForDisplayOff || !isInteractive()
+        return WifiAttach.keepLooking(wifiLink.current.wifiActive, state == State.DISCONNECTED, stopped)
+    }
+
+    /**
+     * The searches between starts, made cheap and quiet (the reviewer's 24 Nov finding 7): Carlink stays DISCONNECTED, so
+     * no connect-ledger record, no CONNECTING and no foreground service comes and goes for a search that found nothing.
+     * Only when the adapter answers (its link handed to the start, [foundOnWifi]) or the bridge's 45 s comes due does a
+     * start run. Each round keeps its own mDNS browse: NSD tells a browse of a service once, so a browse kept open would
+     * never offer again an advert seen while the adapter wasn't ready; a new one per round (every ~10 s) does.
+     */
+    private suspend fun lookQuietly() {
+        while (true) {
+            delay(WifiAttach.SEARCH_GAP_MS)
+            if (!stillLookingOnWifi()) return
+            val now = SystemClock.elapsedRealtime()
+            if (CarlinkBridge.isInstalled(context) && WifiAttach.usbFallbackDue(wifiSearchingSince, now)) {
+                startIfDisconnected("no adapter on Wi-Fi for ${WifiAttach.USB_FALLBACK_MS / 1000} s: USB through the bridge")
+                return
+            }
+            val key = withContext(Dispatchers.IO) { wifiLink.linkKey() } ?: return
+            var linked: RawBulkTransport? = null
+            val outcome =
+                try {
+                    withContext(Dispatchers.IO) {
+                        wifiSearch.find(key, now + WIFI_SEARCH_MS) { SystemClock.elapsedRealtime() }.also {
+                            if (it is WifiBoxSearch.Outcome.Found) linked = it.transport
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    linked?.stop()
+                    throw e
+                }
+            if (outcome is WifiBoxSearch.Outcome.Found) {
+                foundOnWifi = outcome
+                startIfDisconnected("the adapter answered on Wi-Fi")
+                return
+            }
+            val why = (outcome as WifiBoxSearch.Outcome.NotFound).why
+            if (wifiMissState.value != why) {
+                wifiMissState.value = why
+                setStatusText(wifiMissStatus(why))
+            }
+        }
+    }
+
+    /** A link the quiet search made, for the start it triggers to take ([acquireWifiTransport]); null otherwise. */
+    @Volatile private var foundOnWifi: WifiBoxSearch.Outcome.Found? = null
 
     private fun stopLookingOnWifi() {
         wifiSearchJob?.cancel()
         wifiSearchJob = null
         wifiSearchingSince = 0L
+        foundOnWifi?.transport?.stop()
+        foundOnWifi = null
     }
 
     /**
@@ -1807,6 +1855,15 @@ class CarlinkManager(
         c.sendCommand(Ocbm.CMD_REQUEST_UI)
         c.requestKeyframe()
         setStatusText("Phone connected")
+    }
+
+    /** A Wi-Fi link found, this start's: the search is over, its address kept for next time. */
+    private fun takeWifi(found: WifiBoxSearch.Outcome.Found): RawBulkTransport {
+        wifiMissState.value = null
+        wifiSearchingSince = 0L
+        if (found.at.remember) wifiLink.rememberAddress(found.at.host, found.at.port)
+        ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
+        return found.transport
     }
 
     /** The connecting screen's line for a Wi-Fi search that found nothing, the bridge not there to try next. */
