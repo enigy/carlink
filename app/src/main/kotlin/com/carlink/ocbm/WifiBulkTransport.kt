@@ -68,6 +68,18 @@ class WifiBulkTransport private constructor(
             log: ProbeLog.Logger,
             socketFactory: SocketFactory = SocketFactory.getDefault(),
             timing: Timing = Timing(),
+        ): WifiBulkTransport = open(address, log, socketFactory, timing) { i, o -> OcbwLink.hostHandshake(i, o, key) }
+
+        /**
+         * The same link after another [handshake] that ends in OCBW's records: the set-up network's ([OcbsSetup]), whose
+         * keys come from P-256 rather than a link key. Throws as [connect] does.
+         */
+        fun open(
+            address: InetSocketAddress,
+            log: ProbeLog.Logger,
+            socketFactory: SocketFactory = SocketFactory.getDefault(),
+            timing: Timing = Timing(),
+            handshake: (java.io.InputStream, OutputStream) -> OcbwLink.Session,
         ): WifiBulkTransport {
             val s = socketFactory.createSocket()
             var linked = false
@@ -75,7 +87,7 @@ class WifiBulkTransport private constructor(
                 s.tcpNoDelay = true
                 s.connect(address, timing.connectMs)
                 s.soTimeout = timing.handshakeMs
-                val session = OcbwLink.hostHandshake(s.getInputStream(), s.getOutputStream(), key)
+                val session = handshake(s.getInputStream(), s.getOutputStream())
                 s.soTimeout = timing.deadMs
                 linked = true
                 return WifiBulkTransport(s, session, "${address.hostString}:${address.port}", log, timing)

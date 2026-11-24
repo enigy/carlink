@@ -58,6 +58,8 @@ import com.carlink.ledger.ConnectLedgerText
 import com.carlink.ledger.ConnectTimer
 import com.carlink.link.AdapterLink
 import com.carlink.link.ConnectOrder
+import com.carlink.link.SetupNetworkPort
+import com.carlink.link.SetupOverNetwork
 import com.carlink.link.WifiAttach
 import com.carlink.link.WifiBoxFinder
 import com.carlink.link.WifiBoxSearch
@@ -774,6 +776,29 @@ class CarlinkManager(
 
     /** M2: this session attached to a CarPlay session the adapter already ran ([attachToRunningSession]). */
     @Volatile private var attachedToRunning = false
+
+    /**
+     * M3: the first set-up over the adapter's own set-up network, for a head unit with no other session with it
+     * ([SetupOverNetwork]). Settings › Adapter connection runs it ([setUpOverSetupNetwork]).
+     */
+    val setupNetwork = SetupOverNetwork(SetupNetworkPort(context, wifiLog), wifiLink, wifiLog)
+
+    /**
+     * Run the set-up over the adapter's set-up network on this manager's scope (a pane left mid-way doesn't cut it), and on
+     * success look for the adapter on the phone's hotspot, where it goes next.
+     */
+    suspend fun setUpOverSetupNetwork(
+        ssid: String,
+        password: String,
+    ): SetupOverNetwork.Result =
+        detached("the set-up over the adapter's Wi-Fi") {
+            val r = setupNetwork.run(ssid, password)
+            if (r == SetupOverNetwork.Result.SENT) {
+                wifiLink.setLink(AdapterLink.WIFI)
+                scope.launch { startIfDisconnected("set up over the adapter's set-up Wi-Fi") }
+            }
+            r
+        }
 
     /** Android's own USB prompt, for USB (direct). */
     private val directUsbPermission by lazy { DirectUsbPermission(context) }

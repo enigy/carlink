@@ -119,15 +119,19 @@ object OcbwLink {
         val boxToHost: ByteArray,
     )
 
-    /** HKDF-SHA256 (RFC 5869) for 32 bytes, one HMAC block each: PRK = HMAC(bn | hn, K), key = HMAC(PRK, info | 0x01). */
+    /** HKDF-SHA256 (RFC 5869) for 32 bytes, one HMAC block: PRK = HMAC(salt, ikm), key = HMAC(PRK, info | 0x01). */
+    fun hkdf32(
+        salt: ByteArray,
+        ikm: ByteArray,
+        info: ByteArray,
+    ): ByteArray = hmac(hmac(salt, ikm), info, HKDF_BLOCK_1)
+
+    /** OCBW v1's two record keys: HKDF-SHA256 of K, salted with bn | hn. */
     fun sessionKeys(
         key: ByteArray,
         bn: ByteArray,
         hn: ByteArray,
-    ): Keys {
-        val prk = hmac(bn + hn, key)
-        return Keys(hostToBox = hmac(prk, H2B, HKDF_BLOCK_1), boxToHost = hmac(prk, B2H, HKDF_BLOCK_1))
-    }
+    ): Keys = Keys(hostToBox = hkdf32(bn + hn, key, H2B), boxToHost = hkdf32(bn + hn, key, B2H))
 
     /**
      * The peer isn't an OCBW v1 peer, can't prove the key, or sent a record that fails: the link ends. [keyRefused]: the
@@ -136,7 +140,8 @@ object OcbwLink {
     open class LinkException(
         message: String,
         val keyRefused: Boolean = false,
-    ) : IOException(message)
+        cause: Throwable? = null,
+    ) : IOException(message, cause)
 
     /** A finished handshake: [tx] seals what this side sends, [rx] opens what it receives. */
     class Session(

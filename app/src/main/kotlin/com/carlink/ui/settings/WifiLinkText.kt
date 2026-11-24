@@ -2,9 +2,11 @@ package com.carlink.ui.settings
 
 import com.carlink.link.AdapterLink
 import com.carlink.link.ConnectOrder
+import com.carlink.link.SetupOverNetwork
 import com.carlink.link.WifiBoxSearch
 import com.carlink.link.WifiLinkSettings
 import com.carlink.link.WifiLinkSetup
+import com.carlink.ocbm.OcbsSetup
 import com.carlink.ocbm.WifiLinkInfo
 
 /** The words of Settings › Adapter and about › Adapter connection ([WifiLinkGroup]). */
@@ -87,6 +89,39 @@ internal object WifiLinkText {
             WifiLinkSetup.Sent.REFUSED -> "The adapter refused these settings."
             WifiLinkSetup.Sent.NO_ANSWER -> "The adapter didn't answer. Try again."
             WifiLinkSetup.Sent.BUSY -> "Already sending."
+        }
+
+    const val SETUP_NETWORK_TITLE = "Set up over the adapter's Wi-Fi"
+
+    /**
+     * The set-up over the adapter's own set-up network (M3): for a head unit with no other way to the adapter. [phase]
+     * and [result]: where the last run stands.
+     */
+    fun setupNetworkLine(
+        phase: SetupOverNetwork.Phase,
+        result: SetupOverNetwork.Result?,
+        ssid: String,
+    ): String =
+        when {
+            phase == SetupOverNetwork.Phase.JOINING -> "Joining the adapter's set-up Wi-Fi. Pick ${OcbsSetup.SSID_PREFIX}... if Android asks."
+            phase == SetupOverNetwork.Phase.EXCHANGING -> "Sending the hotspot to the adapter..."
+            result == null -> "No other way to the adapter? Power it up with no Wi-Fi link: for 10 minutes it offers its own Wi-Fi, ${OcbsSetup.SSID_PREFIX}..."
+            else -> setupNetworkResult(result, ssid)
+        }
+
+    fun setupNetworkResult(
+        r: SetupOverNetwork.Result,
+        ssid: String,
+    ): String =
+        when (r) {
+            SetupOverNetwork.Result.SENT -> "Sent. The adapter joins \"$ssid\", and Carlink finds it there."
+            SetupOverNetwork.Result.NOT_JOINED ->
+                "The set-up Wi-Fi wasn't joined. Join ${OcbsSetup.SSID_PREFIX}... in the car's Wi-Fi settings (password ${OcbsSetup.PASSPHRASE}), then tap Set up again."
+            SetupOverNetwork.Result.NO_ADAPTER -> "The adapter didn't answer on its set-up Wi-Fi. It offers it for 10 minutes after power-up, only with no Wi-Fi link."
+            SetupOverNetwork.Result.NOT_SUPPORTED -> sentLine(WifiLinkSetup.Sent.NOT_SUPPORTED, ssid)
+            SetupOverNetwork.Result.REFUSED -> sentLine(WifiLinkSetup.Sent.REFUSED, ssid)
+            SetupOverNetwork.Result.NO_ANSWER -> sentLine(WifiLinkSetup.Sent.NO_ANSWER, ssid)
+            SetupOverNetwork.Result.BUSY -> sentLine(WifiLinkSetup.Sent.BUSY, ssid)
         }
 
     /** What the adapter says of its Wi-Fi link (MGMT_INFO). */

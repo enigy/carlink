@@ -27,7 +27,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.carlink.CarlinkManager
 import com.carlink.link.AdapterLink
+import com.carlink.link.SetupOverNetwork
 import com.carlink.link.WifiLinkSettings
+import com.carlink.link.WifiLinkSetup
 import com.carlink.logging.logInfo
 import com.carlink.ocbm.WifiLinkProvisioning
 import com.carlink.ui.components.CarlinkDialog
@@ -125,6 +127,31 @@ private fun WifiSetUp(
         })
     }
     StateLines(WifiLinkText.stateLines(settings, info.takeIf { live.box.adapterConnected }, miss, linkedOver, live.bridgeInstalled))
+    // M3: with no session to send over, the adapter's own set-up network.
+    if (blocked == WifiLinkSetup.Sent.NO_SESSION) SetupNetworkRow(carlinkManager, name, password, enabled = live.parked && problem == null && !busy)
+}
+
+/** The set-up over the adapter's set-up network: join it, send the hotspot, let it go (parked only). */
+@Composable
+private fun SetupNetworkRow(
+    carlinkManager: CarlinkManager,
+    ssid: String,
+    password: String,
+    enabled: Boolean,
+) {
+    val scope = rememberCoroutineScope()
+    val phase by carlinkManager.setupNetwork.phase.collectAsState()
+    val result by carlinkManager.setupNetwork.result.collectAsState()
+    val running = phase == SetupOverNetwork.Phase.JOINING || phase == SetupOverNetwork.Phase.EXCHANGING
+    GroupDivider()
+    SettingRow(title = WifiLinkText.SETUP_NETWORK_TITLE, subtitle = WifiLinkText.setupNetworkLine(phase, result, ssid), icon = Icons.Default.WifiTethering) {
+        RowAction("Set up", enabled = enabled && !running, onClick = {
+            scope.launch {
+                val r = carlinkManager.setUpOverSetupNetwork(ssid, password)
+                logInfo("[UI_ACTION] Set up over the adapter's Wi-Fi: $r", tag = "UI")
+            }
+        })
+    }
 }
 
 @Composable
