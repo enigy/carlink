@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Navigation
@@ -26,7 +27,10 @@ import com.carlink.usb.CarlinkBridge
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** The merged settings screen's categories, in list order. */
+/**
+ * The merged settings screen's categories, in list order (owner, 24 Nov): Adapter and Bridge Configuration side by side,
+ * then About, and Troubleshoot last.
+ */
 enum class SettingsCategory(
     val title: String,
     val icon: ImageVector,
@@ -35,12 +39,28 @@ enum class SettingsCategory(
     DISPLAY("Display", Icons.Default.DesktopWindows),
     CLUSTER("Cluster & HUD", Icons.Default.Navigation),
     CALLS("Calls", Icons.Default.Mic),
-
-    /** Listed only while other apps' access is on (bridge API 6; Adapter and about › USB bridge). */
-    BRIDGE("Bridge Configuration", Icons.Default.Usb),
     VEHICLE("Vehicle", Icons.Default.DirectionsCar),
+    ADAPTER("Adapter", Icons.Default.Memory),
+
+    /**
+     * Listed only while other apps' access is on (bridge API 6; Adapter › USB bridge). Under Adapter, not above it: the
+     * switch that lists it is in Adapter, so turning it on adds a row below the one open, and the rows above stay put.
+     */
+    BRIDGE("Bridge Configuration", Icons.Default.Usb),
+    ABOUT("About", Icons.Default.Info),
     TROUBLESHOOT("Troubleshoot", Icons.Default.Build),
-    ADAPTER("Adapter and about", Icons.Default.Memory),
+    ;
+
+    companion object {
+        /** The list as Settings shows it: Bridge Configuration only while other apps' access is on ([bridgeOn]). */
+        fun listed(bridgeOn: Boolean): List<SettingsCategory> = entries.filter { it != BRIDGE || bridgeOn }
+
+        /** The pane to keep open: [selected], or Adapter once Bridge Configuration is no longer listed. */
+        fun fallback(
+            selected: SettingsCategory,
+            bridgeOn: Boolean,
+        ): SettingsCategory = if (selected == BRIDGE && !bridgeOn) ADAPTER else selected
+    }
 }
 
 /**

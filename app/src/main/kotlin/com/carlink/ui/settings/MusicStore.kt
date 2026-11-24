@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * time with it. Off: the words are hidden, though still looked up (owner, 10-28). How many lines it
  * shows is dragged on the card itself ([com.carlink.ui.pane.LyricsLines]), kept here too.
  *
- * Look up lyrics: Settings › Adapter and about › Lyrics ([LyricsGroup]). On (the default): lyrics are
+ * Look up lyrics: Settings › About › Lyrics ([LyricsGroup]). On (the default): lyrics are
  * looked up as above. Off: no song is ever sent to LRCLIB, none is read from the head unit's copies,
  * and the music card has no lyrics button (owner, 10-30, for the privacy policy).
  */

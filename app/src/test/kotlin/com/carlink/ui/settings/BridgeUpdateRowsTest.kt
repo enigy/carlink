@@ -21,7 +21,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-/** Settings › Adapter and about › USB bridge: the update row, its parked gating, its confirm, and the manual route. */
+/** Settings › Adapter › USB bridge: the update row, its parked gating, its confirm, and the manual route. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)

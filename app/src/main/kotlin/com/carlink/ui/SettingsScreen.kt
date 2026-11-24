@@ -62,6 +62,8 @@ import com.carlink.ui.components.LocalSettingsArrival
 import com.carlink.ui.components.LocalSettingsVisible
 import com.carlink.ui.components.OnSettingsHidden
 import com.carlink.ui.components.settingsSlideIn
+import com.carlink.ui.settings.AboutPane
+import com.carlink.ui.settings.AboutText
 import com.carlink.ui.settings.AdapterPane
 import com.carlink.ui.settings.BackgroundLogoConfig
 import com.carlink.ui.settings.BackgroundLogoStore
@@ -89,6 +91,7 @@ import com.carlink.ui.settings.TroubleshootPane
 import com.carlink.ui.settings.VehiclePane
 import com.carlink.ui.settings.VehicleStore
 import com.carlink.ui.settings.VehicleText
+import com.carlink.ui.settings.rememberAppVersion
 import com.carlink.ui.settings.rememberSettingsLiveState
 import com.carlink.ui.theme.LocalCarlinkColors
 import com.carlink.usb.BridgeAccessHub
@@ -208,8 +211,8 @@ private fun SettingsBody(
     LaunchedEffect(visible) { if (visible) BridgeAccessHub.refresh(context) }
     val bridgeAccess by BridgeAccessHub.state.collectAsState()
     val bridgeOn = bridgeAccess.on
-    val categories = SettingsCategory.entries.filter { it != SettingsCategory.BRIDGE || bridgeOn }
-    LaunchedEffect(bridgeOn) { if (!bridgeOn && selected == SettingsCategory.BRIDGE) selected = SettingsCategory.ADAPTER }
+    val categories = SettingsCategory.listed(bridgeOn)
+    LaunchedEffect(bridgeOn) { selected = SettingsCategory.fallback(selected, bridgeOn) }
 
     LaunchedEffect(selected) { logInfo("[UI_STATE] Settings category: $selected", tag = "UI") }
     val pick: (SettingsCategory) -> Unit = {
@@ -267,6 +270,7 @@ private fun CategoryPane(
         SettingsCategory.VEHICLE -> VehiclePane()
         SettingsCategory.TROUBLESHOOT -> TroubleshootPane(panes.carlinkManager, panes.live, connected = panes.connected)
         SettingsCategory.ADAPTER -> AdapterPane(panes.carlinkManager, panes.live)
+        SettingsCategory.ABOUT -> AboutPane()
         SettingsCategory.BRIDGE -> BridgePane(panes.carlinkManager, panes.live)
     }
 }
@@ -289,6 +293,7 @@ private fun categorySummaries(
     val vehicle = remember { VehicleStore.get(context) }
     val vehicleGps by vehicle.carGps.collectAsState()
     val vehicleShares by vehicle.shares.collectAsState()
+    val version = rememberAppVersion()
     return mapOf(
         SettingsCategory.PHONES to SettingsModel.phonesSummary(live.connectedPhone, live.devices.size),
         SettingsCategory.DISPLAY to SettingsModel.displaySummary(savedMode, logo, layout.layout),
@@ -297,6 +302,7 @@ private fun categorySummaries(
         SettingsCategory.VEHICLE to VehicleText.summary(vehicleGps, vehicleShares),
         SettingsCategory.TROUBLESHOOT to SettingsModel.troubleshootSummary(live.driveLog, live.driveLogTrouble != null),
         SettingsCategory.ADAPTER to SettingsModel.adapterSummary(panes.carlinkManager.adapterName, live.box),
+        SettingsCategory.ABOUT to AboutText.summary(version),
         SettingsCategory.BRIDGE to BridgeAccessText.summary(access),
     )
 }

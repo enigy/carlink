@@ -50,7 +50,7 @@ fun BridgeSetupPanel(onOpenFiles: () -> Boolean) {
             title = "USB bridge not installed",
             body =
                 "Carlink needs its USB bridge to reach the adapter on a head unit that doesn't let it open USB itself, " +
-                    "to convert a stock adapter, and to show turn icons on the cluster. Or use Wi-Fi: Settings › Adapter and about. " +
+                    "to convert a stock adapter, and to show turn icons on the cluster. Or use Wi-Fi: Settings › Adapter. " +
                     "To install the bridge while parked:\n" +
                     "1. Copy the bridge APK to a USB drive ($BRIDGE_APK_LOCATION).\n" +
                     "2. Plug the drive into a free USB port.\n" +

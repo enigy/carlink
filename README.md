@@ -20,7 +20,7 @@ It runs on GM's AAOS head unit (GM Info 3.7) with a Carlinkit CPC200-CCPA adapte
 
 ![How Carlink works: iPhone to every screen](docs/readme/how-it-works.svg)
 
-The iPhone talks to the adapter wirelessly, and the adapter plugs in over USB. On the GM head unit Android won't let the app open USB itself, so the sideloaded bridge relays the raw stream to it over a socket. Carlink can also reach the adapter over Wi-Fi, on the iPhone's Personal Hotspot, with no bridge at all (**Settings › Adapter and about › Adapter connection**). Carlink renders CarPlay, runs the media card and feeds GM's Templates Host, which draws the cluster and HUD.
+The iPhone talks to the adapter wirelessly, and the adapter plugs in over USB. On the GM head unit Android won't let the app open USB itself, so the sideloaded bridge relays the raw stream to it over a socket. Carlink can also reach the adapter over Wi-Fi, on the iPhone's Personal Hotspot, with no bridge at all (**Settings › Adapter › Adapter connection**). Carlink renders CarPlay, runs the media card and feeds GM's Templates Host, which draws the cluster and HUD.
 
 ## Your Carplay, upgraded
 
@@ -122,9 +122,17 @@ The call microphone, the call audio buffer, and echo and voice tests.
 
 > ![Settings › Calls](docs/readme/settings-calls.png)
 
+### Adapter
+
+The adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. **Connect time** says how long CarPlay took from the display coming on to the picture, over your last 20 wakes. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. **Adapter connection** picks how Carlink reaches the adapter: **Wi-Fi** (the adapter joins your iPhone's hotspot: send its name and password once, over USB or, with no USB at all, over the adapter's own set-up Wi-Fi ([Set up Wi-Fi with no USB](#set-up-wi-fi-with-no-usb)), which only a never-used adapter offers, for 10 minutes after power-up; to offer it again, power the adapter up with a USB stick in it that holds an empty file named `OCBM_WIFI_RESET`), **USB (direct)** (Carlink opens the adapter itself, where Android lets it) or **USB (bridge app)**, the default. With Wi-Fi the bridge is optional; without it the cluster and HUD show no turn icons. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
+
 ### Bridge Configuration
 
-Listed only while **Let other apps use the adapter** is on (Adapter and about › USB bridge): who has the adapter, with **Take back**; the apps you approved, with **Hand over** and **Remove**; the apps asking for access, with **Approve** and **Dismiss**; and turning other apps' access off. See [Using the USB bridge from another app](#using-the-usb-bridge-from-another-app).
+Listed right under Adapter, only while **Let other apps use the adapter** is on (Adapter › USB bridge): who has the adapter, with **Take back**; the apps you approved, with **Hand over** and **Remove**; the apps asking for access, with **Approve** and **Dismiss**; and turning other apps' access off. See [Using the USB bridge from another app](#using-the-usb-bridge-from-another-app).
+
+### About
+
+The app version and the privacy policy's address (with Open, for a head unit that has a web browser). Beside them, lyrics: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them.
 
 ### Troubleshoot
 
@@ -143,10 +151,6 @@ Below them are the logs:
 - **Copy logs to USB** (parked only)
 - **Save logs:** saved logs hide phone names and Bluetooth addresses.
 
-### Adapter and about
-
-The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. **Connect time** says how long CarPlay took from the display coming on to the picture, over your last 20 wakes. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them. **Adapter connection** picks how Carlink reaches the adapter: **Wi-Fi** (the adapter joins your iPhone's hotspot: send its name and password once, over USB or, with no USB at all, over the adapter's own set-up Wi-Fi ([Set up Wi-Fi with no USB](#set-up-wi-fi-with-no-usb)), which only a never-used adapter offers, for 10 minutes after power-up; to offer it again, power the adapter up with a USB stick in it that holds an empty file named `OCBM_WIFI_RESET`), **USB (direct)** (Carlink opens the adapter itself, where Android lets it) or **USB (bridge app)**, the default. With Wi-Fi the bridge is optional; without it the cluster and HUD show no turn icons. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
-
 ## Install in four steps
 
 First, the adapter needs lvalen91's OCBM userspace, installed per his documentation (`ocbm/docs/ops/`). Then:
@@ -156,13 +160,13 @@ First, the adapter needs lvalen91's OCBM userspace, installed per his documentat
 3. While parked, open Carlink. It shows **USB bridge not installed** with an **Open Files** button that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK. If asked, allow Files to install apps.
 4. When the install finishes, tap the Carlink notification (or press Home and open Carlink).
 
-Can't sideload the bridge? Choose **Wi-Fi** under **Settings › Adapter and about › Adapter connection** instead: the adapter needs firmware with the Wi-Fi link, and the cluster and HUD then show no turn icons. With no USB at all, set it up over the adapter's own Wi-Fi ([Set up Wi-Fi with no USB](#set-up-wi-fi-with-no-usb)).
+Can't sideload the bridge? Choose **Wi-Fi** under **Settings › Adapter › Adapter connection** instead: the adapter needs firmware with the Wi-Fi link, and the cluster and HUD then show no turn icons. With no USB at all, set it up over the adapter's own Wi-Fi ([Set up Wi-Fi with no USB](#set-up-wi-fi-with-no-usb)).
 
 ### Set up Wi-Fi with no USB
 
 A never-used adapter offers its own set-up Wi-Fi, `CarLink-Setup-xxxx`, for 10 minutes after power-up. While parked, with your iPhone's Personal Hotspot on:
 
-1. In **Settings › Adapter and about › Adapter connection**, choose **Wi-Fi**, type the hotspot's name and password, and tap **Set up** on **Set up over the adapter's Wi-Fi**. If Android asks, pick `CarLink-Setup-xxxx`.
+1. In **Settings › Adapter › Adapter connection**, choose **Wi-Fi**, type the hotspot's name and password, and tap **Set up** on **Set up over the adapter's Wi-Fi**. If Android asks, pick `CarLink-Setup-xxxx`.
 2. Carlink shows a 4-digit code, and the adapter's Bluetooth name changes to **CarLink code** and the same 4 digits. Find it in your iPhone's Bluetooth list, or the car's (a phone's list can take a moment to show the new name). If they match, tap **They match**, and Carlink sends the hotspot's name and password to the adapter. If they don't, tap **They don't match**: nothing is sent. With no answer in 150 s, nothing is sent either.
 3. The adapter joins the hotspot, and Carlink finds it there once the head unit is on the hotspot too.
 
@@ -172,13 +176,13 @@ An adapter that has been used doesn't offer the set-up Wi-Fi; to offer it again,
 
 ### About the bridge
 
-The bridge uses the same package name as Carlink-legacy's (`android.car.usb.handler`, the name GM's head unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink-legacy's bridge. From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store. 1.0.6 adds a second way to open a device, for the USB stick a stock adapter shares while Carlink converts it; Carlink's connection to the adapter is unchanged, so 1.0.5 still works for everything else. 1.0.7 gives each open a handle of its own that says why it ended, and 1.0.8 adds the owner's opt-in for other apps (off by default; [Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)). Carlink 2.20 still works with 1.0.6, without Bridge Configuration. 1.0.9 updates itself: from Carlink 2.24, when a newer bridge is pinned, Settings › Adapter and about › USB bridge offers Update while parked, so later bridges need no USB drive.
+The bridge uses the same package name as Carlink-legacy's (`android.car.usb.handler`, the name GM's head unit hands USB devices to) and answers only Carlink, so installing it replaces Carlink-legacy's bridge. From 1.0.4 it answers only a Carlink signed by this project (the Play app-signing or upload certificate, pinned in `bridge/build.gradle.kts`), or one installed by the Play Store. 1.0.6 adds a second way to open a device, for the USB stick a stock adapter shares while Carlink converts it; Carlink's connection to the adapter is unchanged, so 1.0.5 still works for everything else. 1.0.7 gives each open a handle of its own that says why it ended, and 1.0.8 adds the owner's opt-in for other apps (off by default; [Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)). Carlink 2.20 still works with 1.0.6, without Bridge Configuration. 1.0.9 updates itself: from Carlink 2.24, when a newer bridge is pinned, Settings › Adapter › USB bridge offers Update while parked, so later bridges need no USB drive.
 
 ### Using the USB bridge from another app
 
 From bridge 1.0.8 you may let another app use the adapter, for a tool of your own or a bench probe. It's off by default, and while it's off the bridge answers only Carlink, as before.
 
-1. While parked, open Settings › Adapter and about and turn on **Let other apps use the adapter**. Read the warning: an app you approve can control the adapter while it has it, including its root console, its Apple authentication chip, installing software on it, and touch input to your iPhone.
+1. While parked, open Settings › Adapter and turn on **Let other apps use the adapter**. Read the warning: an app you approve can control the adapter while it has it, including its root console, its Apple authentication chip, installing software on it, and touch input to your iPhone.
 2. Open the other app and let it connect to the bridge. The bridge refuses it, and Carlink lists it under Settings › **Bridge Configuration** › Asking for access, with its package, signing certificate and installer.
 3. **Approve** it while parked. An approval is for that package signed by that key. If the app is later signed by another key, it has to ask again, and Carlink marks the request in red.
 4. **Hand over** the adapter while parked. CarPlay stops, and the app gets the adapter until you **Take back** (in Settings, or on Carlink's connecting screen; this works while driving), until Carlink opens the adapter itself, or until the app has had no session for a minute. Then Carlink connects again by itself.
@@ -208,7 +212,7 @@ The adapter runs lvalen91's OCBM userspace, installed and recovered per his docu
 | Module | Role |
 | --- | --- |
 | `:app` | Display app (`com.enigy.carlink3`). Decodes HEVC CarPlay over OCBM, renders, handles touch/audio/mic, drives the AAOS media card and the cluster/HUD turn-by-turn via the Templates Host. Play-shippable. |
-| `:bridge` | Sideloaded USB bridge, package `android.car.usb.handler`. Holds the adapter's USB permission silently on every attach, relays the raw OCBM bulk stream to the app over a socket, and hosts the cluster icon `ContentProvider`. From 1.0.9 it updates itself when you tap Update in Settings › Adapter and about, parked: the one thing it reaches the internet for is fetching the bridge APK Carlink pins from Carlink's GitHub release, which it checks against the pinned size and SHA-256 before installing. Carlink itself never downloads or installs an APK. |
+| `:bridge` | Sideloaded USB bridge, package `android.car.usb.handler`. Holds the adapter's USB permission silently on every attach, relays the raw OCBM bulk stream to the app over a socket, and hosts the cluster icon `ContentProvider`. From 1.0.9 it updates itself when you tap Update in Settings › Adapter, parked: the one thing it reaches the internet for is fetching the bridge APK Carlink pins from Carlink's GitHub release, which it checks against the pinned size and SHA-256 before installing. Carlink itself never downloads or installs an APK. |
 | `:bridge-api` | AIDL contract between the two. |
 
 Removed from OCBM: `:projection` (Raspberry Pi target), `:car-system-stubs` (system APIs a third-party app cannot hold) and `:usbhandler` (OCBM's untested proof of the permission grant, superseded by `:bridge`).
