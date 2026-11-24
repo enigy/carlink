@@ -96,6 +96,24 @@ class WifiLinkStoreTest {
         assertEquals(AdapterLink.WIFI, AdapterLink.fromCode("wifi"))
     }
 
+    @Test
+    fun `a KeyStore failing for now keeps the key, and only a definite failure marks it unreadable`() {
+        val sealer = FakeSealer()
+        val s = WifiLinkStore(context, sealer, PREFS)
+        val key = OcbwLink.random32()
+        s.setUp(key, "MyCar")
+        sealer.unavailable = true
+        assertNull(s.linkKey())
+        assertNull("no new key replaces one that can't be read just now", s.keyForSending())
+        assertFalse(s.current.keyUnreadable)
+        assertFalse("a seal that fails keeps nothing", s.setUp(OcbwLink.random32(), "OtherCar"))
+        assertEquals("MyCar", s.current.ssid)
+        sealer.unavailable = false
+        assertArrayEquals("readable again on the next try", key, s.linkKey())
+        assertNull(WifiLinkStore(context, FakeSealer(broken = true), PREFS).linkKey())
+        assertTrue(WifiLinkStore(context, FakeSealer(), PREFS).current.keyUnreadable)
+    }
+
     private companion object {
         const val PREFS = "wifi_link_store_test"
     }

@@ -52,6 +52,7 @@ class SetupOverNetwork(
         REFUSED,
         NO_ANSWER,
         BUSY,
+        KEY_STORE,
     }
 
     private val phaseState = MutableStateFlow(Phase.IDLE)
@@ -108,6 +109,7 @@ class SetupOverNetwork(
                     WifiLinkSetup.Sent.NO_ANSWER -> Result.NO_ANSWER
                     WifiLinkSetup.Sent.NO_SESSION -> Result.NO_ADAPTER
                     WifiLinkSetup.Sent.BUSY -> Result.BUSY
+                    WifiLinkSetup.Sent.KEY_STORE -> Result.KEY_STORE
                 }
             } finally {
                 withContext(Dispatchers.IO) { c.stop(sendStop = false) }

@@ -46,6 +46,9 @@ class WifiLinkSetup(
         REFUSED,
         NO_ANSWER,
         BUSY,
+
+        /** This head unit's KeyStore failed reading or keeping the link key: nothing changed here. */
+        KEY_STORE,
     }
 
     enum class Removed {
@@ -89,23 +92,32 @@ class WifiLinkSetup(
         if (!sendingState.compareAndSet(false, true)) return Sent.BUSY
         try {
             val overWifi = s.overWifi
-            val (key, status) =
-                withContext(Dispatchers.IO) {
-                    val key = store.keyForSending()
-                    key to s.wifiLink(WifiLinkProvisioning.body(key, ssid, password))
-                }
+            val key = withContext(Dispatchers.IO) { store.keyForSending() }
+            if (key == null) {
+                log("[WIFI] the link key can't be read now (the KeyStore failed): nothing sent")
+                return Sent.KEY_STORE
+            }
+            val status = withContext(Dispatchers.IO) { s.wifiLink(WifiLinkProvisioning.body(key, ssid, password)) }
             log("[WIFI] the adapter's answer to the hotspot and link key: ${status ?: "none"}${if (overWifi) " (over Wi-Fi)" else ""}")
             return when (status) {
                 null -> Sent.NO_ANSWER
-                0 -> {
-                    withContext(Dispatchers.IO) { store.setUp(key, ssid) }
-                    if (overWifi) Sent.SENT_RECONNECTING else Sent.SENT
-                }
+                0 -> keep(key, ssid, overWifi)
                 else -> Sent.REFUSED
             }
         } finally {
             sendingState.value = false
         }
+    }
+
+    /** The adapter took them: keep the key (sealed) and the hotspot's name, or say the KeyStore couldn't. */
+    private suspend fun keep(
+        key: ByteArray,
+        ssid: String,
+        overWifi: Boolean,
+    ): Sent {
+        if (withContext(Dispatchers.IO) { store.setUp(key, ssid) }) return if (overWifi) Sent.SENT_RECONNECTING else Sent.SENT
+        log("[WIFI] the adapter took the link but the key couldn't be kept here: ${store.lastSealFailure}")
+        return Sent.KEY_STORE
     }
 
     /** Remove the link: on the adapter when a session is up (over either road), and here in any case. */

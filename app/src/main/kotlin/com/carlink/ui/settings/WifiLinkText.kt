@@ -89,6 +89,7 @@ internal object WifiLinkText {
             WifiLinkSetup.Sent.REFUSED -> "The adapter refused these settings."
             WifiLinkSetup.Sent.NO_ANSWER -> "The adapter didn't answer. Try again."
             WifiLinkSetup.Sent.BUSY -> "Already sending."
+            WifiLinkSetup.Sent.KEY_STORE -> "This head unit couldn't read or keep its Wi-Fi key just now. Try again."
         }
 
     const val SETUP_NETWORK_TITLE = "Set up over the adapter's Wi-Fi"
@@ -122,6 +123,7 @@ internal object WifiLinkText {
             SetupOverNetwork.Result.REFUSED -> sentLine(WifiLinkSetup.Sent.REFUSED, ssid)
             SetupOverNetwork.Result.NO_ANSWER -> sentLine(WifiLinkSetup.Sent.NO_ANSWER, ssid)
             SetupOverNetwork.Result.BUSY -> sentLine(WifiLinkSetup.Sent.BUSY, ssid)
+            SetupOverNetwork.Result.KEY_STORE -> sentLine(WifiLinkSetup.Sent.KEY_STORE, ssid)
         }
 
     /** What the adapter says of its Wi-Fi link (MGMT_INFO). */

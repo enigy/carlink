@@ -70,9 +70,22 @@ data class WifiLinkSettings(
  * ([KeystoreLinkKeySealer]); tests pass a fake.
  */
 interface LinkKeySealer {
+    /** The sealed text for [plain]. May throw (the Keystore unavailable); the caller says so. */
     fun seal(plain: ByteArray): String
 
-    fun open(sealed: String): ByteArray?
+    fun open(sealed: String): Opened
+
+    /** How an open ended: the key; [Gone] for good (no Keystore key, a bad tag, text not ours); [Unavailable] for now. */
+    sealed interface Opened {
+        class Key(
+            val bytes: ByteArray,
+        ) : Opened
+
+        data object Gone : Opened
+
+        /** A KeyStore or provider failure that may pass: try again later, the key is not lost. */
+        data object Unavailable : Opened
+    }
 }
 
 /**
@@ -113,33 +126,65 @@ class WifiLinkStore internal constructor(
      * The link key, opened; null when none is stored or it can't be opened (then [WifiLinkSettings.keyUnreadable], and
      * Settings asks for the hotspot again). Blocking: a Keystore call.
      */
-    fun linkKey(): ByteArray? {
-        val sealed = prefs.getString(KEY_SEALED, null) ?: return null
-        val key = runCatching { sealer.open(sealed) }.getOrNull()?.takeIf { it.size == OcbwLink.KEY_LEN }
-        if (key == null) markUnreadable()
-        return key
+    fun linkKey(): ByteArray? = (openKey() as? LinkKeySealer.Opened.Key)?.bytes
+
+    /**
+     * The link key, or why not. Only a definite failure ([LinkKeySealer.Opened.Gone]) marks it unreadable for good; a
+     * KeyStore that fails for now leaves it as it is for the next try (the reviewer's 24 Nov finding 3). Blocking.
+     */
+    fun openKey(): LinkKeySealer.Opened {
+        val sealed = prefs.getString(KEY_SEALED, null) ?: return LinkKeySealer.Opened.Gone
+        val opened = runCatching { sealer.open(sealed) }.getOrElse { LinkKeySealer.Opened.Unavailable }
+        if (opened is LinkKeySealer.Opened.Key && opened.bytes.size == OcbwLink.KEY_LEN) return opened
+        if (opened is LinkKeySealer.Opened.Unavailable) return opened
+        markUnreadable()
+        return LinkKeySealer.Opened.Gone
     }
 
-    /** The key to send: the one already held, so a link that changes hotspot keeps its key, else a new random one. */
-    fun keyForSending(): ByteArray = linkKey() ?: OcbwLink.random32()
+    /**
+     * The key to send: the one already held, so a link that changes hotspot keeps its key, else (none, or lost for good)
+     * a new random one; null while the KeyStore can't be read, so a held key isn't replaced by a passing failure.
+     */
+    fun keyForSending(): ByteArray? =
+        when (val o = openKey()) {
+            is LinkKeySealer.Opened.Key -> o.bytes
+            LinkKeySealer.Opened.Gone -> OcbwLink.random32()
+            LinkKeySealer.Opened.Unavailable -> null
+        }
 
-    /** The adapter took [key] and the hotspot [ssid]: keep both (the key sealed). The last address is forgotten. */
+    /**
+     * The adapter took [key] and the hotspot [ssid]: keep both (the key sealed). The last address is forgotten. False,
+     * with nothing kept, when the Keystore couldn't seal it.
+     */
     @Synchronized
     fun setUp(
         key: ByteArray,
         ssid: String,
-    ) {
+    ): Boolean {
         require(key.size == OcbwLink.KEY_LEN) { "a 32-byte link key" }
+        // The Keystore's own failures are RuntimeExceptions (ProviderException) as well as checked ones.
+        @Suppress("TooGenericExceptionCaught")
+        val sealed =
+            try {
+                sealer.seal(key)
+            } catch (e: Exception) {
+                return false.also { lastSealFailure = "${e.javaClass.simpleName}: ${e.message}" }
+            }
         prefs
             .edit()
-            .putString(KEY_SEALED, sealer.seal(key))
+            .putString(KEY_SEALED, sealed)
             .putString(KEY_SSID, ssid)
             .remove(KEY_UNREADABLE)
             .remove(KEY_LAST_HOST)
             .remove(KEY_LAST_PORT)
             .apply()
         state.value = state.value.copy(ssid = ssid, keyStored = true, keyUnreadable = false, lastHost = null, lastPort = OcbwLink.PORT)
+        return true
     }
+
+    /** Why the last seal failed, for the log; null before any. */
+    @Volatile var lastSealFailure: String? = null
+        private set
 
     @Synchronized
     fun rememberAddress(
