@@ -58,6 +58,7 @@ import com.carlink.ledger.ConnectLedgerText
 import com.carlink.ledger.ConnectTimer
 import com.carlink.link.AdapterLink
 import com.carlink.link.ConnectOrder
+import com.carlink.link.WifiAttach
 import com.carlink.link.WifiBoxFinder
 import com.carlink.link.WifiBoxSearch
 import com.carlink.link.WifiLinkSettings
@@ -280,6 +281,9 @@ class CarlinkManager(
         private const val WIFI_LINK_ANSWER_MS = 5_000L
 
         private const val WIFI_SEARCH_STATUS = "Looking for the adapter on Wi-Fi..."
+
+        /** Between SUBSCRIBE and the phone: the box waking its radios, or (M2, over Wi-Fi) a session it already runs. */
+        private const val STARTING_PROJECTION_STATUS = "Starting projection..."
 
         /** USB (direct): Android said no, or never answered (the GM head unit). The bridge's own wording starts the first. */
         private const val USB_DIRECT_DENIED_STATUS = "USB permission denied — unplug and replug the adapter, or use Wi-Fi"
@@ -761,6 +765,15 @@ class CarlinkManager(
 
     /** Why the last Wi-Fi search found no adapter; null once one did, or before any. */
     val wifiMiss: StateFlow<WifiBoxSearch.Why?> = wifiMissState.asStateFlow()
+
+    /** M2: since when the Wi-Fi searches have found nothing (elapsedRealtime), 0 while linked or not looking. */
+    @Volatile private var wifiSearchingSince = 0L
+
+    /** M2: the next Wi-Fi search, while Wi-Fi mode lasts and nothing is linked ([keepLookingOnWifi]). */
+    private var wifiSearchJob: Job? = null
+
+    /** M2: this session attached to a CarPlay session the adapter already ran ([attachToRunningSession]). */
+    @Volatile private var attachedToRunning = false
 
     /** Android's own USB prompt, for USB (direct). */
     private val directUsbPermission by lazy { DirectUsbPermission(context) }
@@ -1601,7 +1614,10 @@ class CarlinkManager(
         bridge: Boolean,
     ): RawBulkTransport? {
         if (bridge && handedOver()) return null
-        for (route in ConnectOrder.routes(settings, bridge)) {
+        // M2: in Wi-Fi mode the bridge waits until the Wi-Fi searches have found nothing for a while ([WifiAttach]).
+        val fallbackDue = WifiAttach.usbFallbackDue(wifiSearchingSince, SystemClock.elapsedRealtime())
+        val routes = ConnectOrder.routes(settings, bridge).filter { it != ConnectOrder.Route.USB_BRIDGE || !settings.wifiActive || fallbackDue }
+        for (route in routes) {
             val t =
                 when (route) {
                     ConnectOrder.Route.WIFI -> acquireWifiTransport()
@@ -1617,6 +1633,7 @@ class CarlinkManager(
         val words = wifiMissStatus(wifiMissState.value)
         logWarn("[WIFI] no way to the adapter this start: $words (bridge installed=$bridge)", tag = Logger.Tags.USB)
         handleFailedStart(words)
+        keepLookingOnWifi()
         return null
     }
 
@@ -1700,16 +1717,55 @@ class CarlinkManager(
                     return null
                 }
                 wifiMissState.value = null
+                wifiSearchingSince = 0L
                 if (outcome.at.remember) wifiLink.rememberAddress(outcome.at.host, outcome.at.port)
                 ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
                 outcome.transport
             }
             is WifiBoxSearch.Outcome.NotFound -> {
                 wifiMissState.value = outcome.why
+                if (wifiSearchingSince == 0L) wifiSearchingSince = SystemClock.elapsedRealtime()
                 logWarn("[WIFI] the adapter wasn't reached on Wi-Fi in ${WIFI_SEARCH_MS / 1000} s: ${outcome.why}", tag = Logger.Tags.USB)
                 null
             }
         }
+    }
+
+    /**
+     * M2: Wi-Fi mode looks for the adapter for as long as it lasts, since the hotspot may come up at any point (addendum 3):
+     * another start [WifiAttach.SEARCH_GAP_MS] after one that found nothing, in place of the reconnect budget, which gives
+     * up. Not after Close app or a handover ([disconnect], [handOverImpl] cancel it), nor while the display is off.
+     */
+    private fun keepLookingOnWifi() {
+        val stopped = released || dormantForDisplayOff || !isInteractive()
+        if (!WifiAttach.keepLooking(wifiLink.current.wifiActive, state == State.DISCONNECTED, stopped)) return
+        cancelReconnect()
+        wifiSearchJob?.cancel()
+        wifiSearchJob =
+            scope.launch {
+                delay(WifiAttach.SEARCH_GAP_MS)
+                startIfDisconnected("still looking for the adapter on Wi-Fi")
+            }
+    }
+
+    private fun stopLookingOnWifi() {
+        wifiSearchJob?.cancel()
+        wifiSearchJob = null
+        wifiSearchingSince = 0L
+    }
+
+    /**
+     * M2: over Wi-Fi the adapter already runs the phone's CarPlay session, its video parked (the box's live CT_PROJ_MODE
+     * right after its SUBSCRIBE replay, or the replay hold running out: [HelloReplay]). Ask for the screen (requestUI) and
+     * a keyframe, and show the phone as connected: there is no phone to wait for.
+     */
+    private fun attachToRunningSession() {
+        val c = client ?: return
+        attachedToRunning = true
+        logInfo("[WIFI] attached to the CarPlay session the adapter already runs: asking for the screen and a keyframe", tag = Logger.Tags.ADAPTR)
+        c.sendCommand(Ocbm.CMD_REQUEST_UI)
+        c.requestKeyframe()
+        setStatusText("Phone connected")
     }
 
     /** The connecting screen's line for a Wi-Fi search that found nothing, the bridge not there to try next. */
@@ -1778,6 +1834,7 @@ class CarlinkManager(
     private suspend fun handOverImpl(packageName: String): String? {
         connectTimer.closing(SystemClock.elapsedRealtime()) // ledger: a connect in flight ended early
         cancelReconnect()
+        stopLookingOnWifi()
         starts.closing() // no wake may start a session after the handover, nor arm a cut
         startingJob?.let { if (it.isActive) it.cancel() }
         logInfo("[BRIDGE_ACCESS] handing the adapter to $packageName", tag = Logger.Tags.USB)
@@ -2010,6 +2067,7 @@ class CarlinkManager(
         pictureGate.expect() // a session of its own: no picture until its phone draws one
         // The coroutine running this start, for [disconnect] to cancel: it may sit ~30 s looking for the adapter.
         startingJob = currentCoroutineContext()[Job]
+        attachedToRunning = false
 
         // Tear down any existing session BEFORE entering CONNECTING, so the FGS started at
         // CONNECTING isn't immediately stopped by the teardown's DISCONNECTED transition.
@@ -2049,7 +2107,7 @@ class CarlinkManager(
         c.setTime()
 
         // THE APP IS THE IGNITION: this is the presence latch that brings the box's radios up.
-        setStatusText("Starting projection...")
+        setStatusText(STARTING_PROJECTION_STATUS)
         holdHelloReplay()
         if (!c.subscribe(VehicleConfigYaml.renderBytes(vehicleConfigSpec()))) {
             handleError("usb — CT_SUBSCRIBE write failed")
@@ -2066,6 +2124,12 @@ class CarlinkManager(
         adapterUpdate.onSubscribed()
         phoneSetup.onSubscribed()
 
+        showWaitingForPhone()
+    }
+
+    /** After SUBSCRIBE: "Waiting for phone...", unless (M2, over Wi-Fi) the box's held state is still to say whether one is there. */
+    private fun showWaitingForPhone() {
+        if (transport is WifiBulkTransport && (helloReplay.holding || attachedToRunning)) return
         setStatusText("Waiting for phone...")
     }
 
@@ -2282,6 +2346,7 @@ class CarlinkManager(
     suspend fun disconnect() {
         connectTimer.closing(SystemClock.elapsedRealtime()) // ledger: a connect in flight ended early
         cancelReconnect()
+        stopLookingOnWifi()
         starts.closing() // nor may the wake start a session after Close app, or arm a cut again
         startingJob?.let { job ->
             if (job.isActive) logInfo("[LIFECYCLE] disconnect(): cancelling the start in flight", tag = Logger.Tags.ADAPTR)
@@ -2951,6 +3016,11 @@ class CarlinkManager(
         why: String,
     ) {
         helloReplayJob?.cancel()
+        when (WifiAttach.onDecided(r.live, r.mode, transport is WifiBulkTransport)) {
+            WifiAttach.Action.ATTACH -> attachToRunningSession()
+            WifiAttach.Action.WAIT_FOR_PHONE -> if (lastStatusText == STARTING_PROJECTION_STATUS) setStatusText("Waiting for phone...")
+            WifiAttach.Action.AS_BEFORE -> Unit
+        }
         if (!r.live) {
             logInfo("[SESSION] the box's replayed session ended at once ($why): the last host's; its phone and video key dropped", tag = Logger.Tags.ADAPTR)
             client?.reannounceKeyed()
