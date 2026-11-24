@@ -9,22 +9,25 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * How Carlink reaches the adapter (Settings › Adapter and about › Adapter connection). Persisted by [code], never ordinal.
+ * How Carlink reaches the adapter (Settings › Adapter and about › Adapter connection), in the order Settings lists them.
+ * Persisted by [code], never ordinal.
  *
- * USB is today's way, through the sideloaded USB bridge, and the default. Wi-Fi is the link over the phone's hotspot
- * ([com.carlink.ocbm.WifiBulkTransport]). A later "USB (direct)" (notes/carlink.md) would be a third code, so "usb" keeps
- * meaning what it means today.
+ * - Wi-Fi: the link over the phone's hotspot ([com.carlink.ocbm.WifiBulkTransport]).
+ * - USB (direct): Carlink opens the adapter itself, where Android lets it ([com.carlink.ocbm.UsbDirectTransport]).
+ * - USB (bridge app): through the sideloaded USB bridge, the way Carlink has always reached it, and the default; code "usb",
+ *   as before. With no bridge installed it asks Android for the adapter itself too (the owner, 24 Nov).
  */
 enum class AdapterLink(
     val code: String,
     override val label: String,
 ) : Labelled {
-    USB("usb", "USB"),
     WIFI("wifi", "Wi-Fi"),
+    USB_DIRECT("usb_direct", "USB (direct)"),
+    USB_BRIDGE("usb", "USB (bridge app)"),
     ;
 
     companion object {
-        val DEFAULT = USB
+        val DEFAULT = USB_BRIDGE
 
         fun fromCode(code: String?): AdapterLink = entries.find { it.code == code } ?: DEFAULT
     }
@@ -55,10 +58,10 @@ data class WifiLinkSettings(
     val wifiActive: Boolean get() = wifiChosen && setUp
 
     /**
-     * The USB bridge is needed only for USB. Once the driver chose Wi-Fi, set up or not, no screen asks for it (the
-     * owner, 23 Nov: some users cannot sideload it).
+     * The USB bridge is asked for only for USB (bridge app). Once the driver chose Wi-Fi, set up or not, or USB (direct),
+     * no screen asks for it (the owner, 23 Nov: some users cannot sideload it).
      */
-    val bridgeNeeded: Boolean get() = !wifiChosen
+    val bridgeNeeded: Boolean get() = link == AdapterLink.USB_BRIDGE
 }
 
 /**
@@ -152,7 +155,7 @@ class WifiLinkStore internal constructor(
         state.value = state.value.copy(lastHost = host, lastPort = port)
     }
 
-    /** Remove: the key, the hotspot and the address go, and the connection is USB again. */
+    /** Remove: the key, the hotspot and the address go, and the connection is USB (bridge app) again, the default. */
     @Synchronized
     fun forget() {
         prefs
@@ -162,9 +165,9 @@ class WifiLinkStore internal constructor(
             .remove(KEY_UNREADABLE)
             .remove(KEY_LAST_HOST)
             .remove(KEY_LAST_PORT)
-            .putString(KEY_LINK, AdapterLink.USB.code)
+            .putString(KEY_LINK, AdapterLink.DEFAULT.code)
             .apply()
-        state.value = WifiLinkSettings(link = AdapterLink.USB)
+        state.value = WifiLinkSettings(link = AdapterLink.DEFAULT)
     }
 
     @Synchronized

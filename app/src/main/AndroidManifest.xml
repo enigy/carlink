@@ -53,6 +53,12 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Optional Features -->
+    <!-- USB (direct): Carlink opens the adapter itself where Android lets it (link/ConnectOrder). Not required, so
+         Play still offers the app to a head unit without USB host mode; no attach filter, so Android never offers the
+         adapter to Carlink at attach (on the GM head unit the bridge takes every attach, as before). -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />

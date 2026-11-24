@@ -1,5 +1,6 @@
 package com.carlink.ui.settings
 
+import com.carlink.link.AdapterLink
 import com.carlink.link.ConnectOrder
 import com.carlink.link.WifiBoxSearch
 import com.carlink.link.WifiLinkSettings
@@ -21,9 +22,12 @@ internal object WifiLinkText {
     fun connectionLine(
         s: WifiLinkSettings,
         linkedOver: ConnectOrder.Route?,
+        bridgeInstalled: Boolean = true,
     ): String =
         when {
-            !s.wifiChosen -> "Through the Carlink USB bridge."
+            s.link == AdapterLink.USB_DIRECT -> "Carlink opens the adapter itself. Android asks once."
+            s.link == AdapterLink.USB_BRIDGE && bridgeInstalled -> "Through the Carlink USB bridge app."
+            s.link == AdapterLink.USB_BRIDGE -> "The bridge app isn't installed: Carlink asks Android for the adapter itself."
             linkedOver == ConnectOrder.Route.WIFI -> "Connected over the iPhone's hotspot."
             !s.setUp -> "Send the hotspot's name and password to the adapter below."
             linkedOver != null -> "Over the hotspot from the next connection. Reset connection applies it now."

@@ -111,7 +111,8 @@ class LoadingStepsTest {
         assertEquals("Adapter not found on Wi-Fi", action("Adapter not found on Wi-Fi"))
         assertEquals("Waiting for the iPhone's hotspot", action("Waiting for the iPhone's hotspot"))
         assertEquals("The adapter refused this head unit's Wi-Fi key", action("The adapter refused this head unit's Wi-Fi key"))
-        assertEquals("Set up Wi-Fi in Settings › Adapter and about", action("Set up Wi-Fi in Settings › Adapter and about"))
+        val direct = "Android didn't let Carlink open the adapter — use Wi-Fi, or the USB bridge app"
+        assertEquals(direct, action(direct))
         assertNull(action("Looking for the adapter on Wi-Fi..."))
         assertEquals(LoadingStep.ADAPTER, LoadingSteps.classify("Looking for the adapter on Wi-Fi...", false).step)
     }

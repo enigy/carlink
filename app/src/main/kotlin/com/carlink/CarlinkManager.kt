@@ -56,6 +56,7 @@ import com.carlink.fuel.GeoPoint
 import com.carlink.ledger.ConnectLedgerStore
 import com.carlink.ledger.ConnectLedgerText
 import com.carlink.ledger.ConnectTimer
+import com.carlink.link.AdapterLink
 import com.carlink.link.ConnectOrder
 import com.carlink.link.WifiBoxFinder
 import com.carlink.link.WifiBoxSearch
@@ -111,6 +112,7 @@ import com.carlink.ocbm.SplitViewArea
 import com.carlink.ocbm.StockRemover
 import com.carlink.ocbm.UpdateBox
 import com.carlink.ocbm.UpdateHost
+import com.carlink.ocbm.UsbDirectTransport
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
 import com.carlink.ocbm.WifiBulkTransport
@@ -140,6 +142,7 @@ import com.carlink.usb.BridgeAccessHub
 import com.carlink.usb.BridgeAccessText
 import com.carlink.usb.BridgeUpdateHub
 import com.carlink.usb.CarlinkBridge
+import com.carlink.usb.DirectUsbPermission
 import com.carlink.usb.UsbPermissionPrompt
 import com.carlink.usb.UsbPermissionWait
 import com.carlink.util.DisplayProfile
@@ -270,9 +273,6 @@ class CarlinkManager(
 
         private const val USB_FIND_ATTEMPTS = 10 // × USB_WAIT_PERIOD_MS: ~30 s to find the adapter
 
-        /** Without the bridge Carlink can't reach the adapter (it has no USB access of its own). */
-        private const val INSTALL_BRIDGE_STATUS = "Install the Carlink USB bridge"
-
         /** How long one start looks for the adapter on Wi-Fi before the next way, when there is one. */
         private const val WIFI_SEARCH_MS = 8_000L
 
@@ -281,8 +281,9 @@ class CarlinkManager(
 
         private const val WIFI_SEARCH_STATUS = "Looking for the adapter on Wi-Fi..."
 
-        /** Wi-Fi chosen, never set up, and no bridge to set it up through: what to do, never "install the bridge". */
-        private const val WIFI_NOT_SET_UP_STATUS = "Set up Wi-Fi in Settings › Adapter and about"
+        /** USB (direct): Android said no, or never answered (the GM head unit). The bridge's own wording starts the first. */
+        private const val USB_DIRECT_DENIED_STATUS = "USB permission denied — unplug and replug the adapter, or use Wi-Fi"
+        private const val USB_DIRECT_NO_ANSWER_STATUS = "Android didn't let Carlink open the adapter — use Wi-Fi, or the USB bridge app"
 
         /** Under the conversion's panels, and on its own once the driver has dismissed them. */
         private const val STOCK_ADAPTER_STATUS = "Adapter runs Carlinkit firmware — Carlink needs an OCBM adapter"
@@ -760,6 +761,14 @@ class CarlinkManager(
 
     /** Why the last Wi-Fi search found no adapter; null once one did, or before any. */
     val wifiMiss: StateFlow<WifiBoxSearch.Why?> = wifiMissState.asStateFlow()
+
+    /** Android's own USB prompt, for USB (direct). */
+    private val directUsbPermission by lazy { DirectUsbPermission(context) }
+
+    private val usbDirectRefusedState = MutableStateFlow(false)
+
+    /** Android refused, or never answered, Carlink's own USB request: the bridge (or Wi-Fi) is then the way. */
+    val usbDirectRefused: StateFlow<Boolean> = usbDirectRefusedState.asStateFlow()
 
     /** The live session takes MGMT_WIFI_LINK (CAP_WIFI_LINK); null with no session to ask. */
     val wifiLinkSupported: Boolean? get() = client?.takeIf { it.helloAcked }?.supportsWifiLink
@@ -1564,10 +1573,10 @@ class CarlinkManager(
     /**
      * Find the adapter and open it through the USB bridge, or null if we should abandon the start.
      *
-     * The bridge is required: Carlink has no USB access of its own (removed 2026-10-21, the way
-     * Carlink2 did in [204]), so it never holds a USB permission or shows a USB dialog. Without the
-     * bridge there is nothing to retry: the start stops at "Install the Carlink USB bridge" (the
-     * connecting screen shows its setup panel) and MainActivity starts again once it is installed.
+     * With the bridge installed and USB (bridge app) chosen, the default, this is the way Carlink has always connected:
+     * no USB permission or dialog of its own. Otherwise [acquireByRoutes]: Wi-Fi, or Android asked for the adapter
+     * directly (USB (direct), back on 24 Nov), whose refusal brings up the bridge's setup panel when the bridge app is
+     * chosen; MainActivity starts again once the bridge is installed.
      *
      * The [released] re-checks in [acquireBridgeTransport] matter: finding the adapter can take
      * ~30 s and the permission prompt up to 30 s more, and `release()` runs OUTSIDE [lifecycleMutex],
@@ -1576,36 +1585,100 @@ class CarlinkManager(
      */
     private suspend fun acquireTransport(): RawBulkTransport? {
         val settings = wifiLink.current
-        if (settings.wifiChosen) return acquireInWifiMode(settings)
-        if (CarlinkBridge.isInstalled(context)) return acquireBridgeTransport()
-        logWarn("[BRIDGE] USB bridge not installed — Carlink can't reach the adapter without it", tag = Logger.Tags.USB)
-        cancelReconnect() // nothing changes by retrying until it is installed
-        handleFailedStart(INSTALL_BRIDGE_STATUS)
+        val bridge = CarlinkBridge.isInstalled(context)
+        // USB (bridge app), the default, with the bridge there: exactly the way Carlink has always connected.
+        if (settings.link == AdapterLink.USB_BRIDGE && bridge) return acquireBridgeTransport()
+        return acquireByRoutes(settings, bridge)
+    }
+
+    /**
+     * The other ways ([ConnectOrder]): Wi-Fi first when it is chosen and set up, then the bridge only when installed; USB
+     * with no bridge installed (or USB (direct) chosen) asks Android for the adapter itself. The bridge is never asked for
+     * once Wi-Fi or USB (direct) is chosen. A handover to another app (a bridge's) leaves the adapter alone on every road.
+     */
+    private suspend fun acquireByRoutes(
+        settings: WifiLinkSettings,
+        bridge: Boolean,
+    ): RawBulkTransport? {
+        if (bridge && handedOver()) return null
+        for (route in ConnectOrder.routes(settings, bridge)) {
+            val t =
+                when (route) {
+                    ConnectOrder.Route.WIFI -> acquireWifiTransport()
+                    ConnectOrder.Route.USB_BRIDGE -> {
+                        if (settings.setUp) logInfo("[WIFI] the adapter wasn't reached on Wi-Fi: USB through the bridge", tag = Logger.Tags.USB)
+                        acquireBridgeTransport()
+                    }
+                    ConnectOrder.Route.USB_DIRECT -> acquireDirectTransport()
+                }
+            // Only Wi-Fi hands on to the next road: the USB ones report their own failures.
+            if (t != null || route != ConnectOrder.Route.WIFI || released) return t
+        }
+        val words = wifiMissStatus(wifiMissState.value)
+        logWarn("[WIFI] no way to the adapter this start: $words (bridge installed=$bridge)", tag = Logger.Tags.USB)
+        handleFailedStart(words)
         return null
     }
 
     /**
-     * Wi-Fi chosen ([ConnectOrder]): Wi-Fi first when it is set up, then USB through the bridge only when the bridge is
-     * installed. The bridge is never asked for: with none, a start that found nothing says why ([wifiMissStatus]), or how
-     * to set Wi-Fi up. A handover to another app (a bridge's) leaves the adapter alone on every road.
+     * USB (direct): the adapter from the USB list, Android's own permission (asked once per attach, as the bridge asks;
+     * an answer that comes late still connects: [UsbPermissionWait.watch]), then the adapter opened in Carlink's process.
+     * Where Android refuses, or never answers (the GM head unit), it says so and points to Wi-Fi ([usbDirectRefused]).
      */
-    private suspend fun acquireInWifiMode(settings: WifiLinkSettings): RawBulkTransport? {
-        val bridge = CarlinkBridge.isInstalled(context)
-        if (bridge && handedOver()) return null
-        for (route in ConnectOrder.routes(settings, bridge)) {
-            when (route) {
-                ConnectOrder.Route.WIFI -> acquireWifiTransport()?.let { return it }
-                ConnectOrder.Route.USB_BRIDGE -> {
-                    if (settings.setUp) logInfo("[WIFI] the adapter wasn't reached on Wi-Fi: USB through the bridge", tag = Logger.Tags.USB)
-                    return acquireBridgeTransport()
-                }
-            }
-            if (released) return null
+    private suspend fun acquireDirectTransport(): RawBulkTransport? {
+        val dev = awaitAdapterListed()
+        if (dev == null) {
+            logError("Failed to find the OCBM adapter", tag = Logger.Tags.USB)
+            handleFailedStart("Adapter not found")
+            return null
         }
-        val words = if (settings.setUp) wifiMissStatus(wifiMissState.value) else WIFI_NOT_SET_UP_STATUS
-        logWarn("[WIFI] no way to the adapter this start: $words (bridge installed=$bridge)", tag = Logger.Tags.USB)
-        handleFailedStart(words)
+        if (released) return null
+        if (dev.vendorId != BridgeBulkTransport.VID_CARLINKIT || dev.productId != BridgeBulkTransport.PID_OCBM) {
+            // A stock adapter or a shared stick: its conversion opens it through the bridge only.
+            logInfo("[USB_DIRECT] ${dev.deviceName} isn't an OCBM adapter: nothing to open directly", tag = Logger.Tags.USB)
+            cancelReconnect()
+            handleFailedStart(if (StockAdapters.isStock(dev.vendorId, dev.productId)) STOCK_ADAPTER_STATUS else STICK_IN_ADAPTER_STATUS)
+            return null
+        }
+        ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
+        val name = dev.deviceName
+        val port = directUsbPermission.port(name)
+        when (usbPermission.await(port, name) { setStatusText(ALLOW_USB_STATUS) }) {
+            UsbPermissionWait.Outcome.GRANTED -> {
+                usbDirectRefusedState.value = false
+                return openDirect(dev)
+            }
+            UsbPermissionWait.Outcome.CLOSED -> {
+                usbDirectRefusedState.value = true
+                logWarn("[USB_DIRECT] Android denied Carlink $name", tag = Logger.Tags.USB)
+                handleFailedStart(USB_DIRECT_DENIED_STATUS)
+            }
+            UsbPermissionWait.Outcome.PENDING -> {
+                // No answer: on the GM head unit no prompt ever shows. A late OK still connects, as on the bridge's path.
+                usbDirectRefusedState.value = true
+                cancelReconnect()
+                usbPermission.watch(port, name, stillWanted = { !released }) { startIfDisconnected("late USB permission grant") }
+                logWarn("[USB_DIRECT] Android didn't answer for $name: no USB without the bridge on this head unit?", tag = Logger.Tags.USB)
+                handleFailedStart(USB_DIRECT_NO_ANSWER_STATUS)
+            }
+        }
         return null
+    }
+
+    /** The adapter, permitted, opened in this process; null (reported) when it couldn't be, or released meanwhile. */
+    private fun openDirect(dev: UsbDevice): RawBulkTransport? {
+        setStatusText("Adapter found — opening...")
+        val usb = context.getSystemService(UsbManager::class.java)
+        val t = usb?.let { UsbDirectTransport.open(it, dev, usbLog) }
+        if (t == null) {
+            handleFailedStart("USB could not open the adapter")
+            return null
+        }
+        if (released) {
+            t.stop()
+            return null
+        }
+        return t
     }
 
     /** The adapter over the Wi-Fi link, found by [WifiBoxSearch] within [WIFI_SEARCH_MS]; null when it wasn't. */
@@ -1959,7 +2032,12 @@ class CarlinkManager(
             delay(hold)
         }
         val c = helloed(first, helloMs) ?: return
-        linkedOverState.value = if (transport is WifiBulkTransport) ConnectOrder.Route.WIFI else ConnectOrder.Route.USB_BRIDGE
+        linkedOverState.value =
+            when (transport) {
+                is WifiBulkTransport -> ConnectOrder.Route.WIFI
+                is UsbDirectTransport -> ConnectOrder.Route.USB_DIRECT
+                else -> ConnectOrder.Route.USB_BRIDGE
+            }
         // The adapter answered: once the link has stayed up RECONNECT_STABLE_MS, the next loss starts a fresh chain ([ReconnectBudget]).
         if (reconnects.used > 0) logInfo("[RECONNECT] reconnected after ${reconnects.used} attempt(s)", tag = Logger.Tags.USB)
         reconnects.linkUp(SystemClock.elapsedRealtime())

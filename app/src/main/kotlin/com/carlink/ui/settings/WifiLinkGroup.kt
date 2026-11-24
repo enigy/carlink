@@ -71,7 +71,7 @@ internal fun WifiLinkGroup(
                 carlinkManager.wifiLink.setLink(it)
                 logInfo("[UI_ACTION] Adapter connection: ${it.code}", tag = "UI")
             },
-            subtitle = WifiLinkText.connectionLine(settings, linkedOver),
+            subtitle = WifiLinkText.connectionLine(settings, linkedOver, live.bridgeInstalled),
             icon = Icons.Default.Wifi,
         )
         if (settings.wifiChosen) {

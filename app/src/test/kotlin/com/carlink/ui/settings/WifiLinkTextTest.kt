@@ -16,7 +16,9 @@ class WifiLinkTextTest {
 
     @Test
     fun `the line under the choice says how Carlink reaches the adapter`() {
-        assertEquals("Through the Carlink USB bridge.", WifiLinkText.connectionLine(WifiLinkSettings(), null))
+        assertEquals("Through the Carlink USB bridge app.", WifiLinkText.connectionLine(WifiLinkSettings(), null))
+        assertTrue(WifiLinkText.connectionLine(WifiLinkSettings(), null, bridgeInstalled = false).contains("asks Android"))
+        assertTrue(WifiLinkText.connectionLine(WifiLinkSettings(link = AdapterLink.USB_DIRECT), null).contains("itself"))
         assertEquals("Connected over the iPhone's hotspot.", WifiLinkText.connectionLine(wifi, ConnectOrder.Route.WIFI))
         assertTrue(WifiLinkText.connectionLine(wifi, ConnectOrder.Route.USB_BRIDGE).contains("next connection"))
         assertTrue(WifiLinkText.connectionLine(WifiLinkSettings(link = AdapterLink.WIFI), null).startsWith("Send"))

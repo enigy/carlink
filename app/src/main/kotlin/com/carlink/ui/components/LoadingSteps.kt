@@ -37,7 +37,7 @@ internal object LoadingSteps {
             // The Wi-Fi link (CarlinkManager.wifiMissStatus): "Adapter not found on Wi-Fi" is matched above.
             "waiting for the iphone's hotspot",
             "the adapter refused",
-            "set up wi-fi",
+            "android didn't let carlink",
         )
 
     // The phone's session has started (the first stream key). Checked before PHONE_WORDS. Only this:

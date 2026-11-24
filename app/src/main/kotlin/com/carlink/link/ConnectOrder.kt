@@ -1,28 +1,29 @@
 package com.carlink.link
 
 /**
- * Which ways to the adapter a start tries, in order (the Wi-Fi link plan, Carlink side, and its addendum 1):
+ * Which ways to the adapter a start tries, in order (the Wi-Fi link plan, Carlink side, and its addenda 1 and 3):
  *
- * - USB chosen: the bridge, as Carlink always has; without it the start stops at "install the bridge".
+ * - USB (bridge app): the bridge, as Carlink always has; with no bridge installed, Android asked for the adapter directly.
+ * - USB (direct): Android asked for the adapter directly, bridge or no bridge.
  * - Wi-Fi chosen and set up: Wi-Fi, then the bridge only when it is installed.
- * - Wi-Fi chosen, not set up: the bridge when it is installed (in M1 the set-up needs a session, and the bridge is how a
- *   head unit without the link gets one); without it nothing, and the start says how to set up, never "install the
- *   bridge".
+ * - Wi-Fi chosen, not set up: a session to set it up through, the bridge's or a direct one.
  *
- * New ways (a USB transport of Carlink's own, the adapter's set-up network: notes/carlink.md) join as new [Route]s here.
+ * The adapter's set-up network (notes/carlink.md, M3) would join as one more [Route] here.
  */
 object ConnectOrder {
-    enum class Route { WIFI, USB_BRIDGE }
+    enum class Route { WIFI, USB_DIRECT, USB_BRIDGE }
 
     fun routes(
         settings: WifiLinkSettings,
         bridgeInstalled: Boolean,
-    ): List<Route> =
-        when {
-            !settings.wifiChosen -> listOf(Route.USB_BRIDGE)
+    ): List<Route> {
+        val usb = if (bridgeInstalled) Route.USB_BRIDGE else Route.USB_DIRECT
+        return when {
+            settings.link == AdapterLink.USB_DIRECT -> listOf(Route.USB_DIRECT)
+            settings.link == AdapterLink.USB_BRIDGE -> listOf(usb)
             settings.setUp && bridgeInstalled -> listOf(Route.WIFI, Route.USB_BRIDGE)
             settings.setUp -> listOf(Route.WIFI)
-            bridgeInstalled -> listOf(Route.USB_BRIDGE)
-            else -> emptyList()
+            else -> listOf(usb)
         }
+    }
 }

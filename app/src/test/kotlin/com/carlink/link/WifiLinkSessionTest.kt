@@ -75,7 +75,7 @@ class WifiLinkSessionTest {
 
         assertEquals(WifiLinkSetup.Removed.REMOVED, runBlocking { setup.remove() })
         assertEquals(0, wifiLinkBodies.poll(5, TimeUnit.SECONDS)!!.size)
-        assertEquals(AdapterLink.USB, store.current.link)
+        assertEquals(AdapterLink.USB_BRIDGE, store.current.link)
     }
 
     @Test

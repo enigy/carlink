@@ -541,11 +541,13 @@ private fun ConnectingWords(
 ) {
     val access by BridgeAccessHub.state.collectAsState()
     val handedTo = access.handedToLabel
-    // Once Wi-Fi is chosen, set up or not, nothing asks for the bridge (the Wi-Fi link plan's addendum 1).
+    // Once Wi-Fi or USB (direct) is chosen, nothing asks for the bridge (the Wi-Fi link plan's addendum 1); for USB (bridge
+    // app) the panel comes once Android has refused Carlink the adapter itself (addendum 3).
     val wifiLink by carlinkManager.wifiLink.flow.collectAsState()
+    val directRefused by carlinkManager.usbDirectRefused.collectAsState()
     when {
         // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
-        !bridge.installed && wifiLink.bridgeNeeded -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
+        !bridge.installed && wifiLink.bridgeNeeded && directRefused -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
         statusText.startsWith(BRIDGE_TROUBLE_PREFIX) -> BridgeNotStartingPanel(onOpenAppInfo = onOpenAppInfo)
         // Bridge API 6: another app has the adapter; Take back works while driving.
         handedTo != null ->

@@ -23,7 +23,7 @@ class WifiLinkStoreTest {
 
     @Test
     fun `USB by default, and the choice is kept across a restart`() {
-        assertEquals(AdapterLink.USB, store().current.link)
+        assertEquals(AdapterLink.USB_BRIDGE, store().current.link)
         assertTrue(store().current.bridgeNeeded)
         store().setLink(AdapterLink.WIFI)
         val again = store()
@@ -86,13 +86,13 @@ class WifiLinkStoreTest {
         s.rememberAddress("192.0.2.10", OcbwLink.PORT)
         s.forget()
         val again = store()
-        assertEquals(WifiLinkSettings(link = AdapterLink.USB), again.current)
+        assertEquals(WifiLinkSettings(link = AdapterLink.USB_BRIDGE), again.current)
         assertNull(again.linkKey())
     }
 
     @Test
     fun `an unknown stored code reads as USB`() {
-        assertEquals(AdapterLink.USB, AdapterLink.fromCode("carrier pigeon"))
+        assertEquals(AdapterLink.USB_BRIDGE, AdapterLink.fromCode("carrier pigeon"))
         assertEquals(AdapterLink.WIFI, AdapterLink.fromCode("wifi"))
     }
 
