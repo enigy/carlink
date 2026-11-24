@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Navigation
@@ -36,11 +37,12 @@ enum class SettingsCategory(
     CLUSTER("Cluster & HUD", Icons.Default.Navigation),
     CALLS("Calls", Icons.Default.Mic),
 
-    /** Listed only while other apps' access is on (bridge API 6; Adapter and about › USB bridge). */
+    /** Listed only while other apps' access is on (bridge API 6; Adapter › USB bridge). */
     BRIDGE("Bridge Configuration", Icons.Default.Usb),
     VEHICLE("Vehicle", Icons.Default.DirectionsCar),
     TROUBLESHOOT("Troubleshoot", Icons.Default.Build),
-    ADAPTER("Adapter and about", Icons.Default.Memory),
+    ADAPTER("Adapter", Icons.Default.Memory),
+    ABOUT("About", Icons.Default.Info),
 }
 
 /**
