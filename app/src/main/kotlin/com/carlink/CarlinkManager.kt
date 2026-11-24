@@ -2172,7 +2172,11 @@ class CarlinkManager(
     ): OcbmClient? {
         val overWifi = transport is WifiBulkTransport
         if (c.hello(helloMs, untilLinkDead = overWifi)) return c
-        if (overWifi && !released && CarlinkBridge.isInstalled(context)) {
+        // A box found but refusing is a Wi-Fi failure too: the bridge waits for the M2 rule as after a search ([WifiAttach]).
+        val now = SystemClock.elapsedRealtime()
+        if (overWifi && wifiSearchingSince == 0L) wifiSearchingSince = now
+        val bridgeNext = overWifi && !released && CarlinkBridge.isInstalled(context)
+        if (bridgeNext && WifiAttach.usbFallbackDue(wifiSearchingSince, now)) {
             logInfo("[WIFI] no CT_HELLO_ACK over Wi-Fi: USB through the bridge", tag = Logger.Tags.USB)
             closeClient(c)
             val usb = openClient(acquireBridgeTransport() ?: return null)
@@ -2185,6 +2189,7 @@ class CarlinkManager(
 
     /** The session's client on [t], wired and reading: one transport and one client per session, by contract. */
     private fun openClient(t: RawBulkTransport): OcbmClient {
+        clientGeneration++
         transport = t
         val c = OcbmClient(t, ocbmLog)
         c.onInfo = ::noteAdapterInfo
@@ -3365,9 +3370,10 @@ class CarlinkManager(
             logInfo("[USB] Already disconnected, ignoring detach", tag = Logger.Tags.USB)
             return
         }
-        if (transport is WifiBulkTransport) {
-            // The session doesn't ride USB: if the adapter lost its power too, the link's own 3 s check ends it.
-            logInfo("[USB] detach while linked over Wi-Fi: the Wi-Fi link decides", tag = Logger.Tags.USB)
+        val overUsb = transport is BridgeBulkTransport || transport is UsbDirectTransport
+        if (!WifiAttach.detachEndsSession(wifiLink.current.wifiChosen, overUsb)) {
+            // Wi-Fi mode, USB not the road in use (linked over Wi-Fi, or a start still searching): the Wi-Fi link decides.
+            logInfo("[USB] detach in Wi-Fi mode with USB not in use: ignored", tag = Logger.Tags.USB)
             return
         }
         handleError("USB device physically disconnected")
@@ -3840,7 +3846,7 @@ class CarlinkManager(
         // FATAL only. A box-side SEV_HOST_GONE is recoverable and the client's own backoff
         // re-subscribes; tearing down on it would fight that recovery.
         val road = if (transport is WifiBulkTransport) "wi-fi" else "usb"
-        c.onLinkDead = { reason -> handleError("$road — link dead: $reason") }
+        c.onLinkDead = { reason -> handleError("$road — link dead: $reason", erroredClient = c) }
     }
 
     /**
@@ -5268,17 +5274,31 @@ class CarlinkManager(
      * a physical unplug fires it from two at once. The public entry posts under [lifecycleMutex]
      * so executions serialize and the blocking teardown runs on IO.
      */
-    private fun handleError(error: String) {
+    private fun handleError(
+        error: String,
         // Capture session identity AT POST TIME: the queued impl may run after a new session has
         // come up (fast unplug/replug where a new start() wins the mutex first). Without this, a
-        // stale error would tear down a healthy session.
-        val erroredClient = client
+        // stale error would tear down a healthy session. A client's own callbacks pass it.
+        erroredClient: OcbmClient? = client,
+    ) {
+        // With no client to name, the session that exists now: an error from before a start's client must not end the
+        // session that start makes (a detach during a Wi-Fi search, the reviewer's 24 Nov finding).
+        val generation = clientGeneration
         scope.launch {
             lifecycleMutex.withLock {
-                withContext(Dispatchers.IO) { handleErrorImpl(error, erroredClient) }
+                withContext(Dispatchers.IO) {
+                    if (erroredClient == null && generation != clientGeneration) {
+                        logDebug("[ERROR] An error from before this session's client, ignoring: $error", tag = Logger.Tags.ADAPTR)
+                    } else {
+                        handleErrorImpl(error, erroredClient)
+                    }
+                }
             }
         }
     }
+
+    /** Bumped at each client opened ([openClient]): which session an error with no client of its own belongs to. */
+    @Volatile private var clientGeneration = 0
 
     private fun handleErrorImpl(
         error: String,

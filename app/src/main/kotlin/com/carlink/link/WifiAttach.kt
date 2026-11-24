@@ -49,6 +49,15 @@ object WifiAttach {
         nowMs: Long,
     ): Boolean = searchingSinceMs > 0 && nowMs - searchingSinceMs >= USB_FALLBACK_MS
 
+    /**
+     * Whether a USB detach ends the session: always outside Wi-Fi mode, as before; in Wi-Fi mode only when USB is the road
+     * in use ([overUsb]). A Wi-Fi session, or a start still searching on Wi-Fi, is the Wi-Fi link's to end.
+     */
+    fun detachEndsSession(
+        wifiChosen: Boolean,
+        overUsb: Boolean,
+    ): Boolean = !wifiChosen || overUsb
+
     /** Whether to look again: Wi-Fi mode still on, nothing linked, nothing that stops Carlink (closing, display off). */
     fun keepLooking(
         wifiActive: Boolean,

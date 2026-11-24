@@ -47,4 +47,12 @@ class WifiAttachTest {
         assertFalse(WifiAttach.keepLooking(wifiActive = true, disconnected = false, stopped = false))
         assertFalse(WifiAttach.keepLooking(wifiActive = true, disconnected = true, stopped = true))
     }
+
+    @Test
+    fun `a USB detach ends a session outside Wi-Fi mode, and in Wi-Fi mode only one that rides USB`() {
+        assertTrue(WifiAttach.detachEndsSession(wifiChosen = false, overUsb = false)) // a USB start before its client: as before
+        assertTrue(WifiAttach.detachEndsSession(wifiChosen = false, overUsb = true))
+        assertTrue("Wi-Fi mode, fallen back to the bridge", WifiAttach.detachEndsSession(wifiChosen = true, overUsb = true))
+        assertFalse("Wi-Fi mode, linked over Wi-Fi or still searching", WifiAttach.detachEndsSession(wifiChosen = true, overUsb = false))
+    }
 }
