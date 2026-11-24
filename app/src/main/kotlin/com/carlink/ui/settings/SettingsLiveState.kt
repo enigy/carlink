@@ -22,6 +22,7 @@ import com.carlink.CarlinkManager
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.logging.DriveLog
 import com.carlink.logging.VerboseLogging
+import com.carlink.usb.CarlinkBridge
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -90,6 +91,12 @@ internal class SettingsLiveState(
      */
     var parked by mutableStateOf(false)
 
+    /** The live session's adapter takes the Wi-Fi link (CAP_WIFI_LINK); null with no session to ask. */
+    var wifiLinkSupported by mutableStateOf<Boolean?>(null)
+
+    /** The USB bridge is installed: with Wi-Fi it is optional, and without it the cluster gets no turn icons. */
+    var bridgeInstalled by mutableStateOf(true)
+
     val connectedPhone: ConnectedPhone? get() = SettingsModel.connectedPhone(phone, devices)
 }
 
@@ -135,6 +142,8 @@ internal fun rememberSettingsLiveState(
             live.canForget = carlinkManager.canForget
             live.driving = carlinkManager.isDriving
             live.parked = carlinkManager.isParked
+            live.wifiLinkSupported = carlinkManager.wifiLinkSupported
+            live.bridgeInstalled = CarlinkBridge.isInstalled(context)
             val install = carlinkManager.oneFileInstall.install.value
             live.box =
                 BoxSnapshot(

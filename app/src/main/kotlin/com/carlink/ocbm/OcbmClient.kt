@@ -96,6 +96,9 @@ class OcbmClient(
     /** The box takes an update package over CH_FILE and MGMT_UPDATE (enigy/ocbm f8f18c8). */
     val supportsUpdate: Boolean get() = (caps and Ocbm.CAP_UPDATE) != 0
 
+    /** The box takes MGMT_WIFI_LINK and reports `"wifi_link"` in MGMT_INFO: it can join the phone's hotspot. */
+    val supportsWifiLink: Boolean get() = (caps and Ocbm.CAP_WIFI_LINK) != 0
+
     /** Config blob last sent with CT_SUBSCRIBE; re-sent verbatim if the box drops us. */
     @Volatile private var configBlob: ByteArray = ByteArray(0)
 
@@ -901,8 +904,14 @@ class OcbmClient(
     /**
      * Send CT_HELLO and wait for CT_HELLO_ACK, retransmitting on the reference cadence (500 ms for
      * the first 15 s, then 2 s). Every non-ACK frame arriving meanwhile is discarded by [dispatch].
+     *
+     * [untilLinkDead]: give up as soon as the transport has died. The Wi-Fi link's box refuses a host it won't take by
+     * closing the connection, so there is nothing to wait out; the USB path keeps its full wait (false).
      */
-    fun hello(timeoutMs: Long = HELLO_TIMEOUT_MS): Boolean {
+    fun hello(
+        timeoutMs: Long = HELLO_TIMEOUT_MS,
+        untilLinkDead: Boolean = false,
+    ): Boolean {
         ctrlQ.clear()
         // The trailing 4 bytes are the HOST INSTANCE NONCE (u32 LE). See Ocbm.CT_HELLO: it is how the
         // box tells one host PROCESS from another. Without it, a host killed without CT_STOP leaves the
@@ -934,6 +943,10 @@ class OcbmClient(
             val waitMs = if (System.currentTimeMillis() < fastUntil) 500L else 2000L
             val end = System.currentTimeMillis() + waitMs
             while (System.currentTimeMillis() < end) {
+                if (untilLinkDead && linkDeadAnnounced.get()) {
+                    log.w("!! the link ended before CT_HELLO_ACK (attempt $attempt)")
+                    return false
+                }
                 val pl = ctrlQ.poll(100, TimeUnit.MILLISECONDS) ?: continue
                 if (pl.isNotEmpty() && pl[0] == Ocbm.CT_HELLO_ACK) {
                     log.i(
@@ -1446,6 +1459,7 @@ private val MGMT_VERB_NAMES =
         Ocbm.MGMT_GO_STOCK to "GO_STOCK",
         Ocbm.MGMT_UPDATE to "UPDATE",
         Ocbm.MGMT_SWITCH_DEVICE to "SWITCH_DEVICE",
+        Ocbm.MGMT_WIFI_LINK to "WIFI_LINK",
     )
 
 private fun mgmtVerbName(v: Byte): String = MGMT_VERB_NAMES[v] ?: "0x%02x".format(v.toInt() and 0xFF)

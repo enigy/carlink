@@ -276,8 +276,11 @@ object Ocbm {
     /** The box takes [MGMT_SWITCH_DEVICE]: Connect on a phone may end another phone's wireless session (enigy/ocbm, 11-01). */
     const val CAP_PHONE_SWITCH: Int = 0x0000_0400
 
+    /** The box takes [MGMT_WIFI_LINK] and reports `"wifi_link"` in MGMT_INFO (the Wi-Fi link plan of 23 Nov, contract item 4). */
+    const val CAP_WIFI_LINK: Int = 0x0000_0800
+
     private const val KNOWN_CAPS: Int =
-        CAP_CONSOLE or CAP_FILE or CAP_PHONE_POLICY or CAP_PAIR_WINDOW or CAP_INSTALL or CAP_UPDATE or CAP_PHONE_SWITCH
+        CAP_CONSOLE or CAP_FILE or CAP_PHONE_POLICY or CAP_PAIR_WINDOW or CAP_INSTALL or CAP_UPDATE or CAP_PHONE_SWITCH or CAP_WIFI_LINK
 
     fun capsString(caps: Int): String {
         val bits = ArrayList<String>()
@@ -288,6 +291,7 @@ object Ocbm {
         if (caps and CAP_INSTALL != 0) bits.add("INSTALL")
         if (caps and CAP_UPDATE != 0) bits.add("UPDATE")
         if (caps and CAP_PHONE_SWITCH != 0) bits.add("PHONE_SWITCH")
+        if (caps and CAP_WIFI_LINK != 0) bits.add("WIFI_LINK")
         // An older box also sets bits OCBM 1.0.5 retired (0x02, 0x04, 0x08, 0x20): shown, not named.
         val unnamed = caps and KNOWN_CAPS.inv()
         if (unnamed != 0) bits.add("0x%x".format(unnamed))
@@ -334,6 +338,14 @@ object Ocbm {
      * = not a MAC, not bonded, or the box's Bluetooth daemon unreachable. Only with [CAP_PHONE_SWITCH].
      */
     const val MGMT_SWITCH_DEVICE: Byte = 0x0D
+
+    /**
+     * `[MGMT_WIFI_LINK][ver 1][link key 32][ssid_len u8][ssid][psk_len u8][psk]` ([WifiLinkProvisioning.body]): the box
+     * keeps the link key and the phone hotspot's WPA key (psk = 64 hex digits, hashed on the head unit) and joins the
+     * hotspot; no body clears it. MGMT_ACK status 0 = applied. Over USB the session stays; over the Wi-Fi link the box
+     * applies it after the ACK, so that link drops and comes back. Only with [CAP_WIFI_LINK].
+     */
+    const val MGMT_WIFI_LINK: Byte = 0x0E
     const val MGMT_INFO: Byte = 0x81.toByte()
     const val MGMT_ACK: Byte = 0x82.toByte()
 

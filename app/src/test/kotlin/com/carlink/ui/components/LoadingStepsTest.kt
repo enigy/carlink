@@ -105,4 +105,14 @@ class LoadingStepsTest {
         assertEquals("Finding your phone", LoadingSteps.label(LoadingStep.PHONE))
         assertEquals("Starting CarPlay", LoadingSteps.label(LoadingStep.START))
     }
+
+    @Test
+    fun `the Wi-Fi link's lines that ask the driver to act come through, and its search stays on the first step`() {
+        assertEquals("Adapter not found on Wi-Fi", action("Adapter not found on Wi-Fi"))
+        assertEquals("Waiting for the iPhone's hotspot", action("Waiting for the iPhone's hotspot"))
+        assertEquals("The adapter refused this head unit's Wi-Fi key", action("The adapter refused this head unit's Wi-Fi key"))
+        assertEquals("Set up Wi-Fi in Settings › Adapter and about", action("Set up Wi-Fi in Settings › Adapter and about"))
+        assertNull(action("Looking for the adapter on Wi-Fi..."))
+        assertEquals(LoadingStep.ADAPTER, LoadingSteps.classify("Looking for the adapter on Wi-Fi...", false).step)
+    }
 }

@@ -56,6 +56,12 @@ import com.carlink.fuel.GeoPoint
 import com.carlink.ledger.ConnectLedgerStore
 import com.carlink.ledger.ConnectLedgerText
 import com.carlink.ledger.ConnectTimer
+import com.carlink.link.ConnectOrder
+import com.carlink.link.WifiBoxFinder
+import com.carlink.link.WifiBoxSearch
+import com.carlink.link.WifiLinkSettings
+import com.carlink.link.WifiLinkSetup
+import com.carlink.link.WifiLinkStore
 import com.carlink.logging.DriveLog
 import com.carlink.logging.DriveLogging
 import com.carlink.logging.LogExport
@@ -107,6 +113,8 @@ import com.carlink.ocbm.UpdateBox
 import com.carlink.ocbm.UpdateHost
 import com.carlink.ocbm.VehicleConfigSpec
 import com.carlink.ocbm.VehicleConfigYaml
+import com.carlink.ocbm.WifiBulkTransport
+import com.carlink.ocbm.WifiLinkInfo
 import com.carlink.ocbm.finishBlocked
 import com.carlink.ocbm.mayConfirmInstall
 import com.carlink.ocbm.seam.SeamPipe
@@ -264,6 +272,17 @@ class CarlinkManager(
 
         /** Without the bridge Carlink can't reach the adapter (it has no USB access of its own). */
         private const val INSTALL_BRIDGE_STATUS = "Install the Carlink USB bridge"
+
+        /** How long one start looks for the adapter on Wi-Fi before the next way, when there is one. */
+        private const val WIFI_SEARCH_MS = 8_000L
+
+        /** MGMT_WIFI_LINK's answer can wait on the adapter writing its flash. */
+        private const val WIFI_LINK_ANSWER_MS = 5_000L
+
+        private const val WIFI_SEARCH_STATUS = "Looking for the adapter on Wi-Fi..."
+
+        /** Wi-Fi chosen, never set up, and no bridge to set it up through: what to do, never "install the bridge". */
+        private const val WIFI_NOT_SET_UP_STATUS = "Set up Wi-Fi in Settings › Adapter and about"
 
         /** Under the conversion's panels, and on its own once the driver has dismissed them. */
         private const val STOCK_ADAPTER_STATUS = "Adapter runs Carlinkit firmware — Carlink needs an OCBM adapter"
@@ -719,6 +738,43 @@ class CarlinkManager(
 
     private val ocbmLog = ProbeLog.sub("ocbm")
     private val usbLog = ProbeLog.sub("usb")
+    private val wifiLog = ProbeLog.sub("wifi")
+
+    /**
+     * The Wi-Fi link (Settings › Adapter and about › Adapter connection): the driver's USB or Wi-Fi, the hotspot the
+     * adapter joins, the link key (sealed by the Keystore) and the last address it answered on.
+     */
+    val wifiLink: WifiLinkStore = WifiLinkStore.get(context)
+
+    private val wifiSearch by lazy { WifiBoxSearch(WifiBoxFinder(context, wifiLink, wifiLog, logLine = { logInfo(it, tag = Logger.Tags.USB) })) }
+
+    /** Sends the hotspot and the link key to the adapter over whatever session is up, and removes them. */
+    val wifiSetup = WifiLinkSetup(wifiLink, ::wifiSetupSession) { logInfo(it, tag = Logger.Tags.ADAPTR) }
+
+    private val linkedOverState = MutableStateFlow<ConnectOrder.Route?>(null)
+
+    /** How the live session reaches the adapter; null with none. */
+    val linkedOver: StateFlow<ConnectOrder.Route?> = linkedOverState.asStateFlow()
+
+    private val wifiMissState = MutableStateFlow<WifiBoxSearch.Why?>(null)
+
+    /** Why the last Wi-Fi search found no adapter; null once one did, or before any. */
+    val wifiMiss: StateFlow<WifiBoxSearch.Why?> = wifiMissState.asStateFlow()
+
+    /** The live session takes MGMT_WIFI_LINK (CAP_WIFI_LINK); null with no session to ask. */
+    val wifiLinkSupported: Boolean? get() = client?.takeIf { it.helloAcked }?.supportsWifiLink
+
+    /** The set-up's view of the live session, whichever way it reached the adapter; null with none. */
+    private fun wifiSetupSession(): WifiLinkSetup.Session? {
+        val c = client?.takeIf { it.helloAcked && it.isRunning } ?: return null
+        val overWifi = transport is WifiBulkTransport
+        return object : WifiLinkSetup.Session {
+            override val takesWifiLink: Boolean get() = c.supportsWifiLink
+            override val overWifi: Boolean = overWifi
+
+            override fun wifiLink(body: ByteArray): Int? = c.mgmtAction(Ocbm.MGMT_WIFI_LINK, body, WIFI_LINK_ANSWER_MS)
+        }
+    }
 
     // Wake lock to prevent CPU sleep during streaming. PARTIAL keeps the CPU running but lets
     // the screen turn off.
@@ -1519,12 +1575,77 @@ class CarlinkManager(
      * the adapter and bring up a full session — a zombie holding it against its own replacement.
      */
     private suspend fun acquireTransport(): RawBulkTransport? {
+        val settings = wifiLink.current
+        if (settings.wifiChosen) return acquireInWifiMode(settings)
         if (CarlinkBridge.isInstalled(context)) return acquireBridgeTransport()
         logWarn("[BRIDGE] USB bridge not installed — Carlink can't reach the adapter without it", tag = Logger.Tags.USB)
         cancelReconnect() // nothing changes by retrying until it is installed
         handleFailedStart(INSTALL_BRIDGE_STATUS)
         return null
     }
+
+    /**
+     * Wi-Fi chosen ([ConnectOrder]): Wi-Fi first when it is set up, then USB through the bridge only when the bridge is
+     * installed. The bridge is never asked for: with none, a start that found nothing says why ([wifiMissStatus]), or how
+     * to set Wi-Fi up. A handover to another app (a bridge's) leaves the adapter alone on every road.
+     */
+    private suspend fun acquireInWifiMode(settings: WifiLinkSettings): RawBulkTransport? {
+        val bridge = CarlinkBridge.isInstalled(context)
+        if (bridge && handedOver()) return null
+        for (route in ConnectOrder.routes(settings, bridge)) {
+            when (route) {
+                ConnectOrder.Route.WIFI -> acquireWifiTransport()?.let { return it }
+                ConnectOrder.Route.USB_BRIDGE -> {
+                    if (settings.setUp) logInfo("[WIFI] the adapter wasn't reached on Wi-Fi: USB through the bridge", tag = Logger.Tags.USB)
+                    return acquireBridgeTransport()
+                }
+            }
+            if (released) return null
+        }
+        val words = if (settings.setUp) wifiMissStatus(wifiMissState.value) else WIFI_NOT_SET_UP_STATUS
+        logWarn("[WIFI] no way to the adapter this start: $words (bridge installed=$bridge)", tag = Logger.Tags.USB)
+        handleFailedStart(words)
+        return null
+    }
+
+    /** The adapter over the Wi-Fi link, found by [WifiBoxSearch] within [WIFI_SEARCH_MS]; null when it wasn't. */
+    private suspend fun acquireWifiTransport(): RawBulkTransport? {
+        val key = withContext(Dispatchers.IO) { wifiLink.linkKey() }
+        if (key == null) {
+            logWarn("[WIFI] the link key can't be read on this head unit: Wi-Fi needs setting up again", tag = Logger.Tags.USB)
+            return null
+        }
+        setStatusText(WIFI_SEARCH_STATUS)
+        val outcome =
+            withContext(Dispatchers.IO) {
+                wifiSearch.find(key, SystemClock.elapsedRealtime() + WIFI_SEARCH_MS) { SystemClock.elapsedRealtime() }
+            }
+        return when (outcome) {
+            is WifiBoxSearch.Outcome.Found -> {
+                if (released) {
+                    outcome.transport.stop()
+                    return null
+                }
+                wifiMissState.value = null
+                if (outcome.at.remember) wifiLink.rememberAddress(outcome.at.host, outcome.at.port)
+                ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
+                outcome.transport
+            }
+            is WifiBoxSearch.Outcome.NotFound -> {
+                wifiMissState.value = outcome.why
+                logWarn("[WIFI] the adapter wasn't reached on Wi-Fi in ${WIFI_SEARCH_MS / 1000} s: ${outcome.why}", tag = Logger.Tags.USB)
+                null
+            }
+        }
+    }
+
+    /** The connecting screen's line for a Wi-Fi search that found nothing, the bridge not there to try next. */
+    private fun wifiMissStatus(why: WifiBoxSearch.Why?): String =
+        when (why) {
+            WifiBoxSearch.Why.NO_WIFI -> "Waiting for the iPhone's hotspot"
+            WifiBoxSearch.Why.KEY_REFUSED -> "The adapter refused this head unit's Wi-Fi key"
+            WifiBoxSearch.Why.NO_ANSWER, null -> "Adapter not found on Wi-Fi"
+        }
 
     /**
      * The sideloaded bridge (`android.car.usb.handler`, module `:bridge`) holds the USB permission the
@@ -1824,17 +1945,7 @@ class CarlinkManager(
         setState(State.CONNECTING)
         setStatusText("Searching for adapter...")
 
-        val t = acquireTransport() ?: return
-
-        transport = t
-        val c = OcbmClient(t, ocbmLog)
-        c.onInfo = ::noteAdapterInfo
-        // Stable for this manager's whole life, NOT per client: a reattach after a USB blip is the same
-        // host and should warm-reuse the box's live session, whereas a new process must force a re-arm.
-        c.instanceNonce = instanceNonce
-        client = c
-        wireClientCallbacks(c)
-        c.start()
+        val first = openClient(acquireTransport() ?: return)
 
         // CT_HELLO, retransmitted until ACK. Failure here is Pattern A's trigger — keep the
         // "no initial response" substring, which remote log filters match on.
@@ -1847,11 +1958,8 @@ class CarlinkManager(
             logInfo("[LIFECYCLE] waiting $hold ms for the box to finish tearing down the session stopped before", tag = Logger.Tags.USB)
             delay(hold)
         }
-        if (!c.hello(helloMs)) {
-            starts.helloMissed(helloMs)
-            handleError("no initial response — no CT_HELLO_ACK from the adapter")
-            return
-        }
+        val c = helloed(first, helloMs) ?: return
+        linkedOverState.value = if (transport is WifiBulkTransport) ConnectOrder.Route.WIFI else ConnectOrder.Route.USB_BRIDGE
         // The adapter answered: once the link has stayed up RECONNECT_STABLE_MS, the next loss starts a fresh chain ([ReconnectBudget]).
         if (reconnects.used > 0) logInfo("[RECONNECT] reconnected after ${reconnects.used} attempt(s)", tag = Logger.Tags.USB)
         reconnects.linkUp(SystemClock.elapsedRealtime())
@@ -1881,6 +1989,56 @@ class CarlinkManager(
         phoneSetup.onSubscribed()
 
         setStatusText("Waiting for phone...")
+    }
+
+    /**
+     * CT_HELLO on [c] until its ACK: the client that got it, or null once the failure is handled. Over Wi-Fi the box refuses
+     * a host it won't take by closing the link, so that wait ends with it, and USB through the bridge, when it is
+     * installed, gets its turn in this same start. Over USB it is the wait it always was.
+     */
+    private suspend fun helloed(
+        c: OcbmClient,
+        helloMs: Long,
+    ): OcbmClient? {
+        val overWifi = transport is WifiBulkTransport
+        if (c.hello(helloMs, untilLinkDead = overWifi)) return c
+        if (overWifi && !released && CarlinkBridge.isInstalled(context)) {
+            logInfo("[WIFI] no CT_HELLO_ACK over Wi-Fi: USB through the bridge", tag = Logger.Tags.USB)
+            closeClient(c)
+            val usb = openClient(acquireBridgeTransport() ?: return null)
+            if (usb.hello(helloMs)) return usb
+        }
+        starts.helloMissed(helloMs)
+        handleError(if (transport is WifiBulkTransport) "wi-fi — no CT_HELLO_ACK over the Wi-Fi link" else "no initial response — no CT_HELLO_ACK from the adapter")
+        return null
+    }
+
+    /** The session's client on [t], wired and reading: one transport and one client per session, by contract. */
+    private fun openClient(t: RawBulkTransport): OcbmClient {
+        transport = t
+        val c = OcbmClient(t, ocbmLog)
+        c.onInfo = ::noteAdapterInfo
+        // Stable for this manager's whole life, NOT per client: a reattach after a USB blip is the same
+        // host and should warm-reuse the box's live session, whereas a new process must force a re-arm.
+        c.instanceNonce = instanceNonce
+        client = c
+        wireClientCallbacks(c)
+        c.start()
+        return c
+    }
+
+    /** A client that never got its HELLO_ACK, closed before the start tries another road. */
+    private fun closeClient(c: OcbmClient) {
+        c.stop(sendStop = false)
+        if (client === c) client = null
+        transport?.stop()
+        transport = null
+    }
+
+    /** The session is gone: how it reached the adapter, and what the adapter said of its Wi-Fi, with it. */
+    private fun linkEnded() {
+        linkedOverState.value = null
+        wifiSetup.sessionEnded()
     }
 
     /**
@@ -2028,6 +2186,7 @@ class CarlinkManager(
         client = null
         transport?.stop()
         transport = null
+        linkEnded()
 
         setState(State.DISCONNECTED)
         setStatusText("Disconnected")
@@ -2280,6 +2439,11 @@ class CarlinkManager(
 
     // ==================== Device Management ====================
 
+    /** Settings › Adapter connection, while it shows: MGMT_INFO again, for the adapter's `wifi_link` ([noteAdapterInfo]). */
+    fun refreshAdapterInfo() {
+        scope.launch(Dispatchers.IO) { client?.takeIf { it.helloAcked }?.mgmtGetInfo() }
+    }
+
     /**
      * Ask the box for a fresh device snapshot.
      *
@@ -2294,6 +2458,7 @@ class CarlinkManager(
     /** Every MGMT_INFO, whoever asked: the adapter's name, followed when it changes, for Settings and the pairing screen. */
     private fun noteAdapterInfo(json: String) {
         val info = runCatching { JSONObject(json) }.getOrNull() ?: return
+        wifiSetup.onAdapterInfo(WifiLinkInfo.from(info))
         preloadNote.line(info.optString("preload"))?.let { logInfo(it, tag = Logger.Tags.ADAPTR) }
         val name = info.optString("name").takeIf { it.isNotBlank() } ?: return
         val was = ocbmAdapterName
@@ -2928,6 +3093,7 @@ class CarlinkManager(
         client = null
         transport?.stop()
         transport = null
+        linkEnded()
 
         codecDeferred = true
         currentPhoneType = null
@@ -3007,6 +3173,11 @@ class CarlinkManager(
         logWarn("[USB] Device detached broadcast received", tag = Logger.Tags.USB)
         if (state == State.DISCONNECTED) {
             logInfo("[USB] Already disconnected, ignoring detach", tag = Logger.Tags.USB)
+            return
+        }
+        if (transport is WifiBulkTransport) {
+            // The session doesn't ride USB: if the adapter lost its power too, the link's own 3 s check ends it.
+            logInfo("[USB] detach while linked over Wi-Fi: the Wi-Fi link decides", tag = Logger.Tags.USB)
             return
         }
         handleError("USB device physically disconnected")
@@ -3478,7 +3649,8 @@ class CarlinkManager(
 
         // FATAL only. A box-side SEV_HOST_GONE is recoverable and the client's own backoff
         // re-subscribes; tearing down on it would fight that recovery.
-        c.onLinkDead = { reason -> handleError("usb — link dead: $reason") }
+        val road = if (transport is WifiBulkTransport) "wi-fi" else "usb"
+        c.onLinkDead = { reason -> handleError("$road — link dead: $reason") }
     }
 
     /**
@@ -4957,6 +5129,7 @@ class CarlinkManager(
         client = null
         transport?.stop()
         transport = null
+        linkEnded()
 
         val isNoResponse = error.contains("no initial response")
         if (isNoResponse) consecutiveNoResponse++ else consecutiveNoResponse = 0
@@ -5001,6 +5174,7 @@ class CarlinkManager(
         connectTimer.sessionDown(SystemClock.elapsedRealtime()) // ledger
         transport?.stop()
         transport = null
+        linkEnded()
         setState(State.DISCONNECTED)
         setStatusText(statusMsg)
         if (reconnects.used > 0) {
@@ -5015,6 +5189,7 @@ class CarlinkManager(
             lowerError.contains("detach") ||
             lowerError.contains("transfer") ||
             lowerError.contains("usb") ||
+            lowerError.contains("wi-fi") ||
             lowerError.contains("no initial response")
     }
 

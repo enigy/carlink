@@ -50,6 +50,7 @@ import com.carlink.cluster.ClusterBindingState
 import com.carlink.cluster.ClusterNavigation
 import com.carlink.cluster.ClusterRebind
 import com.carlink.convert.SharedStick
+import com.carlink.link.WifiLinkStore
 import com.carlink.logging.DriveLogging
 import com.carlink.logging.Logger
 import com.carlink.logging.VerboseLogging
@@ -391,7 +392,7 @@ class MainActivity : ComponentActivity() {
         lastBridgeInstalled = installed
         if (previous == installed) return
         if (!installed) {
-            logWarn("[BRIDGE_SETUP] USB bridge not installed — showing the setup panel", tag = "MAIN")
+            logWarn("[BRIDGE_SETUP] USB bridge not installed — ${if (WifiLinkStore.get(this).current.bridgeNeeded) "showing the setup panel" else "not needed"}", tag = "MAIN")
         } else if (previous == false) {
             // The bridge is Carlink's only way to the adapter, so a start that stopped at "Install
             // the Carlink USB bridge" is waiting for exactly this: connect now.

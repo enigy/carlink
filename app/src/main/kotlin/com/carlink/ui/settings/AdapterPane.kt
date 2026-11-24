@@ -39,7 +39,7 @@ import com.carlink.logging.logWarn
 
 /**
  * Adapter and about: the box's status in plain words (with the raw line kept for bug reports), how quickly the CarPlay
- * picture comes after the display ([ConnectTimeRow]), the app version and the privacy policy ([PrivacyRow]), the USB
+ * picture comes after the display ([ConnectTimeRow]), how Carlink reaches the adapter ([WifiLinkGroup]), the app version and the privacy policy ([PrivacyRow]), the USB
  * bridge's version and other apps' access ([UsbBridgeGroup]), and where lyrics come from and what of them the head unit
  * keeps ([LyricsGroup]). The log controls live under Troubleshoot ([LogsGroup]).
  */
@@ -67,6 +67,7 @@ internal fun AdapterPane(
                 UsbBridgeGroup(live)
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+                WifiLinkGroup(carlinkManager, live)
                 InstallGroup(carlinkManager)
                 LyricsGroup()
             }

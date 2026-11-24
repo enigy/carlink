@@ -49,4 +49,16 @@ class BenchGuardsTest {
         assertFalse("streaming: it would only blip the session", BenchGuards.flickerAllowed(State.STREAMING, dormant = false))
         assertFalse("disconnected, not after the wait", BenchGuards.flickerAllowed(State.DISCONNECTED, dormant = false))
     }
+
+    @Test
+    fun wifi_addr_takes_an_IPv4_address_and_a_port_only() {
+        val at = BenchGuards.wifiAddress("192.0.2.10", 7020)!!
+        assertEquals("192.0.2.10", at.hostString)
+        assertEquals(7020, at.port)
+        assertNull("a name is never looked up", BenchGuards.wifiAddress("adapter.local", 7020))
+        assertNull(BenchGuards.wifiAddress("192.0.2.256", 7020))
+        assertNull(BenchGuards.wifiAddress("192.0.2", 7020))
+        assertNull(BenchGuards.wifiAddress("192.0.2.10", 0))
+        assertNull(BenchGuards.wifiAddress("192.0.2.10", 70000))
+    }
 }

@@ -10,10 +10,12 @@ import com.carlink.DisplayOff
 import com.carlink.ledger.ConnectLedgerCodec
 import com.carlink.ledger.ConnectLedgerStore
 import com.carlink.ledger.ConnectLedgerText
+import com.carlink.link.WifiLinkBench
 import com.carlink.logging.LogRedactor
 import com.carlink.logging.Logger
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
+import com.carlink.ocbm.OcbwLink
 import com.carlink.ocbm.UpdatePhase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +59,9 @@ import java.io.File
  *   "[bench] ledger i/N {json}" per connect (its stored form, newest first) and "[bench] ledger end". A connect still in
  *   flight isn't in it yet. Needs no adapter or session.
  * - `ledger_clear`: delete the connect ledger, as "[bench] ledger cleared: N connects".
+ * - `wifi_addr --es host <IPv4> [--ei port <n>]`: the Wi-Fi link's search tries only this address (port 7020 unless
+ *   given), for this process: the bench emulator reaches the adapter through the Mac, and no mDNS crosses that. An empty
+ *   host clears it. Needs no session; takes effect at the next connect (Reset connection).
  */
 class BenchReceiver : BroadcastReceiver() {
     override fun onReceive(
@@ -69,6 +74,11 @@ class BenchReceiver : BroadcastReceiver() {
         }
         val m = CarlinkManager.live
         val what = intent.getStringExtra("do").orEmpty()
+        if (what == "wifi_addr") {
+            // The search's address, the head unit's: no manager needed.
+            wifiAddr(intent.getStringExtra("host").orEmpty(), intent.getIntExtra("port", OcbwLink.PORT))
+            return
+        }
         if (what in LEDGER_ACTIONS) {
             // The ledger is the head unit's, not a session's: no manager needed.
             val store = ConnectLedgerStore.get(context)
@@ -197,6 +207,24 @@ class BenchReceiver : BroadcastReceiver() {
             .pushToBox("/tmp/$name", "$content\n".toByteArray(Charsets.UTF_8))
             .onSuccess { logInfo("[bench] box_flag /tmp/$name = $content", tag = Logger.Tags.ADAPTR) }
             .onFailure { logWarn("[bench] box_flag /tmp/$name not written: ${it.message}", tag = Logger.Tags.ADAPTR) }
+    }
+
+    private fun wifiAddr(
+        host: String,
+        port: Int,
+    ) {
+        if (host.isEmpty()) {
+            WifiLinkBench.address = null
+            logInfo("[bench] wifi_addr cleared: the search uses the last address and mDNS again", tag = Logger.Tags.USB)
+            return
+        }
+        val at =
+            BenchGuards.wifiAddress(host, port) ?: run {
+                logWarn("[bench] wifi_addr refused: $host port $port is not an IPv4 address and a port", tag = Logger.Tags.USB)
+                return
+            }
+        WifiLinkBench.address = at
+        logInfo("[bench] wifi_addr ${at.hostString}:${at.port}: the Wi-Fi search tries only this, until cleared or the app restarts", tag = Logger.Tags.USB)
     }
 
     private fun printLedger(store: ConnectLedgerStore) {
