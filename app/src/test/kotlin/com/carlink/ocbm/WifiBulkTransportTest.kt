@@ -16,6 +16,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 
 /** The Wi-Fi link's transport against a fake box on loopback: the stream both ways, the keepalive, and the dead-link rule. */
@@ -134,6 +135,33 @@ class WifiBulkTransportTest {
         t.setDeadHandler { dead.countDown() }
         t.start()
         assertFalse("keepalives keep the link", dead.await(fast.deadMs * 3L, TimeUnit.MILLISECONDS))
+    }
+
+    @Test
+    fun `a box that stops reading ends the link within the write-stall time, though it keeps sending`() {
+        fakeBox { s, session ->
+            // Never reads; its keepalives keep the host's read side alive, so only the stuck write can end the link.
+            repeat(200) {
+                s.getOutputStream().write(session.tx.keepalive())
+                Thread.sleep(25)
+            }
+        }
+        val dead = CountDownLatch(1)
+        val t = link()
+        t.setDeadHandler { dead.countDown() }
+        t.start()
+        val failed = CountDownLatch(1)
+        val stuckAt = AtomicLong()
+        thread(isDaemon = true) {
+            val chunk = ByteArray(1 shl 20)
+            stuckAt.set(System.nanoTime())
+            while (t.writeBulk(chunk)) stuckAt.set(System.nanoTime())
+            failed.countDown()
+        }
+        assertTrue("the stuck write ends the link", dead.await(5, TimeUnit.SECONDS))
+        val ms = (System.nanoTime() - stuckAt.get()) / 1_000_000
+        assertTrue("dead $ms ms after the last write that drained; the rule is ${fast.writeStallMs}", ms <= fast.writeStallMs * 3)
+        assertTrue("the stuck write returns false", failed.await(3, TimeUnit.SECONDS))
     }
 
     @Test

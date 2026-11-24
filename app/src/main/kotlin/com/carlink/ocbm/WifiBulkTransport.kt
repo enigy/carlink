@@ -109,6 +109,8 @@ class WifiBulkTransport private constructor(
 
     @Volatile private var watchdog: Thread? = null
 
+    @Volatile private var keepaliveThread: Thread? = null
+
     @Volatile private var handler: ((ByteArray, Int) -> Unit)? = null
 
     @Volatile private var onDead: (() -> Unit)? = null
@@ -150,6 +152,7 @@ class WifiBulkTransport private constructor(
         lastWriteNs = System.nanoTime()
         readThread = Thread({ readLoop() }, "ocbm-wifi-read").apply { isDaemon = true }.also { it.start() }
         watchdog = Thread({ watch() }, "ocbm-wifi-watchdog").apply { isDaemon = true }.also { it.start() }
+        keepaliveThread = Thread({ keepAlive() }, "ocbm-wifi-keepalive").apply { isDaemon = true }.also { it.start() }
     }
 
     private fun readLoop() {
@@ -181,7 +184,10 @@ class WifiBulkTransport private constructor(
         }
     }
 
-    /** Close a socket whose write is stuck; send a keepalive when nothing went out for a while. */
+    /**
+     * Close a socket whose write is stuck, a keepalive's included. It never writes itself: a write that blocks (the peer
+     * stopped reading) must not stop the one check that ends it (the reviewer's 24 Nov finding 4).
+     */
     private fun watch() {
         while (running.get()) {
             try {
@@ -189,34 +195,43 @@ class WifiBulkTransport private constructor(
             } catch (_: InterruptedException) {
                 return
             }
-            val now = System.nanoTime()
             val since = writeSinceNs
-            if (since != 0L && now - since > timing.writeStallMs * NANOS_PER_MS) {
+            if (since != 0L && System.nanoTime() - since > timing.writeStallMs * NANOS_PER_MS) {
                 lastError = "a write didn't drain in ${timing.writeStallMs} ms"
                 log.w("wifi: $lastError — closing the link")
                 die(lastError ?: "write stalled")
                 return
             }
-            if (now - lastWriteNs >= timing.keepaliveMs * NANOS_PER_MS) sendKeepalive()
         }
     }
 
-    /** An empty record, unless a write holds the line (it is traffic already). */
-    private fun sendKeepalive() {
-        if (!writeLock.tryLock()) return
-        try {
-            if (!running.get()) return
-            writeSinceNs = System.nanoTime()
-            output.write(session.tx.keepalive())
-            output.flush()
-            keepalivesSent++
-            lastWriteNs = System.nanoTime()
-        } catch (e: IOException) {
-            lastError = lastError ?: "the Wi-Fi keepalive failed: ${e.message}"
-            die(lastError ?: "keepalive failed")
-        } finally {
-            writeSinceNs = 0L
-            writeLock.unlock()
+    /**
+     * An empty record whenever nothing went out for [Timing.keepaliveMs], unless a write holds the line (traffic already).
+     * On a thread of its own, which may block in its write: the watchdog then ends it.
+     */
+    private fun keepAlive() {
+        while (running.get()) {
+            try {
+                Thread.sleep(timing.tickMs)
+            } catch (_: InterruptedException) {
+                return
+            }
+            if (System.nanoTime() - lastWriteNs < timing.keepaliveMs * NANOS_PER_MS || !writeLock.tryLock()) continue
+            try {
+                if (!running.get()) return
+                writeSinceNs = System.nanoTime()
+                output.write(session.tx.keepalive())
+                output.flush()
+                keepalivesSent++
+                lastWriteNs = System.nanoTime()
+            } catch (e: IOException) {
+                lastError = lastError ?: "the Wi-Fi keepalive failed: ${e.message}"
+                die(lastError ?: "keepalive failed")
+                return
+            } finally {
+                writeSinceNs = 0L
+                writeLock.unlock()
+            }
         }
     }
 
@@ -261,7 +276,7 @@ class WifiBulkTransport private constructor(
     override fun stop() {
         running.set(false)
         runCatching { socket.close() } // ends a read parked in readLoop
-        listOf(readThread, watchdog).forEach { t ->
+        listOf(readThread, watchdog, keepaliveThread).forEach { t ->
             if (t != null && t !== Thread.currentThread()) {
                 t.interrupt()
                 try {
@@ -273,6 +288,7 @@ class WifiBulkTransport private constructor(
         }
         readThread = null
         watchdog = null
+        keepaliveThread = null
         log.i("wifi transport to $peer closed ($records records in, $bytesWritten B out)")
     }
 
