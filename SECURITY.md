@@ -21,7 +21,7 @@ Use GitHub's private reporting: open this repo's **Security** tab and choose **R
 
 Include what you can of:
 
-- The Carlink version (Settings › Adapter and about › App version) and the USB Bridge version.
+- The Carlink version (Settings › About › App version) and the USB Bridge version (Settings › Adapter › USB bridge).
 - The head unit, and the adapter's firmware (OCBM version or Carlinkit stock).
 - What an attacker can do, and what they need first: physical access, a paired phone, being on the adapter's Wi-Fi, or nothing.
 - Steps to reproduce, or a proof of concept.
