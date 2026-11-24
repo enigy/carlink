@@ -38,8 +38,8 @@ private val TextColor = Color(0xFFDDE4E5) // the overlay's fixed light text colo
 
 /**
  * Shown on the connecting screen in place of the status words while the USB bridge
- * (android.car.usb.handler) isn't installed (Carlink2 [210]), USB (bridge app) is chosen, and Android refused Carlink
- * the adapter itself (USB (direct), the GM head unit). This says so, points to Wi-Fi, and offers the head unit's
+ * (android.car.usb.handler) isn't installed (Carlink2 [210]) and the connection chosen needs it ([com.carlink.link.BridgePanel]).
+ * This says so, points to Wi-Fi, and offers the head unit's
  * built-in Files app to install it from a USB drive. MainActivity re-checks on resume, so the panel goes away once
  * the user comes back.
  */
@@ -49,8 +49,8 @@ fun BridgeSetupPanel(onOpenFiles: () -> Boolean) {
         SetupPanelSpec(
             title = "USB bridge not installed",
             body =
-                "This head unit doesn't let Carlink open the adapter itself, so Carlink needs its USB bridge to reach it, " +
-                    "and to show turn icons on the cluster. Or use Wi-Fi: Settings › Adapter and about. " +
+                "Carlink needs its USB bridge to reach the adapter on a head unit that doesn't let it open USB itself, " +
+                    "to convert a stock adapter, and to show turn icons on the cluster. Or use Wi-Fi: Settings › Adapter and about. " +
                     "To install the bridge while parked:\n" +
                     "1. Copy the bridge APK to a USB drive ($BRIDGE_APK_LOCATION).\n" +
                     "2. Plug the drive into a free USB port.\n" +

@@ -68,6 +68,7 @@ import com.carlink.BuildConfig
 import com.carlink.CarlinkManager
 import com.carlink.R
 import com.carlink.av.PictureWatch
+import com.carlink.link.BridgePanel
 import com.carlink.logging.logDebug
 import com.carlink.logging.logInfo
 import com.carlink.protocol.MessageSerializer
@@ -544,10 +545,10 @@ private fun ConnectingWords(
     // Once Wi-Fi or USB (direct) is chosen, nothing asks for the bridge (the Wi-Fi link plan's addendum 1); for USB (bridge
     // app) the panel comes once Android has refused Carlink the adapter itself (addendum 3).
     val wifiLink by carlinkManager.wifiLink.flow.collectAsState()
-    val directRefused by carlinkManager.usbDirectRefused.collectAsState()
+    val directUsb by carlinkManager.directUsb.collectAsState()
     when {
         // Carlink2 [210]/[211]: what the driver can do about the bridge, in place of the words.
-        !bridge.installed && wifiLink.bridgeNeeded && directRefused -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
+        BridgePanel.shows(bridge.installed, wifiLink.link, directUsb) -> BridgeSetupPanel(onOpenFiles = bridge.onOpenFiles)
         statusText.startsWith(BRIDGE_TROUBLE_PREFIX) -> BridgeNotStartingPanel(onOpenAppInfo = onOpenAppInfo)
         // Bridge API 6: another app has the adapter; Take back works while driving.
         handedTo != null ->

@@ -58,7 +58,9 @@ import com.carlink.ledger.ConnectLedgerStore
 import com.carlink.ledger.ConnectLedgerText
 import com.carlink.ledger.ConnectTimer
 import com.carlink.link.AdapterLink
+import com.carlink.link.BridgePanel
 import com.carlink.link.ConnectOrder
+import com.carlink.link.DirectUsb
 import com.carlink.link.SetupNetworkPort
 import com.carlink.link.SetupOverNetwork
 import com.carlink.link.WifiAttach
@@ -806,10 +808,10 @@ class CarlinkManager(
     /** Android's own USB prompt, for USB (direct). */
     private val directUsbPermission by lazy { DirectUsbPermission(context) }
 
-    private val usbDirectRefusedState = MutableStateFlow(false)
+    private val directUsbState = MutableStateFlow(DirectUsb.IDLE)
 
-    /** Android refused, or never answered, Carlink's own USB request: the bridge (or Wi-Fi) is then the way. */
-    val usbDirectRefused: StateFlow<Boolean> = usbDirectRefusedState.asStateFlow()
+    /** Where Carlink's own USB attempt stands: what the bridge's install panel goes by ([BridgePanel]). */
+    val directUsb: StateFlow<DirectUsb> = directUsbState.asStateFlow()
 
     /** The live session takes MGMT_WIFI_LINK (CAP_WIFI_LINK); null with no session to ask. */
     val wifiLinkSupported: Boolean? get() = client?.takeIf { it.helloAcked }?.supportsWifiLink
@@ -1668,7 +1670,7 @@ class CarlinkManager(
     /**
      * USB (direct): the adapter from the USB list, Android's own permission (asked once per attach, as the bridge asks;
      * an answer that comes late still connects: [UsbPermissionWait.watch]), then the adapter opened in Carlink's process.
-     * Where Android refuses, or never answers (the GM head unit), it says so and points to Wi-Fi ([usbDirectRefused]).
+     * Where Android refuses, or never answers (the GM head unit), it says so and points to Wi-Fi ([directUsb]).
      */
     private suspend fun acquireDirectTransport(): RawBulkTransport? {
         val dev = awaitAdapterListed()
@@ -1681,6 +1683,7 @@ class CarlinkManager(
         if (dev.vendorId != BridgeBulkTransport.VID_CARLINKIT || dev.productId != BridgeBulkTransport.PID_OCBM) {
             // A stock adapter or a shared stick: its conversion opens it through the bridge only.
             logInfo("[USB_DIRECT] ${dev.deviceName} isn't an OCBM adapter: nothing to open directly", tag = Logger.Tags.USB)
+            directUsbState.value = DirectUsb.STOCK
             cancelReconnect()
             handleFailedStart(if (StockAdapters.isStock(dev.vendorId, dev.productId)) STOCK_ADAPTER_STATUS else STICK_IN_ADAPTER_STATUS)
             return null
@@ -1688,19 +1691,20 @@ class CarlinkManager(
         ColdStart.process.adapterSeen(SystemClock.elapsedRealtime())
         val name = dev.deviceName
         val port = directUsbPermission.port(name)
+        directUsbState.value = DirectUsb.WAITING
         when (usbPermission.await(port, name) { setStatusText(ALLOW_USB_STATUS) }) {
             UsbPermissionWait.Outcome.GRANTED -> {
-                usbDirectRefusedState.value = false
+                directUsbState.value = DirectUsb.GRANTED
                 return openDirect(dev)
             }
             UsbPermissionWait.Outcome.CLOSED -> {
-                usbDirectRefusedState.value = true
+                directUsbState.value = DirectUsb.REFUSED
                 logWarn("[USB_DIRECT] Android denied Carlink $name", tag = Logger.Tags.USB)
                 handleFailedStart(USB_DIRECT_DENIED_STATUS)
             }
             UsbPermissionWait.Outcome.PENDING -> {
                 // No answer: on the GM head unit no prompt ever shows. A late OK still connects, as on the bridge's path.
-                usbDirectRefusedState.value = true
+                directUsbState.value = DirectUsb.REFUSED
                 cancelReconnect()
                 usbPermission.watch(port, name, stillWanted = { !released }) { startIfDisconnected("late USB permission grant") }
                 logWarn("[USB_DIRECT] Android didn't answer for $name: no USB without the bridge on this head unit?", tag = Logger.Tags.USB)
