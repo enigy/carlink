@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
@@ -24,7 +25,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.carlink.CarlinkManager
 import com.carlink.link.AdapterLink
 import com.carlink.link.SetupOverNetwork
@@ -153,14 +156,42 @@ private fun SetupNetworkRow(
             }
         })
     }
-    confirm?.let { asked ->
-        CarlinkDialog(
-            title = WifiLinkText.CONFIRM_TITLE,
-            text = WifiLinkText.confirmText(asked.networkName),
-            confirmLabel = "Send",
-            icon = Icons.Default.WifiTethering,
-            onConfirm = { carlinkManager.setupNetwork.answer(true) },
-            onDismiss = { carlinkManager.setupNetwork.answer(false) },
+    confirm?.let { asked -> SetupCodeDialog(asked) { match -> carlinkManager.setupNetwork.answer(match) } }
+}
+
+/**
+ * The set-up's one question (the plan's ADDENDUM 5): the code large, where the adapter now shows it, and two answers. As
+ * the pairing code's dialog, back or a tap outside answers nothing: a stray tap must not read as either. No answer in
+ * 150 s sends nothing ([SetupOverNetwork]).
+ */
+@Composable
+internal fun SetupCodeDialog(
+    asked: SetupOverNetwork.Confirm,
+    onAnswer: (Boolean) -> Unit,
+) {
+    CarlinkDialog(
+        title = WifiLinkText.CODE_TITLE,
+        text = WifiLinkText.codeText(asked.code, asked.networkName),
+        confirmLabel = WifiLinkText.CODE_MATCH,
+        dismissLabel = WifiLinkText.CODE_NO_MATCH,
+        onConfirm = {
+            logInfo("[UI_ACTION] Set-up code: they match", tag = "UI")
+            onAnswer(true)
+        },
+        onDismiss = {
+            logInfo("[UI_ACTION] Set-up code: they don't match", tag = "UI")
+            onAnswer(false)
+        },
+        icon = Icons.Default.Bluetooth,
+        dismissible = false,
+    ) {
+        Text(
+            text = asked.code,
+            // At a glance: as large as the pane's figures, digits of one width, a little apart.
+            style = MaterialTheme.typography.displayLarge.copy(fontSize = 80.sp, lineHeight = 88.sp, letterSpacing = 8.sp, fontFeatureSettings = "tnum"),
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
         )
     }
 }

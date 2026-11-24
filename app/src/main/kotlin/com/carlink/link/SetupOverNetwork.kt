@@ -3,22 +3,26 @@ package com.carlink.link
 import com.carlink.logging.ProbeLog
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbmClient
+import com.carlink.ocbm.OcbsSetup
 import com.carlink.ocbm.RawBulkTransport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * M3 (approved 24 Nov): the first Wi-Fi set-up of an adapter Carlink has no other session with (no USB bridge, USB
  * (direct) refused). Such an adapter, with no link and no host, offers its own set-up network for 10 minutes after
  * power-up ([com.carlink.ocbm.OcbsSetup]). Carlink joins it ([Port.join]: Android's network request, one system dialog,
  * or a network the driver joined by hand in the car's Wi-Fi settings), runs the set-up exchange on a socket bound to it,
- * and sends the hotspot through the same [WifiLinkSetup] as any session. Then it lets the network go, so the head unit
- * goes back to the phone's hotspot, where the Wi-Fi search finds the adapter.
+ * asks the driver one question ([Confirm]: the set-up code, which the adapter now shows as its Bluetooth name), and only
+ * when the driver says they match sends CT_HELLO and the hotspot, through the same [WifiLinkSetup] as any session. Then it
+ * lets the network go, so the head unit goes back to the phone's hotspot, where the Wi-Fi search finds the adapter.
  */
 class SetupOverNetwork(
     private val port: Port,
@@ -38,20 +42,22 @@ class SetupOverNetwork(
         val release: () -> Unit,
     )
 
-    /** The set-up link: the transport, and the exchange's transcript (both points) for a code a later version may show. */
+    /** The set-up link: the transport, and the exchange's transcript (host_pub | box_pub), whose code the driver checks. */
     class Linked(
         val transport: RawBulkTransport,
         val transcript: ByteArray,
     )
 
     /**
-     * What the driver confirms before the hotspot is sent (the reviewer's 24 Nov finding 6): the network Carlink joined,
-     * by [networkName] (null: Android won't say, so the driver checks the car's Wi-Fi settings). [transcript] is kept for a
-     * short code both sides could show, which the owner has yet to decide on: none is shown now.
+     * The one question before anything is sent (the plan's ADDENDUM 5): the set-up [code], which the adapter now shows as its
+     * Bluetooth name (`CarLink code NNNN`), so the driver sees that Carlink reached THEIR adapter. [networkName]: the set-up
+     * network Carlink joined, null when Android won't name it; the question then also asks the driver to check the car's
+     * Wi-Fi settings (the review's 24 Nov finding 6). A name that can be read has been checked already ([Port.join]): a
+     * network joined by hand is taken only when its name is a set-up network's.
      */
     class Confirm(
+        val code: String,
         val networkName: String?,
-        val transcript: ByteArray,
     )
 
     interface Port {
@@ -76,8 +82,24 @@ class SetupOverNetwork(
         BUSY,
         KEY_STORE,
 
-        /** The driver didn't confirm the network (or not in time): nothing was sent. */
+        /** The driver didn't answer the code in time: nothing was sent. */
         NOT_CONFIRMED,
+
+        /** The driver said the codes don't match: nothing was sent, the link closed. Another adapter or network answered. */
+        NO_MATCH,
+
+        /** The link ended while the driver was asked: nothing was sent. */
+        LINK_LOST,
+    }
+
+    /** How the question ended; [result] is what the set-up then ends in, null to go on. */
+    private enum class Answer(
+        val result: Result?,
+    ) {
+        MATCH(null),
+        NO_MATCH(Result.NO_MATCH),
+        NONE(Result.NOT_CONFIRMED),
+        LINK_LOST(Result.LINK_LOST),
     }
 
     private val phaseState = MutableStateFlow(Phase.IDLE)
@@ -85,14 +107,14 @@ class SetupOverNetwork(
 
     private val confirmState = MutableStateFlow<Confirm?>(null)
 
-    /** The question the driver answers ([answer]) before the hotspot goes; null when none is asked. */
+    /** The question the driver answers ([answer]) before anything is sent; null when none is asked. */
     val confirm: StateFlow<Confirm?> = confirmState.asStateFlow()
 
-    @Volatile private var answerTo: CompletableDeferred<Boolean>? = null
+    @Volatile private var answerTo: CompletableDeferred<Answer>? = null
 
-    /** The driver's answer to [confirm]: send or not. */
-    fun answer(send: Boolean) {
-        answerTo?.complete(send)
+    /** The driver's answer to [confirm]: the code Carlink shows matches the adapter's Bluetooth name, or not. */
+    fun answer(match: Boolean) {
+        answerTo?.complete(if (match) Answer.MATCH else Answer.NO_MATCH)
     }
 
     private val resultState = MutableStateFlow<Result?>(null)
@@ -100,12 +122,14 @@ class SetupOverNetwork(
     /** How the last set-up ended; null before one, or while one runs. */
     val result: StateFlow<Result?> = resultState.asStateFlow()
 
-    /** Join, exchange, send [ssid] and [password] (checked by the caller), and let the network go. */
+    private val running = AtomicBoolean(false)
+
+    /** Join, exchange, ask, send [ssid] and [password] (checked by the caller), and let the network go. */
     suspend fun run(
         ssid: String,
         password: String,
     ): Result {
-        if (phaseState.value == Phase.JOINING || phaseState.value == Phase.EXCHANGING) return Result.BUSY
+        if (!running.compareAndSet(false, true)) return Result.BUSY
         resultState.value = null
         phaseState.value = Phase.JOINING
         val r =
@@ -114,6 +138,7 @@ class SetupOverNetwork(
                 if (joined == null) Result.NOT_JOINED else exchange(joined, ssid, password)
             } finally {
                 phaseState.value = Phase.DONE
+                running.set(false)
             }
         resultState.value = r
         log.i("set-up over the adapter's set-up network: $r")
@@ -138,41 +163,73 @@ class SetupOverNetwork(
                     log.w("set-up port: ${e.javaClass.simpleName}: ${e.message}")
                     return Result.NO_ADAPTER
                 }
-            val c = OcbmClient(t.transport, log)
-            c.start()
-            try {
-                if (!withContext(Dispatchers.IO) { c.hello(helloMs, untilLinkDead = true) }) return Result.NO_ADAPTER
-                if (!confirmed(Confirm(joined.name, t.transcript))) return Result.NOT_CONFIRMED
-                val setup = WifiLinkSetup(store, { sessionOf(c) }) { log.i(it) }
-                return when (setup.send(ssid, password)) {
-                    WifiLinkSetup.Sent.SENT, WifiLinkSetup.Sent.SENT_RECONNECTING -> Result.SENT
-                    WifiLinkSetup.Sent.NOT_SUPPORTED, WifiLinkSetup.Sent.NO_STATION -> Result.NOT_SUPPORTED
-                    WifiLinkSetup.Sent.REFUSED -> Result.REFUSED
-                    WifiLinkSetup.Sent.NO_ANSWER -> Result.NO_ANSWER
-                    WifiLinkSetup.Sent.NO_SESSION -> Result.NO_ADAPTER
-                    WifiLinkSetup.Sent.BUSY -> Result.BUSY
-                    WifiLinkSetup.Sent.KEY_STORE -> Result.KEY_STORE
-                }
-            } finally {
-                withContext(Dispatchers.IO) { c.stop(sendStop = false) }
-            }
+            return session(t, joined.name, ssid, password)
         } finally {
             runCatching { joined.release() }
         }
     }
 
-    /** Ask the driver; false when they say no or don't answer within [confirmMs] (the adapter's window is 30 s in all). */
-    private suspend fun confirmed(question: Confirm): Boolean {
-        val answer = CompletableDeferred<Boolean>()
+    /**
+     * The set-up session: the question first, with nothing sent but the link's keepalives; then, on a match, CT_HELLO and
+     * MGMT_WIFI_LINK, exactly the frames the adapter's set-up session takes. Every way out closes the link.
+     */
+    private suspend fun session(
+        t: Linked,
+        networkName: String?,
+        ssid: String,
+        password: String,
+    ): Result {
+        val c = OcbmClient(t.transport, log)
+        val answer = CompletableDeferred<Answer>()
+        // The link ending while the driver is asked (out of range, the adapter's power, its own limit) closes the question.
+        c.onLinkDead = { answer.complete(Answer.LINK_LOST) }
+        // From here each side sends an empty record after a second of nothing: the adapter shows its code at the first one.
+        c.start()
+        try {
+            val code = OcbsSetup.code(t.transcript) ?: return Result.NO_ADAPTER
+            ask(Confirm(code, networkName), answer).result?.let { return it }
+            if (!withContext(Dispatchers.IO) { c.hello(helloMs, untilLinkDead = true) }) return Result.NO_ADAPTER
+            return send(c, ssid, password)
+        } finally {
+            // Also when the set-up is cancelled while the driver is asked: the link must not outlive it.
+            withContext(NonCancellable + Dispatchers.IO) { c.stop(sendStop = false) }
+        }
+    }
+
+    /** Ask the driver; [Answer.NONE] when they don't answer within [confirmMs]. [answer] may already hold the link's end. */
+    private suspend fun ask(
+        question: Confirm,
+        answer: CompletableDeferred<Answer>,
+    ): Answer {
         answerTo = answer
         phaseState.value = Phase.CONFIRMING
-        confirmState.value = question
+        if (!answer.isCompleted) {
+            confirmState.value = question
+            log.i("set-up: the code is shown; waiting for the driver (${confirmMs / MS_PER_S} s)")
+        }
         return try {
-            withTimeoutOrNull(confirmMs) { answer.await() } ?: false
+            (withTimeoutOrNull(confirmMs) { answer.await() } ?: Answer.NONE).also { log.i("set-up: the question ended: $it") }
         } finally {
             confirmState.value = null
             answerTo = null
             phaseState.value = Phase.EXCHANGING
+        }
+    }
+
+    private suspend fun send(
+        c: OcbmClient,
+        ssid: String,
+        password: String,
+    ): Result {
+        val setup = WifiLinkSetup(store, { sessionOf(c) }) { log.i(it) }
+        return when (setup.send(ssid, password)) {
+            WifiLinkSetup.Sent.SENT, WifiLinkSetup.Sent.SENT_RECONNECTING -> Result.SENT
+            WifiLinkSetup.Sent.NOT_SUPPORTED, WifiLinkSetup.Sent.NO_STATION -> Result.NOT_SUPPORTED
+            WifiLinkSetup.Sent.REFUSED -> Result.REFUSED
+            WifiLinkSetup.Sent.NO_ANSWER -> Result.NO_ANSWER
+            WifiLinkSetup.Sent.NO_SESSION -> Result.NO_ADAPTER
+            WifiLinkSetup.Sent.BUSY -> Result.BUSY
+            WifiLinkSetup.Sent.KEY_STORE -> Result.KEY_STORE
         }
     }
 
@@ -188,8 +245,12 @@ class SetupOverNetwork(
     private companion object {
         const val HELLO_MS = 5_000L
 
-        /** Inside the adapter's 30 s for the whole exchange, after its handshake and the HELLO. */
-        const val CONFIRM_MS = 20_000L
+        /**
+         * No answer in 150 s sends nothing (ADDENDUM 5: the driver opens a Bluetooth list). Inside the adapter's 180 s from
+         * the exchange's end to MGMT_WIFI_LINK, with HELLO's 5 s and the ACK's 5 s after it.
+         */
+        const val CONFIRM_MS = 150_000L
         const val ANSWER_MS = 5_000L
+        const val MS_PER_S = 1_000L
     }
 }

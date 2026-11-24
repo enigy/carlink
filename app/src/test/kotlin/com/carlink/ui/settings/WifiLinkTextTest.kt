@@ -7,6 +7,7 @@ import com.carlink.link.WifiLinkSettings
 import com.carlink.link.WifiLinkSetup
 import com.carlink.ocbm.WifiLinkInfo
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -64,5 +65,24 @@ class WifiLinkTextTest {
             assertTrue(line, line.contains("used before") && line.contains("OCBM_WIFI_RESET"))
         }
         assertTrue(WifiLinkText.setupNetworkLine(SetupOverNetwork.Phase.IDLE, null, "MyCar").contains("never used"))
+    }
+
+    @Test
+    fun `the set-up question names the adapter's Bluetooth name, says a list can lag, and folds the network check in`() {
+        val readable = WifiLinkText.codeText("2092", "CarLink-Setup-1a2b")
+        assertTrue(readable, readable.contains("\"CarLink code 2092\"") && readable.contains("Bluetooth list") && readable.contains("take a moment"))
+        assertFalse("a name Carlink could read and check costs no more words", readable.contains("Wi-Fi settings"))
+        val unreadable = WifiLinkText.codeText("0007", null)
+        assertTrue(unreadable, unreadable.contains("\"CarLink code 0007\"") && unreadable.contains("car's Wi-Fi settings") && unreadable.contains("CarLink-Setup-"))
+        assertTrue(WifiLinkText.setupNetworkLine(SetupOverNetwork.Phase.CONFIRMING, null, "MyCar").contains("Bluetooth name"))
+    }
+
+    @Test
+    fun `a set-up that ends at the question says nothing was sent, and why`() {
+        assertTrue(WifiLinkText.setupNetworkResult(SetupOverNetwork.Result.NO_MATCH, "MyCar").contains("another adapter or network answered"))
+        for (r in listOf(SetupOverNetwork.Result.NO_MATCH, SetupOverNetwork.Result.NOT_CONFIRMED, SetupOverNetwork.Result.LINK_LOST)) {
+            val line = WifiLinkText.setupNetworkResult(r, "MyCar")
+            assertTrue(line, line.lowercase().contains("nothing was sent"))
+        }
     }
 }

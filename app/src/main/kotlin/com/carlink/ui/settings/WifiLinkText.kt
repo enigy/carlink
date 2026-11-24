@@ -119,7 +119,7 @@ internal object WifiLinkText {
         when {
             phase == SetupOverNetwork.Phase.JOINING -> "Joining the adapter's set-up Wi-Fi. Pick ${OcbsSetup.SSID_PREFIX}... if Android asks."
             phase == SetupOverNetwork.Phase.EXCHANGING -> "Sending the hotspot to the adapter..."
-            phase == SetupOverNetwork.Phase.CONFIRMING -> "Check the network's name, then send."
+            phase == SetupOverNetwork.Phase.CONFIRMING -> "Compare the code with the adapter's Bluetooth name."
             result == null -> "No other way to the adapter? A new adapter, never used, offers its own Wi-Fi, ${OcbsSetup.SSID_PREFIX}..., for 10 minutes after power-up."
             else -> setupNetworkResult(result, ssid)
         }
@@ -139,19 +139,34 @@ internal object WifiLinkText {
             SetupOverNetwork.Result.NO_ANSWER -> sentLine(WifiLinkSetup.Sent.NO_ANSWER, ssid)
             SetupOverNetwork.Result.BUSY -> sentLine(WifiLinkSetup.Sent.BUSY, ssid)
             SetupOverNetwork.Result.KEY_STORE -> sentLine(WifiLinkSetup.Sent.KEY_STORE, ssid)
-            SetupOverNetwork.Result.NOT_CONFIRMED -> "Not sent. Tap Set up again within 10 minutes of the adapter's power-up."
+            SetupOverNetwork.Result.NOT_CONFIRMED -> "No answer in time, so nothing was sent. $SET_UP_AGAIN"
+            SetupOverNetwork.Result.NO_MATCH -> "Nothing was sent: another adapter or network answered. Try again closer to your adapter."
+            SetupOverNetwork.Result.LINK_LOST -> "The link to the adapter dropped, so nothing was sent. $SET_UP_AGAIN"
         }
 
-    const val CONFIRM_TITLE = "Send to this adapter?"
+    private const val SET_UP_AGAIN = "Tap Set up again within 10 minutes of the adapter's power-up."
 
-    /** The question before the hotspot goes to the set-up network Carlink joined. */
-    fun confirmText(networkName: String?): String =
-        if (networkName != null) {
-            "Carlink joined \"$networkName\". Send your hotspot's name and password to the adapter on it?"
-        } else {
-            "This head unit doesn't let Carlink read the network's name. Check the car's Wi-Fi settings show " +
-                "${OcbsSetup.SSID_PREFIX}... as connected, then send."
-        }
+    /** The set-up's one question (the plan's ADDENDUM 5): the code, shown large under [codeText], and its two answers. */
+    const val CODE_TITLE = "Is this your adapter?"
+    const val CODE_MATCH = "They match"
+    const val CODE_NO_MATCH = "They don't match"
+
+    /**
+     * Where the driver checks the code, that a phone's list can lag, and, when Android won't name the network Carlink joined
+     * ([networkName] null), the car's Wi-Fi settings too: one question, never a second.
+     */
+    fun codeText(
+        code: String,
+        networkName: String?,
+    ): String =
+        "The adapter's Bluetooth name now reads \"${OcbsSetup.CODE_NAME_PREFIX}$code\" in your iPhone's Bluetooth list, or the car's. " +
+            "Your iPhone's list can take a moment to show the new name." +
+            if (networkName != null) {
+                ""
+            } else {
+                " Android won't let Carlink read the Wi-Fi network's name here, so check too that the car's Wi-Fi settings show " +
+                    "${OcbsSetup.SSID_PREFIX}... as connected."
+            }
 
     /** What the adapter says of its Wi-Fi link (MGMT_INFO). */
     fun infoLine(info: WifiLinkInfo): String =
