@@ -20,6 +20,13 @@ object WifiLinkProvisioning {
     const val PASSPHRASE_MAX = 63
     const val SSID_MAX_BYTES = 32
 
+    /**
+     * The hotspot's name as an iPhone writes it: an iPhone's name carries the curly apostrophe (U+2019), which a head
+     * unit's keyboard can't type, and the adapter matches the name byte for byte (bench of 24 Nov 2026: a plain one
+     * never joined). So a typed plain apostrophe becomes the curly one, in the field, where the driver sees it.
+     */
+    fun hotspotName(typed: String): String = typed.replace('\'', '\u2019')
+
     /** PBKDF2's iterations and output for the WPA key (IEEE 802.11i, H.4). */
     private const val PBKDF2_ITERATIONS = 4096
     private const val PSK_BYTES = 32

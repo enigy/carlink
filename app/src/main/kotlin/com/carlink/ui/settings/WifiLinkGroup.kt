@@ -108,7 +108,7 @@ private fun WifiSetUp(
     val info by carlinkManager.wifiSetup.info.collectAsState()
     val miss by carlinkManager.wifiMiss.collectAsState()
     val linkedOver by carlinkManager.linkedOver.collectAsState()
-    var ssid by remember(settings.ssid) { mutableStateOf(settings.ssid) }
+    var ssid by remember(settings.ssid) { mutableStateOf(WifiLinkProvisioning.hotspotName(settings.ssid)) }
     var password by remember { mutableStateOf("") }
     HotspotFields(ssid, password, enabled = live.parked && !busy, onSsid = { ssid = it }, onPassword = { password = it })
     val name = ssid.trim()
@@ -240,13 +240,16 @@ private fun HotspotFields(
         Text(WifiLinkText.HOTSPOT_BODY, style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedTextField(
             value = ssid,
-            onValueChange = { onSsid(it.take(WifiLinkProvisioning.SSID_MAX_BYTES)) },
+            onValueChange = { onSsid(WifiLinkProvisioning.hotspotName(it).take(WifiLinkProvisioning.SSID_MAX_BYTES)) },
             label = { Text("Hotspot name") },
             singleLine = true,
             enabled = enabled,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
         )
+        if ('\u2019' in ssid) {
+            Text(WifiLinkText.APOSTROPHE_NOTE, style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         OutlinedTextField(
             value = password,
             onValueChange = { onPassword(it.take(WifiLinkProvisioning.PASSPHRASE_MAX)) },

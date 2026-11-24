@@ -70,6 +70,8 @@ internal object WifiLinkText {
             if (!bridgeInstalled) add(BRIDGE_MISSING)
         }
 
+    const val APOSTROPHE_NOTE = "An apostrophe is written the way an iPhone's name has it (\u2019)."
+
     /** The Send row's line before a send: what stands in the way, or that it is ready. */
     fun readyLine(
         blocked: WifiLinkSetup.Sent?,

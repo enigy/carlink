@@ -6,6 +6,7 @@ import com.carlink.link.SetupOverNetwork
 import com.carlink.link.WifiLinkSettings
 import com.carlink.link.WifiLinkSetup
 import com.carlink.ocbm.WifiLinkInfo
+import com.carlink.ocbm.WifiLinkProvisioning
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -84,5 +85,13 @@ class WifiLinkTextTest {
             val line = WifiLinkText.setupNetworkResult(r, "MyCar")
             assertTrue(line, line.lowercase().contains("nothing was sent"))
         }
+    }
+
+    @Test
+    fun `a typed apostrophe becomes the iPhone's curly one and nothing else changes`() {
+        assertEquals("Sam\u2019s iPhone", WifiLinkProvisioning.hotspotName("Sam's iPhone"))
+        assertEquals("Sam\u2019s iPhone", WifiLinkProvisioning.hotspotName("Sam\u2019s iPhone"))
+        assertEquals("plain-name_5G", WifiLinkProvisioning.hotspotName("plain-name_5G"))
+        assertEquals(14, WifiLinkProvisioning.hotspotName("Sam's iPhone").toByteArray(Charsets.UTF_8).size)
     }
 }
