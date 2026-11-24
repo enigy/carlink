@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** Where Settings › Adapter's "Remove stock CarPlay" stands ([StockRemover.state]). */
+/** Where Settings › Adapter Config's "Remove stock CarPlay" stands ([StockRemover.state]). */
 sealed interface StockRemoval {
     data object Idle : StockRemoval
 
@@ -32,7 +32,7 @@ sealed interface StockRemoval {
 }
 
 /**
- * "Remove stock CarPlay" in Settings › Adapter (Scott, 2 Nov): the driver finishes a proven trial on purpose, so
+ * "Remove stock CarPlay" in Settings › Adapter Config (Scott, 2 Nov): the driver finishes a proven trial on purpose, so
  * later updates have the room without asking. It checks the trial as an update needing the room does ([proven]: a
  * passed self-test and a CarPlay session; [finishBlocked]), asks, and on Yes sends the install confirm ([confirm]).
  * The adapter removes stock CarPlay when that drive ends; the install then reads `confirmed`, then `final`.

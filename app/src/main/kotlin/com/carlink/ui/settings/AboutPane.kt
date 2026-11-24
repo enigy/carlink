@@ -27,7 +27,7 @@ import com.carlink.logging.logWarn
 /**
  * About (owner, 24 Nov: split out of Adapter and about): the app's version and the privacy policy ([PrivacyRow]), and where
  * lyrics come from and what of them the head unit keeps ([LyricsGroup]). Two columns, each group in the column it had
- * there: the app's on the left, lyrics on the right. The adapter's rows are under Adapter ([AdapterPane]).
+ * there: the app's on the left, lyrics on the right. The adapter's rows are under Adapter Config ([AdapterPane]).
  */
 @Composable
 internal fun AboutPane(modifier: Modifier = Modifier) {

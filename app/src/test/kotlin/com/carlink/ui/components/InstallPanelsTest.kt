@@ -12,8 +12,8 @@ class InstallPanelsTest {
     fun `the welcome card names the installed version, the failsafe and where to remove it`() {
         val text = trialText(OneFileInstall(InstallMode.TRIAL, "1.0.1"))
         assertTrue(text.startsWith("OCBM 1.0.1 has been installed, and your adapter passed its self-test."))
-        // Removing stock firmware is under Adapter since Adapter and About became two panels (owner, 24 Nov).
-        assertTrue(text.contains("by going to Carlink Settings > Adapter. "))
+        // Removing stock firmware is under Adapter Config since Adapter and About became two panels (owner, 24 Nov).
+        assertTrue(text.contains("by going to Carlink Settings > Adapter Config. "))
         assertTrue(text.endsWith("should you need it."))
         assertFalse("the trial no longer finishes on its own", text.contains("drive ends"))
         assertTrue(trialText(OneFileInstall(InstallMode.TRIAL)).startsWith("OCBM has been installed"))

@@ -28,7 +28,7 @@ import com.carlink.ui.components.updateLine
 import com.carlink.ui.components.updateTitle
 
 /**
- * Settings › Adapter for an OCBM one-file install (handoff 10-28, plan page's mockup): the adapter's
+ * Settings › Adapter Config for an OCBM one-file install (handoff 10-28, plan page's mockup): the adapter's
  * firmware and a newer OCBM to update it to, whether stock CarPlay is still kept, and the way back to it
  * while it is. Showing the way back confirms nothing: the install finishes only when the driver agrees to
  * for an update (Scott, 1 Nov).

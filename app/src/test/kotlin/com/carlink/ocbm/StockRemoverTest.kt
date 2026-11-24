@@ -12,7 +12,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Settings › Adapter's "Remove stock CarPlay" (Scott, 2 Nov): checked, asked, and only then confirmed. */
+/** Settings › Adapter Config's "Remove stock CarPlay" (Scott, 2 Nov): checked, asked, and only then confirmed. */
 @RunWith(RobolectricTestRunner::class)
 class StockRemoverTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

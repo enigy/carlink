@@ -114,7 +114,7 @@ data class BridgeAccess(
     }
 }
 
-/** Words and rules for Settings' USB bridge group and Bridge Configuration pane, apart from Compose so they are testable. */
+/** Words and rules for Settings' USB bridge group and Bridge Config pane, apart from Compose so they are testable. */
 object BridgeAccessText {
     const val SWITCH_TITLE = "Let other apps use the adapter"
     const val SWITCH_OFF = "Only Carlink can reach the adapter."
@@ -151,7 +151,7 @@ object BridgeAccessText {
             else -> SwitchState(false, SWITCH_OFF, enabled = true)
         }
 
-    /** The Bridge Configuration row's summary in the category list, e.g. "2 approved · Example has the adapter". */
+    /** The Bridge Config row's summary in the category list, e.g. "2 approved · Example has the adapter". */
     fun summary(access: BridgeAccess): String {
         val approved = "${access.approved.size} approved"
         val holder = access.handedToLabel?.let { "$it has the adapter" } ?: "Carlink has the adapter"

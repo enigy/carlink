@@ -207,7 +207,7 @@ private fun SettingsBody(
     // Another iPhone's profile is for parked editing: driving puts Settings back on the one in use.
     LaunchedEffect(panes.live.driving) { if (panes.live.driving) DriverProfiles.edit(context, null) }
     val summaries = categorySummaries(panes, savedMode)
-    // Bridge API 6: read other apps' access each time Settings opens; Bridge Configuration is listed only while it is on.
+    // Bridge API 6: read other apps' access each time Settings opens; Bridge Config is listed only while it is on.
     LaunchedEffect(visible) { if (visible) BridgeAccessHub.refresh(context) }
     val bridgeAccess by BridgeAccessHub.state.collectAsState()
     val bridgeOn = bridgeAccess.on

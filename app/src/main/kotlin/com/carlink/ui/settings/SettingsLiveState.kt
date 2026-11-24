@@ -28,7 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * The merged settings screen's categories, in list order (owner, 24 Nov): Adapter and Bridge Configuration side by side,
+ * The merged settings screen's categories, in list order (owner, 24 Nov): Adapter and Bridge Config side by side,
  * then About, and Troubleshoot last.
  */
 enum class SettingsCategory(
@@ -40,22 +40,22 @@ enum class SettingsCategory(
     CLUSTER("Cluster & HUD", Icons.Default.Navigation),
     CALLS("Calls", Icons.Default.Mic),
     VEHICLE("Vehicle", Icons.Default.DirectionsCar),
-    ADAPTER("Adapter", Icons.Default.Memory),
+    ADAPTER("Adapter Config", Icons.Default.Memory),
 
     /**
-     * Listed only while other apps' access is on (bridge API 6; Adapter › USB bridge). Under Adapter, not above it: the
-     * switch that lists it is in Adapter, so turning it on adds a row below the one open, and the rows above stay put.
+     * Listed only while other apps' access is on (bridge API 6; Adapter Config › USB bridge). Under Adapter Config, not above it: the
+     * switch that lists it is in Adapter Config, so turning it on adds a row below the one open, and the rows above stay put.
      */
-    BRIDGE("Bridge Configuration", Icons.Default.Usb),
+    BRIDGE("Bridge Config", Icons.Default.Usb),
     ABOUT("About", Icons.Default.Info),
     TROUBLESHOOT("Troubleshoot", Icons.Default.Build),
     ;
 
     companion object {
-        /** The list as Settings shows it: Bridge Configuration only while other apps' access is on ([bridgeOn]). */
+        /** The list as Settings shows it: Bridge Config only while other apps' access is on ([bridgeOn]). */
         fun listed(bridgeOn: Boolean): List<SettingsCategory> = entries.filter { it != BRIDGE || bridgeOn }
 
-        /** The pane to keep open: [selected], or Adapter once Bridge Configuration is no longer listed. */
+        /** The pane to keep open: [selected], or Adapter once Bridge Config is no longer listed. */
         fun fallback(
             selected: SettingsCategory,
             bridgeOn: Boolean,

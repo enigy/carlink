@@ -9,7 +9,7 @@ import com.carlink.link.WifiLinkSetup
 import com.carlink.ocbm.OcbsSetup
 import com.carlink.ocbm.WifiLinkInfo
 
-/** The words of Settings › Adapter and about › Adapter connection ([WifiLinkGroup]). */
+/** The words of Settings › Adapter Config and about › Adapter connection ([WifiLinkGroup]). */
 internal object WifiLinkText {
     const val TITLE = "Adapter connection"
     const val HOTSPOT_TITLE = "iPhone's hotspot"

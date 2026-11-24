@@ -669,7 +669,7 @@ class CarlinkManager(
     /** The adapters that have carried a CarPlay session in their trial: one must have before its install finishes. */
     private val carPlaySessions = CarPlaySessionRecord(context.applicationContext)
 
-    /** Settings › Adapter's "Remove stock CarPlay": the driver finishes a proven trial on purpose (Scott, 2 Nov). */
+    /** Settings › Adapter Config's "Remove stock CarPlay": the driver finishes a proven trial on purpose (Scott, 2 Nov). */
     val stockRemoval =
         StockRemover(
             proven = { finishBlocked(client?.let(::selfTestOf), carriedCarPlay()) },
@@ -683,7 +683,7 @@ class CarlinkManager(
      */
     fun offersStockRemoval(install: OneFileInstall): Boolean = mayConfirmInstall(install.mode, buildAllows = BuildConfig.INSTALL_CONFIRM)
 
-    /** Updating the adapter in use to a newer OCBM from Settings › Adapter (remote updates plan, U2). */
+    /** Updating the adapter in use to a newer OCBM from Settings › Adapter Config (remote updates plan, U2). */
     val adapterUpdate =
         AdapterUpdateSession(
             host =
@@ -753,7 +753,7 @@ class CarlinkManager(
     private val wifiLog = ProbeLog.sub("wifi")
 
     /**
-     * The Wi-Fi link (Settings › Adapter and about › Adapter connection): the driver's USB or Wi-Fi, the hotspot the
+     * The Wi-Fi link (Settings › Adapter Config and about › Adapter connection): the driver's USB or Wi-Fi, the hotspot the
      * adapter joins, the link key (sealed by the Keystore) and the last address it answered on.
      */
     val wifiLink: WifiLinkStore = WifiLinkStore.get(context)
@@ -1925,7 +1925,7 @@ class CarlinkManager(
         )
 
     /**
-     * Settings › Bridge Configuration › Hand over: Carlink's session ends (CarPlay stops), then the bridge hands the
+     * Settings › Bridge Config › Hand over: Carlink's session ends (CarPlay stops), then the bridge hands the
      * adapter to [packageName]. Null when it did; otherwise the bridge's refusal, and Carlink connects again. The whole
      * handover runs on the manager's scope, the pane only awaiting it: a pane left while the stop waited for the lock ended
      * with no session, no handover and no reconnect (the Mac's 14 Nov review, W3).

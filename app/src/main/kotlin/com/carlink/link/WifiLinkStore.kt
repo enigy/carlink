@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * How Carlink reaches the adapter (Settings › Adapter and about › Adapter connection), in the order Settings lists them.
+ * How Carlink reaches the adapter (Settings › Adapter Config and about › Adapter connection), in the order Settings lists them.
  * Persisted by [code], never ordinal.
  *
  * - Wi-Fi: the link over the phone's hotspot ([com.carlink.ocbm.WifiBulkTransport]).

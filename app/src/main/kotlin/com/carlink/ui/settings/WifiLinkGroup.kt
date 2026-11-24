@@ -44,7 +44,7 @@ import kotlinx.coroutines.launch
 private const val INFO_POLL_MS = 3_000L
 
 /**
- * Settings › Adapter and about › Adapter connection (the Wi-Fi link plan of 23 Nov): USB through the bridge, or Wi-Fi over
+ * Settings › Adapter Config and about › Adapter connection (the Wi-Fi link plan of 23 Nov): USB through the bridge, or Wi-Fi over
  * the iPhone's hotspot. Offered whether or not an adapter is connected (addendum 1: a driver with no bridge has no session
  * to read the capability from); the adapter's capability is checked once there is a session. The hotspot's name and
  * password go to the adapter over whatever session Carlink has ([com.carlink.link.WifiLinkSetup]); the password is hashed

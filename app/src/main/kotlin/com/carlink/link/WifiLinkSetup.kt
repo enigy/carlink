@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 /**
- * The Wi-Fi link's set-up (Settings › Adapter and about › Adapter connection): sends the phone hotspot's name, its WPA key
+ * The Wi-Fi link's set-up (Settings › Adapter Config and about › Adapter connection): sends the phone hotspot's name, its WPA key
  * and this head unit's link key to the adapter (MGMT_WIFI_LINK), and removes them. It takes whatever session Carlink has
  * with the adapter ([Session]), however that session reached it: the USB bridge in M1, the Wi-Fi link itself to change
  * the hotspot, and later the adapter's set-up network (the plan's addendum 1). Nothing here knows USB.

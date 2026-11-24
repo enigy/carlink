@@ -36,7 +36,7 @@ internal fun AdapterPane(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(28.dp)) {
-        PaneHeader(title = "Adapter")
+        PaneHeader(title = "Adapter Config")
         Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
             // Left: the adapter and its connect time, then the USB bridge. Right: how Carlink reaches the adapter, then
             // its firmware. Each where it sat in Adapter and about; that pane's app and lyrics rows are About's (owner, 24 Nov).

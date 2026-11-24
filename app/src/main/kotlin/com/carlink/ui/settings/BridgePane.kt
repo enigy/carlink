@@ -35,10 +35,10 @@ import kotlinx.coroutines.launch
 import java.util.Date
 
 /**
- * Adapter › USB bridge (bridge 1.0.8, API 6): the bridge's version, and the owner's opt-in that lets apps
+ * Adapter Config › USB bridge (bridge 1.0.8, API 6): the bridge's version, and the owner's opt-in that lets apps
  * they approve use the adapter. Turning it on is for parked, behind the risk dialog; turning it off works while
  * driving and needs no dialog. From 2.24, the bridge this Carlink pins when it is newer ([BridgeUpdateRows]).
- * In Adapter, not Bridge Configuration: that pane is listed only while this switch is on.
+ * In Adapter, not Bridge Config: that pane is listed only while this switch is on.
  */
 @Composable
 internal fun UsbBridgeGroup(
@@ -103,7 +103,7 @@ internal fun UsbBridgeGroup(
 }
 
 /**
- * Bridge Configuration, listed while other apps' access is on: who has the adapter (with Take back), the approved
+ * Bridge Config, listed while other apps' access is on: who has the adapter (with Take back), the approved
  * apps (Hand over, Remove), the apps asking for access (Approve, Dismiss), and turning access off. Hand over and
  * Approve are for parked; Take back, Remove, Dismiss and Turn off work while driving.
  */
@@ -126,7 +126,7 @@ internal fun BridgePane(
     val refusalFor: (String) -> String? = { row -> refusal?.takeIf { it.first == row }?.second }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(28.dp)) {
-        PaneHeader(title = "Bridge Configuration", subtitle = "Apps you approve can use the adapter while you hand it over.")
+        PaneHeader(title = "Bridge Config", subtitle = "Apps you approve can use the adapter while you hand it over.")
         SettingsGroup {
             SettingRow(title = "Who has the adapter", subtitle = BridgeAccessText.holderLine(access, clock), icon = Icons.Default.Usb) {
                 if (access.handedTo != null) RowAction("Take back", onClick = { run(HOLDER_ROW) { carlinkManager.takeBackAdapter() } })
