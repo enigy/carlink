@@ -211,8 +211,8 @@ private fun SettingsBody(
     LaunchedEffect(visible) { if (visible) BridgeAccessHub.refresh(context) }
     val bridgeAccess by BridgeAccessHub.state.collectAsState()
     val bridgeOn = bridgeAccess.on
-    val categories = SettingsCategory.entries.filter { it != SettingsCategory.BRIDGE || bridgeOn }
-    LaunchedEffect(bridgeOn) { if (!bridgeOn && selected == SettingsCategory.BRIDGE) selected = SettingsCategory.ADAPTER }
+    val categories = SettingsCategory.listed(bridgeOn)
+    LaunchedEffect(bridgeOn) { selected = SettingsCategory.fallback(selected, bridgeOn) }
 
     LaunchedEffect(selected) { logInfo("[UI_STATE] Settings category: $selected", tag = "UI") }
     val pick: (SettingsCategory) -> Unit = {
