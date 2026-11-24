@@ -3,6 +3,7 @@ package com.carlink.ocbm
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -14,6 +15,7 @@ import java.net.Socket
 import java.security.AlgorithmParameters
 import java.security.KeyFactory
 import java.security.KeyPair
+import java.security.MessageDigest
 import java.security.Signature
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECFieldFp
@@ -124,9 +126,35 @@ class OcbsVectorsTest {
                 assertEquals(OcbwLink.Sealer(hexBytes(H2B)!!).seal("OCBM".toByteArray()).toHex(), session.tx.seal("OCBM".toByteArray()).toHex())
                 assertEquals(OcbwLink.Sealer(hexBytes(B2H)!!).seal("OCBM".toByteArray()).toHex(), boxSession!!.tx.seal("OCBM".toByteArray()).toHex())
                 assertArrayEquals(hostPub, OcbsSetup.encode(host.public as ECPublicKey))
+                // The order trap on the live path: the host keeps host_pub | box_pub, so both sides show the vector's code.
+                assertEquals("2092", OcbsSetup.code(session.transcript))
+                assertEquals("2092", OcbsSetup.code(boxSession!!.transcript))
             }
         }
     }
+
+    @Test
+    fun `the set-up code is the architect's vector, 2092, and 3978 with the points swapped`() {
+        val digest = MessageDigest.getInstance("SHA-256").digest("OCBS v1 code".toByteArray() + hostPub + boxPub)
+        assertEquals(CODE_DIGEST, digest.toHex())
+        assertEquals("2092", OcbsSetup.code(hostPub + boxPub))
+        // box_pub | host_pub: one side would show another code than the other, and the driver could never match them.
+        assertEquals("3978", OcbsSetup.code(boxPub + hostPub))
+    }
+
+    @Test
+    fun `the code is four digits, zero-padded, and only for two whole points`() {
+        // The code reads the bytes alone; these two pairs (0x04 then 64 equal bytes each, found by a search) end in 0000 and
+        // 0007 (digests 63ed8330... and ac6748d7...).
+        assertEquals("0000", OcbsSetup.code(point(0x13) + point(0x48)))
+        assertEquals("0007", OcbsSetup.code(point(0x00) + point(0xae)))
+        assertNull("one point is no transcript", OcbsSetup.code(hostPub))
+        assertNull(OcbsSetup.code(ByteArray(0)))
+        assertNull(OcbsSetup.code(hostPub + boxPub + byteArrayOf(0)))
+    }
+
+    /** 0x04 and 64 bytes of [fill]: the shape of a point, for the code's padding (no curve involved). */
+    private fun point(fill: Int): ByteArray = byteArrayOf(4) + ByteArray(64) { fill.toByte() }
 
     @Test
     fun `a point off the curve, a short point and the wrong magic are refused`() {
@@ -159,5 +187,8 @@ class OcbsVectorsTest {
         const val Z = "ccfc261f58193c98ca4ad4a53bbac6f0ee29bc4d48438090446908622ca79af6"
         const val H2B = "263e0d8efff4f691378e9b34501d35b52dc05692b96021e40cc2e2505abcd4e4"
         const val B2H = "e414baa6ea6e0160cc2e31bfce7645e7b6c5db9657c5cb3af58e02e6fa3fada4"
+
+        /** SHA-256("OCBS v1 code" | host_pub | box_pub), the plan's ADDENDUM 5 (computed by the architect). */
+        const val CODE_DIGEST = "66ce8b3c25c5f65e6e40bed0735ce316977299b0ebb2c5031842d943933a6460"
     }
 }

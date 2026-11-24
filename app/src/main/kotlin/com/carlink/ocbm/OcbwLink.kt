@@ -145,7 +145,7 @@ object OcbwLink {
 
     /**
      * A finished handshake: [tx] seals what this side sends, [rx] opens what it receives. [transcript]: what both sides
-     * sent in it, where a handshake keeps it (the set-up exchange's two points), for a code both could show.
+     * sent in it, where a handshake keeps it (the set-up exchange's two points), for the code both show ([OcbsSetup.code]).
      */
     class Session(
         val tx: Sealer,

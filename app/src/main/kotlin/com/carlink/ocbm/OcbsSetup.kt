@@ -4,11 +4,13 @@ import java.io.DataInputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.math.BigInteger
+import java.nio.ByteBuffer
 import java.security.AlgorithmParameters
 import java.security.GeneralSecurityException
 import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.KeyPairGenerator
+import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
@@ -30,9 +32,11 @@ import javax.crypto.KeyAgreement
  *   info "OCBS v1 host->box" / "OCBS v1 box->host"
  * ```
  *
- * Then OCBW v1's record layer exactly ([OcbwLink.Sealer], [OcbwLink.Opener], keepalives), with CT_HELLO, CT_SETTIME,
- * MGMT_GET_INFO and MGMT_WIFI_LINK the only frames the box takes. Trust is first-come within the window: the adapter has
- * no screen to show a code on. P-256 is the platform's (Conscrypt on the head unit): no new library.
+ * Then OCBW v1's record layer exactly ([OcbwLink.Sealer], [OcbwLink.Opener], keepalives), with CT_HELLO and
+ * MGMT_WIFI_LINK the only frames the box takes. Trust is first-come within the window. The 4-digit [code] (the plan's
+ * ADDENDUM 5), which Carlink shows and the adapter, with no screen, shows as its Bluetooth name, is a check against
+ * mistakes, not against an attacker who also fakes a Bluetooth name. P-256 is the platform's (Conscrypt on the head
+ * unit): no new library.
  */
 object OcbsSetup {
     val MAGIC: ByteArray = byteArrayOf('O'.code.toByte(), 'C'.code.toByte(), 'B'.code.toByte(), 'S'.code.toByte())
@@ -53,6 +57,12 @@ object OcbsSetup {
 
     private val H2B = "OCBS v1 host->box".toByteArray(Charsets.US_ASCII)
     private val B2H = "OCBS v1 box->host".toByteArray(Charsets.US_ASCII)
+
+    /** The set-up code's digits, and the adapter's Bluetooth name while it shows them: `CarLink code NNNN`. */
+    const val CODE_DIGITS = 4
+    const val CODE_NAME_PREFIX = "CarLink code "
+    private const val CODE_MOD = 10_000u
+    private val CODE_LABEL = "OCBS v1 code".toByteArray(Charsets.US_ASCII)
 
     private val params: ECParameterSpec by lazy {
         AlgorithmParameters.getInstance("EC").run {
@@ -100,6 +110,23 @@ object OcbsSetup {
         boxPub: ByteArray,
     ): OcbwLink.Keys = OcbwLink.Keys(OcbwLink.hkdf32(hostPub + boxPub, z, H2B), OcbwLink.hkdf32(hostPub + boxPub, z, B2H))
 
+    /**
+     * The set-up code of an exchange (the plan's ADDENDUM 5): 4 decimal digits, zero-padded, the first 4 bytes of
+     * SHA-256(`"OCBS v1 code"` | host_pub | box_pub) read as a big-endian u32, modulo 10000. [transcript] is host_pub |
+     * box_pub (130 bytes) as [hostHandshake] keeps it; null for anything else. No wire change: both points are the
+     * exchange's own. The architect's vector, pinned in OcbsVectorsTest: the fixed keys' points give 2092, and 3978 swapped.
+     */
+    fun code(transcript: ByteArray): String? {
+        if (transcript.size != 2 * POINT_LEN) return null
+        val digest =
+            MessageDigest.getInstance("SHA-256").run {
+                update(CODE_LABEL)
+                update(transcript)
+                digest()
+            }
+        return (ByteBuffer.wrap(digest).int.toUInt() % CODE_MOD).toString().padStart(CODE_DIGITS, '0')
+    }
+
     /** The host's side on a fresh connection to the set-up port. Blocking: give the socket a read timeout first. */
     fun hostHandshake(
         input: InputStream,
@@ -114,7 +141,7 @@ object OcbsSetup {
         return OcbwLink.Session(OcbwLink.Sealer(keys.hostToBox), OcbwLink.Opener(keys.boxToHost), transcript = hostPub + boxPub)
     }
 
-    /** The box's side, for tests: a fake adapter's set-up listener. */
+    /** The box's side, for tests: a fake adapter's set-up listener. Its transcript is in the same order, host_pub | box_pub. */
     fun boxHandshake(
         input: InputStream,
         output: OutputStream,
@@ -125,7 +152,7 @@ object OcbsSetup {
         output.write(hello(boxPub))
         output.flush()
         val keys = sessionKeys(sharedX(own.private, decode(hostPub)), hostPub, boxPub)
-        return OcbwLink.Session(OcbwLink.Sealer(keys.boxToHost), OcbwLink.Opener(keys.hostToBox))
+        return OcbwLink.Session(OcbwLink.Sealer(keys.boxToHost), OcbwLink.Opener(keys.hostToBox), transcript = hostPub + boxPub)
     }
 
     private fun hello(pub: ByteArray): ByteArray = MAGIC + byteArrayOf(VERSION) + pub
