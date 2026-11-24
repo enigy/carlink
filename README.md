@@ -145,7 +145,7 @@ Below them are the logs:
 
 ### Adapter and about
 
-The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. **Connect time** says how long CarPlay took from the display coming on to the picture, over your last 20 wakes. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them. **Adapter connection** picks how Carlink reaches the adapter: **Wi-Fi** (the adapter joins your iPhone's hotspot: send its name and password once, over USB or, with no USB at all, over the adapter's own set-up Wi-Fi, which only a never-used adapter offers, for 10 minutes after power-up; to offer it again, power the adapter up with a USB stick in it that holds an empty file named `OCBM_WIFI_RESET`), **USB (direct)** (Carlink opens the adapter itself, where Android lets it) or **USB (bridge app)**, the default. With Wi-Fi the bridge is optional; without it the cluster and HUD show no turn icons. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
+The app version, the privacy policy's address (with Open, for a head unit that has a web browser), the adapter's name and mode, and its health: Bluetooth, Wi-Fi, CarPlay and firmware. **Connect time** says how long CarPlay took from the display coming on to the picture, over your last 20 wakes. On an adapter newly converted to OCBM, stock CarPlay stays as its fallback until you tap **Remove stock CarPlay**, which asks first; after that, the USB stick from the install holds the way back. Under **Lyrics**: **Look up lyrics** (on by default; off, no song name ever leaves the head unit and the music card has no lyrics), where the lyrics come from ([LRCLIB](https://lrclib.net), free and crowd-sourced), how many songs' lyrics the head unit keeps and the space they take (kept until they fill 100 MB, then the least played go first), and **Clear** to delete them. **Adapter connection** picks how Carlink reaches the adapter: **Wi-Fi** (the adapter joins your iPhone's hotspot: send its name and password once, over USB or, with no USB at all, over the adapter's own set-up Wi-Fi ([Set up Wi-Fi with no USB](#set-up-wi-fi-with-no-usb)), which only a never-used adapter offers, for 10 minutes after power-up; to offer it again, power the adapter up with a USB stick in it that holds an empty file named `OCBM_WIFI_RESET`), **USB (direct)** (Carlink opens the adapter itself, where Android lets it) or **USB (bridge app)**, the default. With Wi-Fi the bridge is optional; without it the cluster and HUD show no turn icons. Under **USB bridge**: the bridge's version, and **Let other apps use the adapter** ([Using the USB bridge from another app](#using-the-usb-bridge-from-another-app)).
 
 ## Install in four steps
 
@@ -156,7 +156,19 @@ First, the adapter needs lvalen91's OCBM userspace, installed per his documentat
 3. While parked, open Carlink. It shows **USB bridge not installed** with an **Open Files** button that opens the head unit's hidden Files app. Insert the USB drive, open the drive and tap the APK. If asked, allow Files to install apps.
 4. When the install finishes, tap the Carlink notification (or press Home and open Carlink).
 
-Can't sideload the bridge? Choose **Wi-Fi** under **Settings › Adapter and about › Adapter connection** instead: the adapter needs firmware with the Wi-Fi link, and the cluster and HUD then show no turn icons.
+Can't sideload the bridge? Choose **Wi-Fi** under **Settings › Adapter and about › Adapter connection** instead: the adapter needs firmware with the Wi-Fi link, and the cluster and HUD then show no turn icons. With no USB at all, set it up over the adapter's own Wi-Fi ([Set up Wi-Fi with no USB](#set-up-wi-fi-with-no-usb)).
+
+### Set up Wi-Fi with no USB
+
+A never-used adapter offers its own set-up Wi-Fi, `CarLink-Setup-xxxx`, for 10 minutes after power-up. While parked, with your iPhone's Personal Hotspot on:
+
+1. In **Settings › Adapter and about › Adapter connection**, choose **Wi-Fi**, type the hotspot's name and password, and tap **Set up** on **Set up over the adapter's Wi-Fi**. If Android asks, pick `CarLink-Setup-xxxx`.
+2. Carlink shows a 4-digit code, and the adapter's Bluetooth name changes to **CarLink code** and the same 4 digits. Find it in your iPhone's Bluetooth list, or the car's (a phone's list can take a moment to show the new name). If they match, tap **They match**, and Carlink sends the hotspot's name and password to the adapter. If they don't, tap **They don't match**: nothing is sent. With no answer in 150 s, nothing is sent either.
+3. The adapter joins the hotspot, and Carlink finds it there once the head unit is on the hotspot too.
+
+The code lets you see that Carlink is talking to your adapter (not a neighbour's adapter in its own set-up window, not a stale network). It is **not** proof against an attacker in radio range who also fakes a Bluetooth name: a Bluetooth name is not an authenticated channel. First-come trust within the window stays the security model; the code is a check against mistakes.
+
+An adapter that has been used doesn't offer the set-up Wi-Fi; to offer it again, power the adapter up with a USB stick in it that holds an empty file named `OCBM_WIFI_RESET`.
 
 ### About the bridge
 
