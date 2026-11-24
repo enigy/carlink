@@ -111,7 +111,7 @@ object OcbsSetup {
         output.flush()
         val boxPub = readHello(DataInputStream(input))
         val keys = sessionKeys(sharedX(own.private, decode(boxPub)), hostPub, boxPub)
-        return OcbwLink.Session(OcbwLink.Sealer(keys.hostToBox), OcbwLink.Opener(keys.boxToHost))
+        return OcbwLink.Session(OcbwLink.Sealer(keys.hostToBox), OcbwLink.Opener(keys.boxToHost), transcript = hostPub + boxPub)
     }
 
     /** The box's side, for tests: a fake adapter's set-up listener. */

@@ -26,6 +26,9 @@
     <!-- M3, the adapter's set-up network (link/SetupNetworkPort): Android's request to join it (WifiNetworkSpecifier).
          A normal permission. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- The same: the set-up network's name, read before anything is sent to it (Android gives it only with fine
+         location granted and location on; otherwise the driver checks it on screen). A normal permission. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Carlink cluster/HUD navigation (from Carlink2): the Templates Host route. Both are normal

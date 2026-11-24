@@ -6,10 +6,11 @@ import com.carlink.logging.ProbeLog
 import com.carlink.ocbm.Framing
 import com.carlink.ocbm.Ocbm
 import com.carlink.ocbm.OcbsSetup
-import com.carlink.ocbm.RawBulkTransport
 import com.carlink.ocbm.Reassembler
 import com.carlink.ocbm.WifiBulkTransport
 import com.carlink.ocbm.WifiLinkProvisioning
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
@@ -43,11 +44,16 @@ class SetupOverNetworkTest {
         val joins: Boolean = true,
         val answers: Boolean = true,
     ) : SetupOverNetwork.Port {
-        override suspend fun join(): SetupOverNetwork.Joined? = if (joins) SetupOverNetwork.Joined(null, byHand = false) { released++ } else null
+        override suspend fun join(): SetupOverNetwork.Joined? = if (joins) SetupOverNetwork.Joined(null, byHand = false, name = "CarLink-Setup-0000") { released++ } else null
 
-        override fun connect(joined: SetupOverNetwork.Joined): RawBulkTransport {
+        override fun connect(joined: SetupOverNetwork.Joined): SetupOverNetwork.Linked {
             if (!answers) throw IOException("connect timed out")
-            return WifiBulkTransport.open(InetSocketAddress("127.0.0.1", server.localPort), ProbeLog.silent()) { i, o -> OcbsSetup.hostHandshake(i, o) }
+            var transcript = ByteArray(0)
+            val t =
+                WifiBulkTransport.open(InetSocketAddress("127.0.0.1", server.localPort), ProbeLog.silent()) { i, o ->
+                    OcbsSetup.hostHandshake(i, o).also { transcript = it.transcript }
+                }
+            return SetupOverNetwork.Linked(t, transcript)
         }
     }
 
@@ -55,7 +61,19 @@ class SetupOverNetworkTest {
     fun `the hotspot and a new link key go over the set-up exchange, and the network is let go`() {
         fakeAdapter()
         val setup = SetupOverNetwork(FakePort(), store, ProbeLog.silent())
-        assertEquals(SetupOverNetwork.Result.SENT, runBlocking { setup.run("MyCar", "password") })
+        var asked: SetupOverNetwork.Confirm? = null
+        val r =
+            runBlocking {
+                launch {
+                    asked = setup.confirm.first { it != null }
+                    assertTrue("nothing goes before the driver says send", bodies.isEmpty())
+                    setup.answer(true)
+                }
+                setup.run("MyCar", "password")
+            }
+        assertEquals(SetupOverNetwork.Result.SENT, r)
+        assertEquals("the driver sees the network Carlink joined", "CarLink-Setup-0000", asked!!.networkName)
+        assertEquals("both points, for a code a later version may show", 2 * OcbsSetup.POINT_LEN, asked!!.transcript.size)
         val body = bodies.poll(5, TimeUnit.SECONDS)!!
         assertArrayEquals(store.linkKey(), body.copyOfRange(1, 33))
         assertEquals(WifiLinkProvisioning.wpaPsk("password", "MyCar"), String(body, 40, 64))
@@ -75,8 +93,45 @@ class SetupOverNetworkTest {
     @Test
     fun `an adapter that refuses the settings leaves nothing set up`() {
         fakeAdapter(status = 1)
-        assertEquals(SetupOverNetwork.Result.REFUSED, runBlocking { SetupOverNetwork(FakePort(), store, ProbeLog.silent()).run("MyCar", "password") })
+        val setup = SetupOverNetwork(FakePort(), store, ProbeLog.silent())
+        val r =
+            runBlocking {
+                launch {
+                    setup.confirm.first { it != null }
+                    setup.answer(true)
+                }
+                setup.run("MyCar", "password")
+            }
+        assertEquals(SetupOverNetwork.Result.REFUSED, r)
         assertFalse(store.current.setUp)
+    }
+
+    @Test
+    fun `a driver who doesn't confirm, or not in time, sends nothing`() {
+        fakeAdapter()
+        val setup = SetupOverNetwork(FakePort(), store, ProbeLog.silent())
+        val r =
+            runBlocking {
+                launch {
+                    setup.confirm.first { it != null }
+                    setup.answer(false)
+                }
+                setup.run("MyCar", "password")
+            }
+        assertEquals(SetupOverNetwork.Result.NOT_CONFIRMED, r)
+        fakeAdapter()
+        assertEquals(SetupOverNetwork.Result.NOT_CONFIRMED, runBlocking { SetupOverNetwork(FakePort(), store, ProbeLog.silent(), confirmMs = 200).run("MyCar", "password") })
+        assertTrue(bodies.isEmpty())
+        assertFalse(store.current.setUp)
+    }
+
+    @Test
+    fun `a network joined by hand is taken only when its name is a set-up network's, or can't be read`() {
+        assertTrue(SetupNetworkNames.acceptsByHand("CarLink-Setup-1a2b"))
+        assertTrue("unreadable: the driver checks it on screen", SetupNetworkNames.acceptsByHand(null))
+        assertFalse(SetupNetworkNames.acceptsByHand("Some Cafe"))
+        assertEquals("CarLink-Setup-1a2b", SetupNetworkNames.ssidOf("\"CarLink-Setup-1a2b\""))
+        assertEquals(null, SetupNetworkNames.ssidOf("<unknown ssid>"))
     }
 
     /** An adapter offering its set-up network: OCBS v1, then HELLO and MGMT_WIFI_LINK only. */

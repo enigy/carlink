@@ -143,10 +143,14 @@ object OcbwLink {
         cause: Throwable? = null,
     ) : IOException(message, cause)
 
-    /** A finished handshake: [tx] seals what this side sends, [rx] opens what it receives. */
+    /**
+     * A finished handshake: [tx] seals what this side sends, [rx] opens what it receives. [transcript]: what both sides
+     * sent in it, where a handshake keeps it (the set-up exchange's two points), for a code both could show.
+     */
     class Session(
         val tx: Sealer,
         val rx: Opener,
+        val transcript: ByteArray = ByteArray(0),
     )
 
     /**

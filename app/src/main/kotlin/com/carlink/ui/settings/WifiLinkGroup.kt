@@ -142,7 +142,8 @@ private fun SetupNetworkRow(
     val scope = rememberCoroutineScope()
     val phase by carlinkManager.setupNetwork.phase.collectAsState()
     val result by carlinkManager.setupNetwork.result.collectAsState()
-    val running = phase == SetupOverNetwork.Phase.JOINING || phase == SetupOverNetwork.Phase.EXCHANGING
+    val confirm by carlinkManager.setupNetwork.confirm.collectAsState()
+    val running = phase != SetupOverNetwork.Phase.IDLE && phase != SetupOverNetwork.Phase.DONE
     GroupDivider()
     SettingRow(title = WifiLinkText.SETUP_NETWORK_TITLE, subtitle = WifiLinkText.setupNetworkLine(phase, result, ssid), icon = Icons.Default.WifiTethering) {
         RowAction("Set up", enabled = enabled && !running, onClick = {
@@ -151,6 +152,16 @@ private fun SetupNetworkRow(
                 logInfo("[UI_ACTION] Set up over the adapter's Wi-Fi: $r", tag = "UI")
             }
         })
+    }
+    confirm?.let { asked ->
+        CarlinkDialog(
+            title = WifiLinkText.CONFIRM_TITLE,
+            text = WifiLinkText.confirmText(asked.networkName),
+            confirmLabel = "Send",
+            icon = Icons.Default.WifiTethering,
+            onConfirm = { carlinkManager.setupNetwork.answer(true) },
+            onDismiss = { carlinkManager.setupNetwork.answer(false) },
+        )
     }
 }
 

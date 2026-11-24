@@ -106,6 +106,7 @@ internal object WifiLinkText {
         when {
             phase == SetupOverNetwork.Phase.JOINING -> "Joining the adapter's set-up Wi-Fi. Pick ${OcbsSetup.SSID_PREFIX}... if Android asks."
             phase == SetupOverNetwork.Phase.EXCHANGING -> "Sending the hotspot to the adapter..."
+            phase == SetupOverNetwork.Phase.CONFIRMING -> "Check the network's name, then send."
             result == null -> "No other way to the adapter? Power it up with no Wi-Fi link: for 10 minutes it offers its own Wi-Fi, ${OcbsSetup.SSID_PREFIX}..."
             else -> setupNetworkResult(result, ssid)
         }
@@ -124,6 +125,18 @@ internal object WifiLinkText {
             SetupOverNetwork.Result.NO_ANSWER -> sentLine(WifiLinkSetup.Sent.NO_ANSWER, ssid)
             SetupOverNetwork.Result.BUSY -> sentLine(WifiLinkSetup.Sent.BUSY, ssid)
             SetupOverNetwork.Result.KEY_STORE -> sentLine(WifiLinkSetup.Sent.KEY_STORE, ssid)
+            SetupOverNetwork.Result.NOT_CONFIRMED -> "Not sent. Tap Set up again within 10 minutes of the adapter's power-up."
+        }
+
+    const val CONFIRM_TITLE = "Send to this adapter?"
+
+    /** The question before the hotspot goes to the set-up network Carlink joined. */
+    fun confirmText(networkName: String?): String =
+        if (networkName != null) {
+            "Carlink joined \"$networkName\". Send your hotspot's name and password to the adapter on it?"
+        } else {
+            "This head unit doesn't let Carlink read the network's name. Check the car's Wi-Fi settings show " +
+                "${OcbsSetup.SSID_PREFIX}... as connected, then send."
         }
 
     /** What the adapter says of its Wi-Fi link (MGMT_INFO). */
