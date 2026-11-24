@@ -34,6 +34,9 @@ class SetupOverNetworkTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val server = ServerSocket(0)
     private val bodies = LinkedBlockingQueue<ByteArray>()
+
+    /** Every OCBM frame the fake adapter got, as "channel:first byte:size". */
+    private val frames = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val store = WifiLinkStore(context, FakeSealer(), "setup_network_test")
     private var released = 0
 
@@ -74,6 +77,11 @@ class SetupOverNetworkTest {
         assertEquals(SetupOverNetwork.Result.SENT, r)
         assertEquals("the driver sees the network Carlink joined", "CarLink-Setup-0000", asked!!.networkName)
         assertEquals("both points, for a code a later version may show", 2 * OcbsSetup.POINT_LEN, asked!!.transcript.size)
+        // Exactly what the set-up session takes: CT_HELLO (repeated until its ACK), then one MGMT_WIFI_LINK with a body.
+        val hello = "${Ocbm.CH_CTRL}:${Ocbm.CT_HELLO}:"
+        assertTrue(frames.toString(), frames.dropLast(1).isNotEmpty() && frames.dropLast(1).all { it.startsWith(hello) })
+        // The verb and its body for "MyCar": version, key, the name and the hashed key, each with its length (1 + 104 B).
+        assertEquals("${Ocbm.CH_MGMT}:${Ocbm.MGMT_WIFI_LINK}:105", frames.last())
         val body = bodies.poll(5, TimeUnit.SECONDS)!!
         assertArrayEquals(store.linkKey(), body.copyOfRange(1, 33))
         assertEquals(WifiLinkProvisioning.wpaPsk("password", "MyCar"), String(body, 40, 64))
@@ -150,11 +158,16 @@ class SetupOverNetworkTest {
                         while (true) {
                             val f = reasm.next() ?: break
                             val p = f.payload
+                            frames.add("${f.channel}:${p.firstOrNull()}:${p.size}")
+                            // As the adapter's set-up session (24 Nov, night): CT_HELLO, and MGMT_WIFI_LINK with a body; anything
+                            // else closes the link with nothing sent.
                             if (f.channel == Ocbm.CH_CTRL && p[0] == Ocbm.CT_HELLO) {
                                 send(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_HELLO_ACK, Ocbm.VERSION, 0, (Ocbm.CAP_WIFI_LINK ushr 8).toByte(), 0, 0, Ocbm.MODE_PROJECTION))
-                            } else if (f.channel == Ocbm.CH_MGMT && p[0] == Ocbm.MGMT_WIFI_LINK) {
+                            } else if (f.channel == Ocbm.CH_MGMT && p[0] == Ocbm.MGMT_WIFI_LINK && p.size > 1) {
                                 bodies.add(p.copyOfRange(1, p.size))
                                 send(Ocbm.CH_MGMT, byteArrayOf(Ocbm.MGMT_ACK, Ocbm.MGMT_WIFI_LINK, status.toByte()))
+                            } else {
+                                return@runCatching
                             }
                         }
                     }
