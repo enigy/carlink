@@ -336,6 +336,25 @@ class OcbmClientTest {
         assertEquals("and exactly once, however many detectors fire", 1, deaths.get())
     }
 
+    /** Bench 24 Nov, 12:22: the session's line said "read loop died" for a Wi-Fi link whose transport knew who ended it. */
+    @Test
+    fun `a dead link carries the transport's own reason, and the old words only where it has none`() {
+        val reasons = java.util.concurrent.LinkedBlockingQueue<String>()
+        val t = FakeTransport()
+        subscribedClient(t).onLinkDead = { reasons.add(it) }
+        t.killLink("closed by the adapter's side: the TCP connection ended between records (end of stream)")
+        assertEquals(
+            "closed by the adapter's side: the TCP connection ended between records (end of stream)",
+            reasons.poll(2, java.util.concurrent.TimeUnit.SECONDS),
+        )
+        client?.stop()
+
+        val quiet = FakeTransport()
+        subscribedClient(quiet).onLinkDead = { reasons.add(it) }
+        quiet.killLink()
+        assertEquals("read loop died", reasons.poll(2, java.util.concurrent.TimeUnit.SECONDS))
+    }
+
     /** The callback must not run on the thread that detected the death — see the note above. */
     @Test
     fun `link death is not announced on the detecting thread`() {

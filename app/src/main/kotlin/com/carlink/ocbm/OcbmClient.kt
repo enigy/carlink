@@ -172,7 +172,8 @@ class OcbmClient(
         private set
 
     /**
-     * The link is FATALLY dead — the read loop died, or writes failed persistently. Fired at most once.
+     * The link is FATALLY dead — the read loop died, or writes failed persistently. Fired at most once, with the reason:
+     * the transport's own ([RawBulkTransport.howItEnded]: who ended the link and why) when it has one.
      *
      * Distinct from SEV_HOST_GONE on purpose: that one is a box-side drop the client recovers from
      * itself, while this one means the transport is gone and the session must be rebuilt from a fresh
@@ -401,7 +402,8 @@ class OcbmClient(
                 dispatchSinceNs = 0L
             }
         }
-        transport.setDeadHandler { announceLinkDead("read loop died") }
+        // The transport's own word for how the link ended, where it has one (the Wi-Fi link's: who ended it and why).
+        transport.setDeadHandler { announceLinkDead(transport.howItEnded ?: "read loop died") }
         startTx()
         transport.start()
     }

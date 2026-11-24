@@ -4,10 +4,12 @@ import com.carlink.logging.ProbeLog
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.io.DataInputStream
+import java.io.EOFException
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -192,6 +194,118 @@ class WifiBulkTransportTest {
         } catch (e: IOException) {
             assertFalse(e is OcbwLink.LinkException && e.keyRefused)
         }
+    }
+
+    // ---- how the link ended, and which side ended it (bench 24 Nov, 12:22: "link dead: read loop died", nothing more) ----
+
+    @Test
+    fun `the session's dead link says which side ended it, not only that the read loop died`() {
+        fakeBox { s, session ->
+            s.getOutputStream().write(session.tx.keepalive())
+            Thread.sleep(150)
+            s.shutdownOutput() // the far end closes its side: a TCP end of stream
+            Thread.sleep(2_000)
+        }
+        val c = OcbmClient(link(), ProbeLog.silent())
+        val reason = LinkedBlockingQueue<String>()
+        c.onLinkDead = { reason.add(it) }
+        c.start()
+        val why = reason.poll(3, TimeUnit.SECONDS) ?: "no link death"
+        c.stop(sendStop = false)
+        assertTrue(why, why.startsWith("closed by the adapter's side: the TCP connection ended between records"))
+        assertTrue(why, why.contains("in 1 records (1 keepalives)"))
+    }
+
+    @Test
+    fun `a box that goes silent is closed by Carlink, under the dead-link rule`() {
+        fakeBox { _, _ -> Thread.sleep(5_000) }
+        val why = endOf(link())
+        assertTrue(why, why.startsWith("closed by Carlink: no bytes from the adapter for ${fast.deadMs} ms (the dead-link rule); linked "))
+        assertTrue(why, why.contains("; nothing in; "))
+    }
+
+    @Test
+    fun `a box that stops reading is closed by Carlink, for the write that didn't drain`() {
+        fakeBox { s, session ->
+            repeat(200) {
+                s.getOutputStream().write(session.tx.keepalive())
+                Thread.sleep(25)
+            }
+        }
+        val t = link()
+        val written = AtomicInteger()
+        val why =
+            endOf(t) {
+                thread(isDaemon = true) {
+                    val chunk = ByteArray(1 shl 20)
+                    while (t.writeBulk(chunk)) written.incrementAndGet()
+                }
+            }
+        assertTrue(why, why.startsWith("closed by Carlink: a write to the adapter didn't drain in ${fast.writeStallMs} ms"))
+    }
+
+    @Test
+    fun `a record that fails its check is refused by Carlink`() {
+        fakeBox { s, session ->
+            val r = session.tx.seal("hello host".toByteArray())
+            r[r.size - 1] = (r[r.size - 1].toInt() xor 1).toByte()
+            s.getOutputStream().write(r)
+            Thread.sleep(2_000)
+        }
+        val why = endOf(link())
+        assertTrue(why, why.startsWith("closed by Carlink: a record from the adapter was refused (a record failed authentication)"))
+    }
+
+    @Test
+    fun `a box that resets the connection is the adapter's side`() {
+        fakeBox { s, session ->
+            s.getOutputStream().write(session.tx.keepalive())
+            Thread.sleep(150)
+            s.setSoLinger(true, 0)
+            s.close() // a TCP reset, not an end of stream
+        }
+        val why = endOf(link())
+        assertTrue(why, why.startsWith("closed by the adapter's side: ") && why.contains("found the connection reset or closed"))
+    }
+
+    @Test
+    fun `Carlink's own handling of the data failing is Carlink's, not the adapter's end of stream`() {
+        fakeBox { s, session ->
+            s.getOutputStream().write(session.tx.seal("hello host".toByteArray()))
+            Thread.sleep(2_000)
+        }
+        val t = link()
+        t.setReadHandler { _, _ -> throw EOFException("a parser ran short") }
+        val why = endOf(t)
+        assertTrue(why, why.startsWith("closed by Carlink: its own handling of the adapter's data failed (EOFException: a parser ran short)"))
+    }
+
+    @Test
+    fun `a link Carlink stops in order names no end`() {
+        fakeBox { s, session ->
+            repeat(40) {
+                s.getOutputStream().write(session.tx.keepalive())
+                Thread.sleep(fast.keepaliveMs)
+            }
+        }
+        val t = link()
+        t.start()
+        waitUntil(2_000) { t.keepalivesReceived >= 1 }
+        t.stop()
+        assertNull(t.howItEnded)
+    }
+
+    /** Start [t], then [started], and wait for the link to die by itself: its end line. */
+    private fun endOf(
+        t: WifiBulkTransport,
+        started: () -> Unit = {},
+    ): String {
+        val dead = CountDownLatch(1)
+        t.setDeadHandler { dead.countDown() }
+        t.start()
+        started()
+        assertTrue("the link ends by itself", dead.await(5, TimeUnit.SECONDS))
+        return t.howItEnded ?: "no end reason"
     }
 
     private fun link(): WifiBulkTransport = WifiBulkTransport.connect(InetSocketAddress("127.0.0.1", server.localPort), key, ProbeLog.silent(), timing = fast).also { open.add(it) }

@@ -7,7 +7,6 @@ import java.io.IOException
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
@@ -23,7 +22,8 @@ import javax.net.SocketFactory
  * for [Timing.deadMs] means the box is gone (the socket's read timeout). A write stuck for [Timing.writeStallMs] means
  * the same; Android sockets have no send timeout, so the watchdog closes the socket, which ends the stuck write. TCP's
  * own keepalive is not relied on. Either way the dead handler fires once, off the read thread, like a bridge EOF, and the
- * manager's reconnect takes over.
+ * manager's reconnect takes over. How the link ended, and which side ended it, is [howItEnded] ([WifiLinkEnd]): the line
+ * the session's error carries into the drive log.
  */
 class WifiBulkTransport private constructor(
     private val socket: Socket,
@@ -121,6 +121,17 @@ class WifiBulkTransport private constructor(
     /** System.nanoTime() of the last record written. */
     @Volatile private var lastWriteNs = System.nanoTime()
 
+    /** System.nanoTime() of the last record read, keepalives included; 0 before the first. */
+    @Volatile private var lastReadNs = 0L
+
+    /** System.nanoTime() at [start]. */
+    @Volatile private var startedNs = 0L
+
+    /** How the link ended by itself ([die]); null while it runs, and after an orderly [stop]. */
+    @Volatile private var endLine: String? = null
+
+    override val howItEnded: String? get() = endLine
+
     @Volatile var records: Long = 0
         private set
 
@@ -149,7 +160,8 @@ class WifiBulkTransport private constructor(
 
     override fun start() {
         if (!running.compareAndSet(false, true)) return
-        lastWriteNs = System.nanoTime()
+        startedNs = System.nanoTime()
+        lastWriteNs = startedNs
         readThread = Thread({ readLoop() }, "ocbm-wifi-read").apply { isDaemon = true }.also { it.start() }
         watchdog = Thread({ watch() }, "ocbm-wifi-watchdog").apply { isDaemon = true }.also { it.start() }
         keepaliveThread = Thread({ keepAlive() }, "ocbm-wifi-keepalive").apply { isDaemon = true }.also { it.start() }
@@ -157,30 +169,31 @@ class WifiBulkTransport private constructor(
 
     private fun readLoop() {
         // Anything not caught below still ends the link: the finally announces it.
-        var reason = "the Wi-Fi read loop ended"
+        var end: WifiLinkEnd? = null
+        // Around the handler's call: its own failure is Carlink's, and is not to be read as the socket's.
+        var handling = false
         try {
             while (running.get()) {
                 val plain = session.rx.read(input)
                 if (plain == null) {
-                    reason = "the adapter closed the Wi-Fi link"
+                    end = WifiLinkEnd.endOfStream()
                     return
                 }
+                lastReadNs = System.nanoTime()
                 records++
                 if (plain.isEmpty()) {
                     keepalivesReceived++
                 } else {
                     bytesRead += plain.size
+                    handling = true
                     handler?.invoke(plain, plain.size)
+                    handling = false
                 }
             }
-        } catch (_: SocketTimeoutException) {
-            reason = "no bytes from the adapter for ${timing.deadMs} ms"
-        } catch (e: OcbwLink.LinkException) {
-            reason = "a Wi-Fi record was refused: ${e.message}"
         } catch (e: IOException) {
-            reason = "the Wi-Fi read failed: ${e.message}"
+            end = if (handling) WifiLinkEnd.handlerFailed(e) else WifiLinkEnd.readFailed(e, timing.deadMs)
         } finally {
-            die(reason)
+            die(end ?: WifiLinkEnd.loopEnded())
         }
     }
 
@@ -197,9 +210,8 @@ class WifiBulkTransport private constructor(
             }
             val since = writeSinceNs
             if (since != 0L && System.nanoTime() - since > timing.writeStallMs * NANOS_PER_MS) {
-                lastError = "a write didn't drain in ${timing.writeStallMs} ms"
-                log.w("wifi: $lastError — closing the link")
-                die(lastError ?: "write stalled")
+                log.w("wifi: a write didn't drain in ${timing.writeStallMs} ms — closing the link")
+                die(WifiLinkEnd.writeStalled(timing.writeStallMs))
                 return
             }
         }
@@ -225,8 +237,7 @@ class WifiBulkTransport private constructor(
                 keepalivesSent++
                 lastWriteNs = System.nanoTime()
             } catch (e: IOException) {
-                lastError = lastError ?: "the Wi-Fi keepalive failed: ${e.message}"
-                die(lastError ?: "keepalive failed")
+                die(WifiLinkEnd.keepaliveFailed(e))
                 return
             } finally {
                 writeSinceNs = 0L
@@ -235,10 +246,27 @@ class WifiBulkTransport private constructor(
         }
     }
 
-    private fun die(reason: String) {
+    /** The link ended by itself: say how ([howItEnded]), close the socket, and tell the dead handler, once. */
+    private fun die(end: WifiLinkEnd) {
         if (!running.getAndSet(false)) return
-        lastError = lastError ?: reason
-        log.i("wifi link to $peer ended ($reason): $records records in, $bytesRead B, $bytesWritten B out")
+        val now = System.nanoTime()
+        val wrote = bytesWritten > 0 || keepalivesSent > 0
+        val stats =
+            WifiLinkEnd.Stats(
+                linkedMs = (now - startedNs) / NANOS_PER_MS,
+                recordsIn = records,
+                keepalivesIn = keepalivesReceived,
+                bytesIn = bytesRead,
+                lastInMsAgo = lastReadNs.takeIf { it != 0L }?.let { (now - it) / NANOS_PER_MS },
+                bytesOut = bytesWritten,
+                keepalivesOut = keepalivesSent,
+                lastOutMsAgo = if (wrote) (now - lastWriteNs) / NANOS_PER_MS else null,
+            )
+        // A write that failed earlier doesn't end the link by itself (the read side usually says why soon after): say it too.
+        val line = end.line(stats) + (lastError?.let { "; a write had failed before: $it" } ?: "")
+        endLine = line
+        lastError = lastError ?: end.toString()
+        log.i("wifi link to $peer ended: $line")
         runCatching { socket.close() }
         val h = onDead
         if (h != null && deadAnnounced.compareAndSet(false, true)) {
@@ -293,6 +321,7 @@ class WifiBulkTransport private constructor(
     }
 
     override fun diagnostics(): String =
-        "wifi link $peer: $records records ($keepalivesReceived keepalives) in, $bytesRead B in, $bytesWritten B out, " +
-            "$keepalivesSent keepalives out, last error ${lastError ?: "none"}"
+        "wifi link $peer: $records records ($keepalivesReceived keepalives) in, the last " +
+            (lastReadNs.takeIf { it != 0L }?.let { "${(System.nanoTime() - it) / NANOS_PER_MS} ms ago" } ?: "never") +
+            ", $bytesRead B in, $bytesWritten B out, $keepalivesSent keepalives out, last error ${lastError ?: "none"}"
 }

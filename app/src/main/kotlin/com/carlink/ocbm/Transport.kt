@@ -40,6 +40,12 @@ interface RawBulkTransport {
 
     /** One line of the transport's own counters for a stall report ([OcbmClient.stallSnapshot]); never blocks. */
     fun diagnostics(): String = ""
+
+    /**
+     * Once the link has died by itself (when the dead handler fires): which side ended it and why, for the session's error
+     * line ([OcbmClient.onLinkDead]). Null where a transport can't say; the client then says "read loop died", as before.
+     */
+    val howItEnded: String? get() = null
 }
 
 /**
@@ -78,8 +84,14 @@ class FakeTransport : RawBulkTransport {
         if (running) handler?.invoke(data, data.size)
     }
 
-    /** Simulate the read loop dying, so teardown paths are testable without hardware. */
-    fun killLink() {
+    /** What [howItEnded] says once [killLink] has run with one. */
+    @Volatile private var end: String? = null
+
+    override val howItEnded: String? get() = end
+
+    /** Simulate the read loop dying, so teardown paths are testable without hardware; [why] is the transport's own reason, if any. */
+    fun killLink(why: String? = null) {
+        end = why
         running = false
         dead?.invoke()
     }
