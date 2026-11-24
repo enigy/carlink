@@ -102,6 +102,11 @@ internal object WifiLinkText {
 
     const val SETUP_NETWORK_TITLE = "Set up over the adapter's Wi-Fi"
 
+    /** Which adapters offer the set-up network (the adapter side, 24 Nov night): a never-used one, or one reset by a stick. */
+    const val USED_ADAPTER =
+        "An adapter that has been used before doesn't offer it; to set one up again, power it up with a USB stick in it " +
+            "that holds an empty file named OCBM_WIFI_RESET."
+
     /**
      * The set-up over the adapter's own set-up network (M3): for a head unit with no other way to the adapter. [phase]
      * and [result]: where the last run stands.
@@ -115,7 +120,7 @@ internal object WifiLinkText {
             phase == SetupOverNetwork.Phase.JOINING -> "Joining the adapter's set-up Wi-Fi. Pick ${OcbsSetup.SSID_PREFIX}... if Android asks."
             phase == SetupOverNetwork.Phase.EXCHANGING -> "Sending the hotspot to the adapter..."
             phase == SetupOverNetwork.Phase.CONFIRMING -> "Check the network's name, then send."
-            result == null -> "No other way to the adapter? Power it up with no Wi-Fi link: for 10 minutes it offers its own Wi-Fi, ${OcbsSetup.SSID_PREFIX}..."
+            result == null -> "No other way to the adapter? A new adapter, never used, offers its own Wi-Fi, ${OcbsSetup.SSID_PREFIX}..., for 10 minutes after power-up."
             else -> setupNetworkResult(result, ssid)
         }
 
@@ -126,8 +131,9 @@ internal object WifiLinkText {
         when (r) {
             SetupOverNetwork.Result.SENT -> "Sent. The adapter joins \"$ssid\", and Carlink finds it there."
             SetupOverNetwork.Result.NOT_JOINED ->
-                "The set-up Wi-Fi wasn't joined. Join ${OcbsSetup.SSID_PREFIX}... in the car's Wi-Fi settings (password ${OcbsSetup.PASSPHRASE}), then tap Set up again."
-            SetupOverNetwork.Result.NO_ADAPTER -> "The adapter didn't answer on its set-up Wi-Fi. It offers it for 10 minutes after power-up, only with no Wi-Fi link."
+                "No set-up Wi-Fi was joined. If the adapter offers ${OcbsSetup.SSID_PREFIX}..., join it in the car's Wi-Fi settings " +
+                    "(password ${OcbsSetup.PASSPHRASE}), then tap Set up again. $USED_ADAPTER"
+            SetupOverNetwork.Result.NO_ADAPTER -> "No adapter answered on a set-up Wi-Fi. $USED_ADAPTER"
             SetupOverNetwork.Result.NOT_SUPPORTED -> sentLine(WifiLinkSetup.Sent.NOT_SUPPORTED, ssid)
             SetupOverNetwork.Result.REFUSED -> sentLine(WifiLinkSetup.Sent.REFUSED, ssid)
             SetupOverNetwork.Result.NO_ANSWER -> sentLine(WifiLinkSetup.Sent.NO_ANSWER, ssid)

@@ -2,6 +2,7 @@ package com.carlink.ui.settings
 
 import com.carlink.link.AdapterLink
 import com.carlink.link.ConnectOrder
+import com.carlink.link.SetupOverNetwork
 import com.carlink.link.WifiLinkSettings
 import com.carlink.link.WifiLinkSetup
 import com.carlink.ocbm.WifiLinkInfo
@@ -54,5 +55,14 @@ class WifiLinkTextTest {
         assertEquals(WifiLinkSetup.Sent.NO_STATION, WifiLinkText.blocked(wifiLinkSupported = true, info = unsupported))
         assertEquals(null, WifiLinkText.blocked(wifiLinkSupported = true, info = WifiLinkInfo(WifiLinkInfo.State.JOINED, 36, 36)))
         assertTrue(WifiLinkText.readyLine(WifiLinkSetup.Sent.NO_STATION, parked = true, problem = null).contains("Use USB"))
+    }
+
+    @Test
+    fun `when no set-up Wi-Fi is found, the line says a used adapter doesn't offer it, and how to reset one`() {
+        for (r in listOf(SetupOverNetwork.Result.NOT_JOINED, SetupOverNetwork.Result.NO_ADAPTER)) {
+            val line = WifiLinkText.setupNetworkResult(r, "MyCar")
+            assertTrue(line, line.contains("used before") && line.contains("OCBM_WIFI_RESET"))
+        }
+        assertTrue(WifiLinkText.setupNetworkLine(SetupOverNetwork.Phase.IDLE, null, "MyCar").contains("never used"))
     }
 }
