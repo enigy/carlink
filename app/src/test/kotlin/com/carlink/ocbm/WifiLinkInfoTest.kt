@@ -16,6 +16,7 @@ class WifiLinkInfoTest {
         assertEquals(WifiLinkInfo.State.JOINING, WifiLinkInfo.parse(info("""{"state":"joining","channel":0,"ap_channel":36}"""))?.state)
         assertEquals(WifiLinkInfo.State.JOINED, WifiLinkInfo.parse(info("""{"state":"joined","channel":36,"ap_channel":36}"""))?.state)
         assertEquals(WifiLinkInfo(WifiLinkInfo.State.LINKED, 149, 36), WifiLinkInfo.parse(info("""{"state":"linked","channel":149,"ap_channel":36}""")))
+        assertEquals(WifiLinkInfo.State.UNSUPPORTED, WifiLinkInfo.parse(info("""{"state":"unsupported","channel":0,"ap_channel":36}"""))?.state)
     }
 
     @Test

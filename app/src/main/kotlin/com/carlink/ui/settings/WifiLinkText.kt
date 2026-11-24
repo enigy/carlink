@@ -36,12 +36,19 @@ internal object WifiLinkText {
             else -> "Over the iPhone's hotspot \"${s.ssid}\"."
         }
 
-    /** What stands in a send's way on the session's side: none, no session, or an adapter without the link. */
-    fun blocked(wifiLinkSupported: Boolean?): WifiLinkSetup.Sent? =
-        when (wifiLinkSupported) {
-            null -> WifiLinkSetup.Sent.NO_SESSION
-            false -> WifiLinkSetup.Sent.NOT_SUPPORTED
-            true -> null
+    /**
+     * What stands in a send's way on the session's side: none, no session, an adapter without the link, or one whose radio
+     * can't join a hotspot ([info] "unsupported").
+     */
+    fun blocked(
+        wifiLinkSupported: Boolean?,
+        info: WifiLinkInfo? = null,
+    ): WifiLinkSetup.Sent? =
+        when {
+            wifiLinkSupported == null -> WifiLinkSetup.Sent.NO_SESSION
+            !wifiLinkSupported -> WifiLinkSetup.Sent.NOT_SUPPORTED
+            info?.state == WifiLinkInfo.State.UNSUPPORTED -> WifiLinkSetup.Sent.NO_STATION
+            else -> null
         }
 
     /**
@@ -90,6 +97,7 @@ internal object WifiLinkText {
             WifiLinkSetup.Sent.NO_ANSWER -> "The adapter didn't answer. Try again."
             WifiLinkSetup.Sent.BUSY -> "Already sending."
             WifiLinkSetup.Sent.KEY_STORE -> "This head unit couldn't read or keep its Wi-Fi key just now. Try again."
+            WifiLinkSetup.Sent.NO_STATION -> "This adapter's radio can't join a hotspot beside its own Wi-Fi, so it has no Wi-Fi link. Use USB."
         }
 
     const val SETUP_NETWORK_TITLE = "Set up over the adapter's Wi-Fi"
@@ -146,6 +154,7 @@ internal object WifiLinkText {
             WifiLinkInfo.State.JOINING -> "The adapter is looking for the hotspot."
             WifiLinkInfo.State.JOINED -> "The adapter is on the hotspot."
             WifiLinkInfo.State.LINKED -> "The adapter is connected to Carlink over the hotspot."
+            WifiLinkInfo.State.UNSUPPORTED -> "No Wi-Fi link on this adapter's radio: it can't join a hotspot beside its own Wi-Fi."
             WifiLinkInfo.State.UNKNOWN -> "The adapter's Wi-Fi state is new to this Carlink."
         }
 

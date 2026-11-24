@@ -146,7 +146,7 @@ class SetupOverNetwork(
                 val setup = WifiLinkSetup(store, { sessionOf(c) }) { log.i(it) }
                 return when (setup.send(ssid, password)) {
                     WifiLinkSetup.Sent.SENT, WifiLinkSetup.Sent.SENT_RECONNECTING -> Result.SENT
-                    WifiLinkSetup.Sent.NOT_SUPPORTED -> Result.NOT_SUPPORTED
+                    WifiLinkSetup.Sent.NOT_SUPPORTED, WifiLinkSetup.Sent.NO_STATION -> Result.NOT_SUPPORTED
                     WifiLinkSetup.Sent.REFUSED -> Result.REFUSED
                     WifiLinkSetup.Sent.NO_ANSWER -> Result.NO_ANSWER
                     WifiLinkSetup.Sent.NO_SESSION -> Result.NO_ADAPTER

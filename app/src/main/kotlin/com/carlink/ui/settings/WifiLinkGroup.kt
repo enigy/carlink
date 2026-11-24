@@ -110,7 +110,7 @@ private fun WifiSetUp(
     HotspotFields(ssid, password, enabled = live.parked && !busy, onSsid = { ssid = it }, onPassword = { password = it })
     val name = ssid.trim()
     val problem = WifiLinkProvisioning.problem(name, password)
-    val blocked = WifiLinkText.blocked(live.wifiLinkSupported)
+    val blocked = WifiLinkText.blocked(live.wifiLinkSupported, info.takeIf { live.box.adapterConnected })
     SettingRow(
         title = if (settings.setUp) "Send again" else "Send to the adapter",
         subtitle = if (busy) "Sending..." else outcome ?: WifiLinkText.readyLine(blocked, live.parked, problem),

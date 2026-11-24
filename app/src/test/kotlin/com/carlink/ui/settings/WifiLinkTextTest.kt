@@ -46,4 +46,13 @@ class WifiLinkTextTest {
         assertTrue(WifiLinkText.removeDialogText("MyCar", bridgeInstalled = false).contains("no USB bridge"))
         assertTrue(!WifiLinkText.removeDialogText("MyCar", bridgeInstalled = true).contains("no USB bridge"))
     }
+
+    @Test
+    fun `an adapter whose radio can't join a hotspot says so, and Send isn't offered`() {
+        val unsupported = WifiLinkInfo(WifiLinkInfo.State.UNSUPPORTED, 0, 36)
+        assertTrue(WifiLinkText.infoLine(unsupported).startsWith("No Wi-Fi link on this adapter's radio"))
+        assertEquals(WifiLinkSetup.Sent.NO_STATION, WifiLinkText.blocked(wifiLinkSupported = true, info = unsupported))
+        assertEquals(null, WifiLinkText.blocked(wifiLinkSupported = true, info = WifiLinkInfo(WifiLinkInfo.State.JOINED, 36, 36)))
+        assertTrue(WifiLinkText.readyLine(WifiLinkSetup.Sent.NO_STATION, parked = true, problem = null).contains("Use USB"))
+    }
 }

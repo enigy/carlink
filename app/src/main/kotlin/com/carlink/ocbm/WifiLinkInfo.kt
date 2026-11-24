@@ -33,6 +33,12 @@ data class WifiLinkInfo(
         /** A host is linked over the hotspot. */
         LINKED("linked"),
 
+        /**
+         * This adapter's radio can't run a station beside its own access point (a driver with one wireless interface):
+         * it can never join a hotspot. Final for the adapter's boot (the adapter side, 24 Nov night).
+         */
+        UNSUPPORTED("unsupported"),
+
         /** A state this Carlink doesn't know (a newer adapter). */
         UNKNOWN(""),
     }

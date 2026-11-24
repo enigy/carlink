@@ -49,6 +49,9 @@ class WifiLinkSetup(
 
         /** This head unit's KeyStore failed reading or keeping the link key: nothing changed here. */
         KEY_STORE,
+
+        /** The adapter says its radio can't join a hotspot (MGMT_INFO "unsupported"): nothing is sent. */
+        NO_STATION,
     }
 
     enum class Removed {
@@ -88,7 +91,7 @@ class WifiLinkSetup(
         password: String,
     ): Sent {
         val s = session() ?: return Sent.NO_SESSION
-        if (!s.takesWifiLink) return Sent.NOT_SUPPORTED
+        refusal(s)?.let { return it }
         if (!sendingState.compareAndSet(false, true)) return Sent.BUSY
         try {
             val overWifi = s.overWifi
@@ -119,6 +122,14 @@ class WifiLinkSetup(
         log("[WIFI] the adapter took the link but the key couldn't be kept here: ${store.lastSealFailure}")
         return Sent.KEY_STORE
     }
+
+    /** What this adapter can't take: the verb, or (MGMT_INFO "unsupported") a hotspot at all; null when it can. */
+    private fun refusal(s: Session): Sent? =
+        when {
+            !s.takesWifiLink -> Sent.NOT_SUPPORTED
+            infoState.value?.state == WifiLinkInfo.State.UNSUPPORTED -> Sent.NO_STATION
+            else -> null
+        }
 
     /** Remove the link: on the adapter when a session is up (over either road), and here in any case. */
     suspend fun remove(): Removed {
