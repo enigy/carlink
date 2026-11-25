@@ -41,6 +41,11 @@ class WifiLinkProvisioningTest {
         assertNotNull(WifiLinkProvisioning.problem("x".repeat(33), "password"))
         assertNotNull(WifiLinkProvisioning.problem("é".repeat(17), "password"))
         assertNotNull(WifiLinkProvisioning.problem("My\nCar", "password"))
+        // A Wi-Fi password is printable ASCII: a keyboard's long dash or curly quote would make another key.
+        assertNull(WifiLinkProvisioning.problem("MyCar", "abcd-efgh-1234 ~!"))
+        assertNotNull(WifiLinkProvisioning.problem("MyCar", "abcd\u2013efgh"))
+        assertNotNull(WifiLinkProvisioning.problem("MyCar", "abcd\u2019efgh"))
+        assertNotNull(WifiLinkProvisioning.problem("MyCar", "abcd\tefgh"))
         assertNotNull(WifiLinkProvisioning.problem("MyCar", "short"))
         assertNotNull(WifiLinkProvisioning.problem("MyCar", "x".repeat(64)))
         assertNull(WifiLinkProvisioning.problem("MyCar", "x".repeat(63)))

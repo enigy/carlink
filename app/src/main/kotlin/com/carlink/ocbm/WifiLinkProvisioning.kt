@@ -44,6 +44,9 @@ object WifiLinkProvisioning {
             nameBytes > SSID_MAX_BYTES -> "That name is too long for a Wi-Fi network."
             ssid.any { it == '\n' || it == '\r' } -> "The name can't contain a line break."
             passBytes !in PASSPHRASE_MIN..PASSPHRASE_MAX -> "Hotspot passwords are 8 to 63 characters."
+            passphrase.any { it !in ' '..'~' } ->
+                "The password has a character a Wi-Fi password can't contain (a long dash or a curly quote?). " +
+                    "Tap the eye to check it."
             else -> null
         }
     }

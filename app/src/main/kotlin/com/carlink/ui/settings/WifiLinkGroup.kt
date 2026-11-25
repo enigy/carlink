@@ -8,8 +8,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -25,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -236,6 +241,7 @@ private fun HotspotFields(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        var shown by remember { mutableStateOf(false) }
         Text(WifiLinkText.HOTSPOT_TITLE, style = SettingsStyle.RowTitle)
         Text(WifiLinkText.HOTSPOT_BODY, style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedTextField(
@@ -256,8 +262,18 @@ private fun HotspotFields(
             label = { Text("Password") },
             singleLine = true,
             enabled = enabled,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            // Shown on request: a keyboard that turns a hyphen into a long dash can't be seen through the dots.
+            visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                IconButton(onClick = { shown = !shown }) {
+                    Icon(
+                        if (shown) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                        contentDescription = if (shown) "Hide the password" else "Show the password",
+                    )
+                }
+            },
+            keyboardOptions =
+                KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
             modifier = Modifier.fillMaxWidth(),
         )
     }
