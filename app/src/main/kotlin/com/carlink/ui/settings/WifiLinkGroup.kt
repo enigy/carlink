@@ -1,59 +1,67 @@
 package com.carlink.ui.settings
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.LinkOff
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Router
+import androidx.compose.material.icons.filled.SignalWifiConnectedNoInternet4
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carlink.CarlinkManager
 import com.carlink.link.AdapterLink
+import com.carlink.link.ApBand
+import com.carlink.link.LinkMode
 import com.carlink.link.SetupOverNetwork
 import com.carlink.link.WifiLinkSettings
 import com.carlink.link.WifiLinkSetup
 import com.carlink.logging.logInfo
-import com.carlink.ocbm.WifiLinkProvisioning
+import com.carlink.logging.logWarn
 import com.carlink.ui.components.CarlinkDialog
 import com.carlink.ui.components.DialogWeight
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** How often the group asks the adapter for its `wifi_link` while it shows and a session is up. */
 private const val INFO_POLL_MS = 3_000L
 
 /**
- * Settings › Adapter Config and about › Adapter connection (the Wi-Fi link plan of 23 Nov): USB through the bridge, or Wi-Fi over
- * the iPhone's hotspot. Offered whether or not an adapter is connected (addendum 1: a driver with no bridge has no session
- * to read the capability from); the adapter's capability is checked once there is a session. The hotspot's name and
- * password go to the adapter over whatever session Carlink has ([com.carlink.link.WifiLinkSetup]); the password is hashed
- * first and kept nowhere. Typing and Send are for parked.
+ * Settings › Adapter Config › Adapter connection (the Wi-Fi link plan of 23 Nov, and its ADDENDUM 24): Wi-Fi, USB direct
+ * or USB bridge. Wi-Fi is the AP link: the head unit joins the adapter's own Wi-Fi network. Its set-up sends this head
+ * unit's link key and the band picked here to the adapter over whatever session Carlink has
+ * ([com.carlink.link.WifiLinkSetup.sendAp]), or with none over the adapter's set-up network, and shows the name and
+ * password of the adapter's Wi-Fi with the steps to join it in the car's Wi-Fi settings. Offered whether or not an adapter
+ * is connected (addendum 1: a driver with no bridge has no session to read the capability from); the adapter's capability
+ * is checked once there is a session. Set-up and the password are for parked. A driver who never chose Wi-Fi sees the
+ * choice and its line, as before, and nothing else.
  */
 @Composable
 internal fun WifiLinkGroup(
@@ -86,22 +94,26 @@ internal fun WifiLinkGroup(
         )
         if (settings.wifiChosen) {
             GroupDivider()
-            WifiSetUp(carlinkManager, live, settings, busy, outcome) { outcome = it }
+            AdapterWifiSetUp(carlinkManager, live, settings, busy, outcome) { outcome = it }
         }
         if (settings.keyStored) {
             GroupDivider()
-            SettingRow(title = WifiLinkText.REMOVE_TITLE, subtitle = WifiLinkText.REMOVE_SUBTITLE, icon = Icons.Default.LinkOff) {
+            val subtitle = if (settings.mode == LinkMode.AP) ApLinkText.REMOVE_SUBTITLE else WifiLinkText.REMOVE_SUBTITLE
+            SettingRow(title = WifiLinkText.REMOVE_TITLE, subtitle = subtitle, icon = Icons.Default.LinkOff) {
                 RowAction("Remove", enabled = !busy, weight = ActionWeight.CAUTION, onClick = { askRemove = true })
             }
         }
     }
-    if (askRemove) RemoveDialog(carlinkManager, settings.ssid, live.bridgeInstalled, onDone = { askRemove = false }) { outcome = it }
+    if (askRemove) RemoveDialog(carlinkManager, settings, live.bridgeInstalled, onDone = { askRemove = false }) { outcome = it }
 }
 
-/** The hotspot's fields, Send, and what the adapter and the last search say. */
+/**
+ * The AP link (ADDENDUM 24): what it is, the band, Set up, then the adapter's network to join and what the adapter and
+ * the last search say; with no session to set up through, the adapter's own set-up network.
+ */
 @Suppress("LongParameterList") // the group's state, handed down whole
 @Composable
-private fun WifiSetUp(
+private fun AdapterWifiSetUp(
     carlinkManager: CarlinkManager,
     live: SettingsLiveState,
     settings: WifiLinkSettings,
@@ -113,38 +125,172 @@ private fun WifiSetUp(
     val info by carlinkManager.wifiSetup.info.collectAsState()
     val miss by carlinkManager.wifiMiss.collectAsState()
     val linkedOver by carlinkManager.linkedOver.collectAsState()
-    var ssid by remember(settings.ssid) { mutableStateOf(WifiLinkProvisioning.hotspotName(settings.ssid)) }
-    var password by remember { mutableStateOf("") }
-    HotspotFields(ssid, password, enabled = live.parked && !busy, onSsid = { ssid = it }, onPassword = { password = it })
-    val name = ssid.trim()
-    val problem = WifiLinkProvisioning.problem(name, password)
-    val blocked = WifiLinkText.blocked(live.wifiLinkSupported, info.takeIf { live.box.adapterConnected })
+    val adapterInfo = info.takeIf { live.box.adapterConnected }
+    var askBand by remember { mutableStateOf(false) }
+    Intro(ApLinkText.TITLE, ApLinkText.BODY)
+    ChoiceSetting(
+        title = ApLinkText.BAND_TITLE,
+        options = ApBand.entries,
+        selected = settings.band,
+        onSelect = {
+            carlinkManager.wifiLink.setBand(it)
+            logInfo("[UI_ACTION] Adapter Wi-Fi band: ${it.code}", tag = "UI")
+        },
+        subtitle = ApLinkText.bandLine(settings, adapterInfo),
+        icon = Icons.Default.Router,
+    )
+    GroupDivider()
+    val blocked = ApLinkText.blocked(live.wifiLinkSupported)
+    val setUp = {
+        onOutcome(null)
+        scope.launch {
+            val sent = carlinkManager.wifiSetup.sendAp(settings.band)
+            onOutcome(ApLinkText.sentLine(sent, adapterInfo))
+            logInfo("[UI_ACTION] Adapter Wi-Fi set up: $sent", tag = "UI")
+        }
+    }
     SettingRow(
-        title = if (settings.setUp) "Send again" else "Send to the adapter",
-        subtitle = if (busy) "Sending..." else outcome ?: WifiLinkText.readyLine(blocked, live.parked, problem),
+        title = if (settings.apLink) ApLinkText.SET_UP_AGAIN_TITLE else ApLinkText.SET_UP_TITLE,
+        subtitle = if (busy) ApLinkText.SETTING_UP else outcome ?: ApLinkText.readyLine(blocked, live.parked),
         icon = Icons.Default.WifiTethering,
     ) {
-        RowAction("Send", enabled = !busy && blocked == null && live.parked && problem == null, onClick = {
-            onOutcome(null)
-            scope.launch {
-                val sent = carlinkManager.wifiSetup.send(name, password)
-                password = ""
-                onOutcome(WifiLinkText.sentLine(sent, name))
-                logInfo("[UI_ACTION] Wi-Fi link sent: $sent", tag = "UI")
-            }
+        RowAction(ApLinkText.SET_UP_ACTION, enabled = !busy && blocked == null && live.parked, onClick = {
+            if (ApLinkText.movesBand(settings, adapterInfo)) askBand = true else setUp()
         })
     }
-    StateLines(WifiLinkText.stateLines(settings, info.takeIf { live.box.adapterConnected }, miss, linkedOver, live.bridgeInstalled))
-    // M3: with no session to send over, the adapter's own set-up network.
-    if (blocked == WifiLinkSetup.Sent.NO_SESSION) SetupNetworkRow(carlinkManager, name, password, enabled = live.parked && problem == null && !busy)
+    if (settings.apLink) {
+        val context = LocalContext.current
+        JoinCard(settings, live.parked, loadPassword = { carlinkManager.wifiLink.apPassword() }, openSettings = { WifiSettingsPage.open(context) })
+    }
+    StateLines(ApLinkText.stateLines(settings, adapterInfo, miss, linkedOver, live.bridgeInstalled))
+    // M3: with no session to set up through, the adapter's own set-up network.
+    if (blocked == WifiLinkSetup.Sent.NO_SESSION) ApSetupNetworkRow(carlinkManager, settings.band, enabled = live.parked && !busy)
+    if (askBand) {
+        CarlinkDialog(
+            title = ApLinkText.bandDialogTitle(settings.band),
+            text = ApLinkText.bandDialogText(settings.band),
+            confirmLabel = ApLinkText.BAND_CONFIRM,
+            weight = DialogWeight.CAUTION,
+            icon = Icons.Default.Router,
+            onConfirm = {
+                askBand = false
+                setUp()
+            },
+            onDismiss = { askBand = false },
+        )
+    }
 }
 
-/** The set-up over the adapter's set-up network: join it, send the hotspot, let it go (parked only). */
+/** A heading and its words, as the hotspot link's fields had them. */
 @Composable
-private fun SetupNetworkRow(
+private fun Intro(
+    title: String,
+    body: String,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(start = 32.dp, end = 32.dp, top = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(title, style = SettingsStyle.RowTitle)
+        Text(body, style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** What Settings shows of the adapter's Wi-Fi password, read from the Keystore when the card shows. */
+private sealed interface PasswordShown {
+    data object Loading : PasswordShown
+
+    data object NotKept : PasswordShown
+
+    class Kept(
+        val text: String,
+    ) : PasswordShown
+}
+
+/**
+ * The adapter's own Wi-Fi to join (ADDENDUM 24 item 7): its name and password, the steps in the car's Wi-Fi settings, and
+ * that the head unit has no internet over it. The manual way always works; Open Wi-Fi settings ([openSettings], false where
+ * the head unit has no such page) only saves the driver finding the page. The password ([loadPassword], the Keystore's) is
+ * shown parked only, and never logged.
+ */
+@Composable
+internal fun JoinCard(
+    settings: WifiLinkSettings,
+    parked: Boolean,
+    loadPassword: suspend () -> String?,
+    openSettings: () -> Boolean,
+) {
+    var noSettingsPage by remember { mutableStateOf(false) }
+    val password by produceState<PasswordShown>(PasswordShown.Loading, settings.apPasswordKept, settings.apName) {
+        value =
+            if (!settings.apPasswordKept) {
+                PasswordShown.NotKept
+            } else {
+                withContext(Dispatchers.IO) { loadPassword() }?.let { PasswordShown.Kept(it) } ?: PasswordShown.NotKept
+            }
+    }
+    GroupDivider()
+    SettingRow(title = ApLinkText.JOIN_TITLE, subtitle = ApLinkText.NO_INTERNET, icon = Icons.Default.SignalWifiConnectedNoInternet4) {
+        RowAction(ApLinkText.OPEN_WIFI_SETTINGS, enabled = parked, onClick = {
+            noSettingsPage = !openSettings()
+            logInfo("[UI_ACTION] Open Wi-Fi settings: ${if (noSettingsPage) "no page" else "opened"}", tag = "UI")
+        })
+    }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(modifier = Modifier.padding(start = 88.dp, end = 32.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (settings.apName.isEmpty()) {
+            Text(ApLinkText.NOT_NAMED, style = SettingsStyle.RowSubtitle, color = muted)
+        } else {
+            Detail(ApLinkText.NETWORK_LABEL, settings.apName, typed = true)
+            val p = password
+            val typed = parked && p is PasswordShown.Kept && p.text.isNotEmpty()
+            val shown =
+                when {
+                    !parked -> ApLinkText.PASSWORD_WHILE_PARKED
+                    p is PasswordShown.Kept -> p.text.ifEmpty { ApLinkText.PASSWORD_NONE }
+                    p == PasswordShown.NotKept -> ApLinkText.PASSWORD_NOT_KEPT
+                    else -> "..."
+                }
+            Detail(ApLinkText.PASSWORD_LABEL, shown, typed = typed)
+            ApLinkText.JOIN_STEPS.forEach { Text(it, style = SettingsStyle.RowSubtitle, color = muted) }
+            if (noSettingsPage) Text(ApLinkText.NO_WIFI_SETTINGS, style = SettingsStyle.RowSubtitle, color = muted)
+        }
+    }
+}
+
+/** One labelled value of the network to join; what the driver types in the car's settings ([typed]) in monospace. */
+@Composable
+private fun Detail(
+    label: String,
+    value: String,
+    typed: Boolean,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(label, style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(140.dp))
+        Text(value, style = if (typed) SettingsStyle.RowTitle.copy(fontFamily = FontFamily.Monospace) else SettingsStyle.RowSubtitle)
+    }
+}
+
+/** The car's Wi-Fi settings, where the driver joins the adapter's network. False where the head unit has no such page. */
+internal object WifiSettingsPage {
+    fun open(context: Context): Boolean =
+        try {
+            context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (e: ActivityNotFoundException) {
+            logWarn("[WIFI] no Wi-Fi settings page: ${e.message}", tag = "UI")
+            false
+        } catch (e: SecurityException) {
+            logWarn("[WIFI] the Wi-Fi settings page refused Carlink: ${e.message}", tag = "UI")
+            false
+        }
+}
+
+/** The AP link's set-up over the adapter's set-up network: join it, set the adapter up, let it go (parked only). */
+@Composable
+private fun ApSetupNetworkRow(
     carlinkManager: CarlinkManager,
-    ssid: String,
-    password: String,
+    band: ApBand,
     enabled: Boolean,
 ) {
     val scope = rememberCoroutineScope()
@@ -153,10 +299,10 @@ private fun SetupNetworkRow(
     val confirm by carlinkManager.setupNetwork.confirm.collectAsState()
     val running = phase != SetupOverNetwork.Phase.IDLE && phase != SetupOverNetwork.Phase.DONE
     GroupDivider()
-    SettingRow(title = WifiLinkText.SETUP_NETWORK_TITLE, subtitle = WifiLinkText.setupNetworkLine(phase, result, ssid), icon = Icons.Default.WifiTethering) {
-        RowAction("Set up", enabled = enabled && !running, onClick = {
+    SettingRow(title = WifiLinkText.SETUP_NETWORK_TITLE, subtitle = ApLinkText.setupNetworkLine(phase, result), icon = Icons.Default.WifiTethering) {
+        RowAction(ApLinkText.SET_UP_ACTION, enabled = enabled && !running, onClick = {
             scope.launch {
-                val r = carlinkManager.setUpOverSetupNetwork(ssid, password)
+                val r = carlinkManager.setUpApOverSetupNetwork(band)
                 logInfo("[UI_ACTION] Set up over the adapter's Wi-Fi: $r", tag = "UI")
             }
         })
@@ -204,7 +350,7 @@ internal fun SetupCodeDialog(
 @Composable
 private fun RemoveDialog(
     carlinkManager: CarlinkManager,
-    ssid: String,
+    settings: WifiLinkSettings,
     bridgeInstalled: Boolean,
     onDone: () -> Unit,
     onOutcome: (String) -> Unit,
@@ -212,7 +358,12 @@ private fun RemoveDialog(
     val scope = rememberCoroutineScope()
     CarlinkDialog(
         title = WifiLinkText.REMOVE_DIALOG_TITLE,
-        text = WifiLinkText.removeDialogText(ssid, bridgeInstalled),
+        text =
+            if (settings.mode == LinkMode.AP) {
+                ApLinkText.removeDialogText(settings, bridgeInstalled)
+            } else {
+                WifiLinkText.removeDialogText(settings.ssid, bridgeInstalled)
+            },
         confirmLabel = "Remove",
         weight = DialogWeight.CAUTION,
         icon = Icons.Default.LinkOff,
@@ -228,59 +379,8 @@ private fun RemoveDialog(
     )
 }
 
-/** The hotspot's name and password, typed on the head unit's keyboard, parked. */
 @Composable
-private fun HotspotFields(
-    ssid: String,
-    password: String,
-    enabled: Boolean,
-    onSsid: (String) -> Unit,
-    onPassword: (String) -> Unit,
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        var shown by remember { mutableStateOf(false) }
-        Text(WifiLinkText.HOTSPOT_TITLE, style = SettingsStyle.RowTitle)
-        Text(WifiLinkText.HOTSPOT_BODY, style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedTextField(
-            value = ssid,
-            onValueChange = { onSsid(WifiLinkProvisioning.hotspotName(it).take(WifiLinkProvisioning.SSID_MAX_BYTES)) },
-            label = { Text("Hotspot name") },
-            singleLine = true,
-            enabled = enabled,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if ('\u2019' in ssid) {
-            Text(WifiLinkText.APOSTROPHE_NOTE, style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        OutlinedTextField(
-            value = password,
-            onValueChange = { onPassword(it.take(WifiLinkProvisioning.PASSPHRASE_MAX)) },
-            label = { Text("Password") },
-            singleLine = true,
-            enabled = enabled,
-            // Shown on request: a keyboard that turns a hyphen into a long dash can't be seen through the dots.
-            visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = {
-                IconButton(onClick = { shown = !shown }) {
-                    Icon(
-                        if (shown) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                        contentDescription = if (shown) "Hide the password" else "Show the password",
-                    )
-                }
-            },
-            keyboardOptions =
-                KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-@Composable
-private fun StateLines(lines: List<String>) {
+internal fun StateLines(lines: List<String>) {
     if (lines.isEmpty()) return
     Column(modifier = Modifier.padding(start = 88.dp, end = 32.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         lines.forEach { Text(it, style = SettingsStyle.RowSubtitle, color = MaterialTheme.colorScheme.onSurfaceVariant) }

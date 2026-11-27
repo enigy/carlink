@@ -2,6 +2,7 @@ package com.carlink.ui.settings
 
 import com.carlink.link.AdapterLink
 import com.carlink.link.ConnectOrder
+import com.carlink.link.LinkMode
 import com.carlink.link.SetupOverNetwork
 import com.carlink.link.WifiLinkSettings
 import com.carlink.link.WifiLinkSetup
@@ -16,15 +17,34 @@ import org.junit.Test
 /** Settings › Adapter connection's words: how Carlink reaches the adapter, what stands in a send's way, the channel line. */
 class WifiLinkTextTest {
     private val wifi = WifiLinkSettings(link = AdapterLink.WIFI, ssid = "MyCar", keyStored = true)
+    private val ap = WifiLinkSettings(link = AdapterLink.WIFI, keyStored = true, mode = LinkMode.AP, apName = "CarLink-0000", apPasswordKept = true)
 
     @Test
     fun `the line under the choice says how Carlink reaches the adapter`() {
         assertEquals("Through the Carlink USB bridge app.", WifiLinkText.connectionLine(WifiLinkSettings(), null))
         assertTrue(WifiLinkText.connectionLine(WifiLinkSettings(), null, bridgeInstalled = false).contains("asks Android"))
         assertTrue(WifiLinkText.connectionLine(WifiLinkSettings(link = AdapterLink.USB_DIRECT), null).contains("itself"))
+        // A hotspot set-up an earlier test build made keeps its own words.
         assertEquals("Connected over the iPhone's hotspot.", WifiLinkText.connectionLine(wifi, ConnectOrder.Route.WIFI))
         assertTrue(WifiLinkText.connectionLine(wifi, ConnectOrder.Route.USB_BRIDGE).contains("next connection"))
-        assertTrue(WifiLinkText.connectionLine(WifiLinkSettings(link = AdapterLink.WIFI), null).startsWith("Send"))
+        // ADDENDUM 24: Wi-Fi is the adapter's own.
+        assertEquals("Set up the adapter's Wi-Fi below.", WifiLinkText.connectionLine(WifiLinkSettings(link = AdapterLink.WIFI), null))
+        assertEquals("Connected over the adapter's Wi-Fi.", WifiLinkText.connectionLine(ap, ConnectOrder.Route.WIFI))
+        assertTrue(WifiLinkText.connectionLine(ap, ConnectOrder.Route.USB_BRIDGE).contains("next connection"))
+        assertEquals("This head unit joins the adapter's Wi-Fi, \"CarLink-0000\".", WifiLinkText.connectionLine(ap, null))
+        assertEquals("This head unit joins the adapter's Wi-Fi.", WifiLinkText.connectionLine(ap.copy(apName = ""), null))
+    }
+
+    @Test
+    fun `the USB choices read as they always did`() {
+        // Byte for byte the lines before ADDENDUM 24: a driver who never chose Wi-Fi sees nothing new.
+        assertEquals("Through the Carlink USB bridge app.", WifiLinkText.connectionLine(WifiLinkSettings(), null))
+        assertEquals(
+            "The bridge app isn't installed: Carlink asks Android for the adapter itself.",
+            WifiLinkText.connectionLine(WifiLinkSettings(), null, bridgeInstalled = false),
+        )
+        assertEquals("Carlink opens the adapter itself. Android asks once.", WifiLinkText.connectionLine(WifiLinkSettings(link = AdapterLink.USB_DIRECT), null))
+        assertEquals(listOf("Wi-Fi", "USB direct", "USB bridge"), AdapterLink.entries.map { it.label })
     }
 
     @Test

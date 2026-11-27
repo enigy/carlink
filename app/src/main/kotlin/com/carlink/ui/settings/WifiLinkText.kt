@@ -9,7 +9,11 @@ import com.carlink.link.WifiLinkSetup
 import com.carlink.ocbm.OcbsSetup
 import com.carlink.ocbm.WifiLinkInfo
 
-/** The words of Settings › Adapter Config and about › Adapter connection ([WifiLinkGroup]). */
+/**
+ * The words of Settings › Adapter Config › Adapter connection ([WifiLinkGroup]): the choice's line, and the hotspot link's
+ * words, kept for its kept, unreachable screens ([HotspotSetUp]) and for a hotspot set-up an earlier test build made.
+ * Since the plan's ADDENDUM 24 Wi-Fi means the AP link, whose words are [ApLinkText]'s.
+ */
 internal object WifiLinkText {
     const val TITLE = "Adapter connection"
     const val HOTSPOT_TITLE = "iPhone's hotspot"
@@ -20,21 +24,28 @@ internal object WifiLinkText {
     const val REMOVE_SUBTITLE = "The adapter stops joining the hotspot, and Carlink uses USB."
     const val REMOVE_DIALOG_TITLE = "Remove the Wi-Fi link?"
 
-    /** Under the choice: how Carlink reaches the adapter now, or will. */
+    /**
+     * Under the choice: how Carlink reaches the adapter now, or will. Wi-Fi is the AP link's (ADDENDUM 24); a hotspot set-up
+     * an earlier test build made keeps the hotspot's words.
+     */
     fun connectionLine(
         s: WifiLinkSettings,
         linkedOver: ConnectOrder.Route?,
         bridgeInstalled: Boolean = true,
-    ): String =
-        when {
+    ): String {
+        val hotspot = s.setUp && !s.apLink
+        return when {
             s.link == AdapterLink.USB_DIRECT -> "Carlink opens the adapter itself. Android asks once."
             s.link == AdapterLink.USB_BRIDGE && bridgeInstalled -> "Through the Carlink USB bridge app."
             s.link == AdapterLink.USB_BRIDGE -> "The bridge app isn't installed: Carlink asks Android for the adapter itself."
-            linkedOver == ConnectOrder.Route.WIFI -> "Connected over the iPhone's hotspot."
-            !s.setUp -> "Send the hotspot's name and password to the adapter below."
-            linkedOver != null -> "Over the hotspot from the next connection. Reset connection applies it now."
-            else -> "Over the iPhone's hotspot \"${s.ssid}\"."
+            linkedOver == ConnectOrder.Route.WIFI -> if (hotspot) "Connected over the iPhone's hotspot." else "Connected over the adapter's Wi-Fi."
+            !s.setUp -> "Set up the adapter's Wi-Fi below."
+            linkedOver != null -> "Over ${if (hotspot) "the hotspot" else "the adapter's Wi-Fi"} from the next connection. Reset connection applies it now."
+            hotspot -> "Over the iPhone's hotspot \"${s.ssid}\"."
+            s.apName.isNotEmpty() -> "This head unit joins the adapter's Wi-Fi, \"${s.apName}\"."
+            else -> "This head unit joins the adapter's Wi-Fi."
         }
+    }
 
     /**
      * What stands in a send's way on the session's side: none, no session, an adapter without the link, or one whose radio
