@@ -340,10 +340,14 @@ object Ocbm {
     const val MGMT_SWITCH_DEVICE: Byte = 0x0D
 
     /**
-     * `[MGMT_WIFI_LINK][ver 1][link key 32][ssid_len u8][ssid][psk_len u8][psk]` ([WifiLinkProvisioning.body]): the box
-     * keeps the link key and the phone hotspot's WPA key (psk = 64 hex digits, hashed on the head unit) and joins the
-     * hotspot; no body clears it. MGMT_ACK status 0 = applied. Over USB the session stays; over the Wi-Fi link the box
-     * applies it after the ACK, so that link drops and comes back. Only with [CAP_WIFI_LINK].
+     * `[MGMT_WIFI_LINK][ver 2][link key 32][band u8]` ([WifiLinkProvisioning.apBody], the AP link, ADDENDUM 24): the box
+     * keeps the link key, runs its own Wi-Fi on that band and listens on it for the head unit; MGMT_ACK status 0 is
+     * followed by that network's name and password ([WifiLinkProvisioning.answer]). An adapter that predates it answers
+     * status 1. `[MGMT_WIFI_LINK][ver 1][link key 32][ssid_len u8][ssid][psk_len u8][psk]` ([WifiLinkProvisioning.body],
+     * the hotspot link, no longer offered): the box keeps the link key and the phone hotspot's WPA key (psk = 64 hex
+     * digits, hashed on the head unit) and joins the hotspot. No body clears it. MGMT_ACK status 0 = applied. Over USB the
+     * session stays; over the Wi-Fi link the box applies it after the ACK, so that link drops and comes back when
+     * something changed. Only with [CAP_WIFI_LINK].
      */
     const val MGMT_WIFI_LINK: Byte = 0x0E
     const val MGMT_INFO: Byte = 0x81.toByte()

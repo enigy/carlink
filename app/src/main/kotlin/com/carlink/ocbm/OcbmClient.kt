@@ -1153,12 +1153,22 @@ class OcbmClient(
         verb: Byte,
         arg: ByteArray = ByteArray(0),
         timeoutMs: Long = MGMT_ANSWER_MS,
-    ): Int? {
+    ): Int? = mgmtAnswer(verb, arg, timeoutMs)?.let { it[2].toInt() }
+
+    /**
+     * An action verb's whole MGMT_ACK payload, `[MGMT_ACK][verb][status]` and whatever follows (MGMT_WIFI_LINK v2's
+     * answer carries the adapter's own Wi-Fi network: [WifiLinkProvisioning.answer]); null with no answer. The log names
+     * the verb and the status only, never what follows.
+     */
+    fun mgmtAnswer(
+        verb: Byte,
+        arg: ByteArray = ByteArray(0),
+        timeoutMs: Long = MGMT_ANSWER_MS,
+    ): ByteArray? {
         val pl = ByteArray(1 + arg.size)
         pl[0] = verb
         System.arraycopy(arg, 0, pl, 1, arg.size)
-        val ack = mgmtExchange(pl, timeoutMs) { it.size >= MGMT_ACK_LEN && it[0] == Ocbm.MGMT_ACK && it[1] == verb } ?: return null
-        return ack[2].toInt()
+        return mgmtExchange(pl, timeoutMs) { it.size >= MGMT_ACK_LEN && it[0] == Ocbm.MGMT_ACK && it[1] == verb }
     }
 
     /**

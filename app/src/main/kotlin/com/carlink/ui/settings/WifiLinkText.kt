@@ -176,6 +176,7 @@ internal object WifiLinkText {
             WifiLinkInfo.State.OFF -> "The adapter has no Wi-Fi link."
             WifiLinkInfo.State.JOINING -> "The adapter is looking for the hotspot."
             WifiLinkInfo.State.JOINED -> "The adapter is on the hotspot."
+            WifiLinkInfo.State.UP -> "The adapter's Wi-Fi is up."
             WifiLinkInfo.State.LINKED -> "The adapter is connected to Carlink over the hotspot."
             WifiLinkInfo.State.UNSUPPORTED -> "No Wi-Fi link on this adapter's radio: it can't join a hotspot beside its own Wi-Fi."
             WifiLinkInfo.State.UNKNOWN -> "The adapter's Wi-Fi state is new to this Carlink."
