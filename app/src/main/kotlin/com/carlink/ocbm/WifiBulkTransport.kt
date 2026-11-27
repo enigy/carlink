@@ -13,8 +13,8 @@ import java.util.concurrent.locks.ReentrantLock
 import javax.net.SocketFactory
 
 /**
- * [RawBulkTransport] over the Wi-Fi link: a TCP connection to the box's port [OcbwLink.PORT] on the phone's hotspot,
- * the OCBM byte stream inside OCBW v1 records ([OcbwLink]). To [OcbmClient] it is the USB bridge's socket by another
+ * [RawBulkTransport] over the Wi-Fi link: a TCP connection to the box's port [OcbwLink.PORT] on the adapter's own Wi-Fi
+ * (or, for a set-up an earlier test build made, the phone's hotspot), the OCBM byte stream inside OCBW v1 records ([OcbwLink]). To [OcbmClient] it is the USB bridge's socket by another
  * road: the same unframed stream, the same read and dead handlers, so nothing above this line knows which it has.
  *
  * A vanished box is noticed within [Timing.deadMs] (the plan's dead-link rule, both sides): the box sends an empty record

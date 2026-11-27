@@ -4,9 +4,10 @@ import com.carlink.ocbm.Ocbm
 
 /**
  * M2 (the owner, 23 Nov: "the adapter can start CarPlay by itself"), Carlink's side: in Wi-Fi mode the adapter may already
- * run the phone's CarPlay session, its video parked, when Carlink finds it on the hotspot. Carlink then attaches to that
+ * run the phone's CarPlay session, its video parked, when Carlink finds it on Wi-Fi. Carlink then attaches to that
  * session (notes/carlink.md, "M2 attach"), and in Wi-Fi mode it keeps looking for the adapter for as long as it isn't
- * linked, since the hotspot can come up at any point of the drive (addendum 3: no hotspot automation is assumed).
+ * linked, since the head unit may join the adapter's Wi-Fi (or, on the hotspot link, the hotspot come up) at any point
+ * of the drive (addendum 3: no hotspot automation is assumed).
  */
 object WifiAttach {
     /** What a start does once the box's state at SUBSCRIBE is known ([com.carlink.ocbm.HelloReplay]). */

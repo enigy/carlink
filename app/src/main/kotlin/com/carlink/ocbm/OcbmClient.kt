@@ -96,7 +96,7 @@ class OcbmClient(
     /** The box takes an update package over CH_FILE and MGMT_UPDATE (enigy/ocbm f8f18c8). */
     val supportsUpdate: Boolean get() = (caps and Ocbm.CAP_UPDATE) != 0
 
-    /** The box takes MGMT_WIFI_LINK and reports `"wifi_link"` in MGMT_INFO: it can join the phone's hotspot. */
+    /** The box takes MGMT_WIFI_LINK and reports `"wifi_link"` in MGMT_INFO: Carlink can reach it over Wi-Fi. */
     val supportsWifiLink: Boolean get() = (caps and Ocbm.CAP_WIFI_LINK) != 0
 
     /** Config blob last sent with CT_SUBSCRIBE; re-sent verbatim if the box drops us. */
