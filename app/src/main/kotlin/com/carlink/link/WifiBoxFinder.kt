@@ -20,10 +20,12 @@ import java.util.concurrent.TimeUnit
 import javax.net.SocketFactory
 
 /**
- * [WifiBoxSearch.Port] on the head unit: the Wi-Fi networks it is on ([ConnectivityManager]), the box's mDNS advert
- * ([NsdManager], `_ocbm._tcp`), and the link itself ([WifiBulkTransport]) on a socket bound to the Wi-Fi network whose
- * subnet holds the box's address: the head unit's default network may be its own cellular modem, which can't reach a
- * hotspot address. From API 33 NSD says which network an advert came on, and that one is used.
+ * [WifiBoxSearch.Port] on the head unit: the Wi-Fi networks it is on ([ConnectivityManager]), on the AP link their
+ * gateways ([gateways]), the box's mDNS advert ([NsdManager], `_ocbm._tcp`), and the link itself ([WifiBulkTransport]) on
+ * a socket bound to the Wi-Fi network that holds the box's address: the head unit's default network may be its own
+ * cellular modem, which can't reach the adapter, and the adapter's own Wi-Fi, which has no internet, is never the default
+ * (the plan's ADDENDUM 24 item 8; [AdapterNetworkRequest] keeps it up). From API 33 NSD says which network an advert came
+ * on, and that one is used.
  */
 class WifiBoxFinder(
     context: Context,
@@ -43,6 +45,20 @@ class WifiBoxFinder(
     }
 
     override fun onWifi(): Boolean = wifiNetworks().isNotEmpty()
+
+    /**
+     * On the AP link, each Wi-Fi network's DHCP server, then its default route's gateway when that differs
+     * ([WifiGateway]), bound to that network. On the hotspot link none: the hotspot's gateway is the phone.
+     */
+    override fun gateways(): List<WifiBoxSearch.Candidate> {
+        if (store.current.mode != LinkMode.AP) return emptyList()
+        val c = cm ?: return emptyList()
+        return wifiNetworks().flatMap { n ->
+            val lp = runCatching { c.getLinkProperties(n) }.getOrNull() ?: return@flatMap emptyList()
+            val routes = lp.routes.filter { it.isDefaultRoute && it.hasGateway() }.mapNotNull { it.gateway }
+            WifiGateway.addresses(lp.dhcpServerAddress, routes).map { WifiBoxSearch.Candidate(it, OcbwLink.PORT, "the Wi-Fi network's gateway", n) }
+        }
+    }
 
     override fun lastAddress(): WifiBoxSearch.Candidate? {
         val s = store.current

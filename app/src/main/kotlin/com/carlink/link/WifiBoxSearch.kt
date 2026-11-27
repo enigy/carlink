@@ -8,13 +8,15 @@ import kotlinx.coroutines.ensureActive
 import java.io.Closeable
 
 /**
- * Finds the adapter on the phone's hotspot and links to it (OCBW handshake done), in this order:
+ * Finds the adapter on Wi-Fi and links to it (OCBW handshake done), in this order:
  *
  * 1. a debug build's bench address ([Port.override]), and nothing else: the bench emulator can't see mDNS;
  * 2. none at all when the head unit is on no Wi-Fi network: there is nowhere to look (the start goes on at once);
- * 3. the address the adapter answered on last ([Port.lastAddress]), tried again every [Timing.lastRetryMs];
+ * 3. the addresses tried directly, again every [Timing.lastRetryMs]: on the adapter's own Wi-Fi (the AP link, the plan's
+ *    ADDENDUM 24) the network's gateway, which is the adapter ([Port.gateways]); then the address the adapter answered on
+ *    last ([Port.lastAddress]), when it is another;
  * 4. the box's mDNS advert (`_ocbm._tcp`) whose TXT `id` is this link key's ([OcbwLink.boxId]): any other adapter on the
- *    same hotspot is passed over, and a box with another key never even matches.
+ *    same network is passed over, and a box with another key never even matches.
  *
  * Until the deadline [find] is given. Android stays behind [Port] ([WifiBoxFinder]), so the order is unit-tested.
  */
@@ -23,11 +25,11 @@ class WifiBoxSearch(
     private val timing: Timing = Timing(),
 ) {
     data class Timing(
-        /** The TCP connect to the last address, which on a hotspot answers in milliseconds or not at all. */
+        /** The TCP connect to a gateway or the last address, which on one Wi-Fi hop answers in milliseconds or not at all. */
         val lastConnectMs: Int = 2_000,
         /** The TCP connect to an address mDNS resolved. */
         val foundConnectMs: Int = 4_000,
-        /** How often the last address is tried again while the search lasts. */
+        /** How often the gateways and the last address are tried again while the search lasts. */
         val lastRetryMs: Long = 3_000,
         /** Between tries of the bench address. */
         val overrideRetryMs: Long = 1_000,
@@ -90,6 +92,12 @@ class WifiBoxSearch(
         /** The head unit is on at least one Wi-Fi network. */
         fun onWifi(): Boolean
 
+        /**
+         * On the AP link: the gateway of each Wi-Fi network the head unit is on now, bound to that network; empty on the
+         * hotspot link, or with no gateway known. Asked again at each round, so a network joined during a search counts.
+         */
+        fun gateways(): List<Candidate>
+
         /** Where the adapter answered last, bound to the Wi-Fi network that reaches it; null when none is known. */
         fun lastAddress(): Candidate?
 
@@ -118,14 +126,14 @@ class WifiBoxSearch(
         deadlineMs: Long,
         now: () -> Long,
     ): Outcome {
-        port.override()?.let { return untilDeadline(Look(key, it, now), deadlineMs) }
+        port.override()?.let { return untilDeadline(Look(key, now), it, deadlineMs) }
         if (!port.onWifi()) return Outcome.NotFound(Why.NO_WIFI)
-        val look = Look(key, port.lastAddress(), now)
+        val look = Look(key, now)
         val browse = port.browse(OcbwLink.boxId(key))
         try {
             while (true) {
                 currentCoroutineContext().ensureActive()
-                look.lastAddress()?.let { return it }
+                look.direct()?.let { return it }
                 val left = deadlineMs - now()
                 if (left <= 0) break
                 look.advert(browse, minOf(left, timing.pollMs))?.let { return it }
@@ -136,12 +144,12 @@ class WifiBoxSearch(
         return look.notFound()
     }
 
-    /** The bench address alone, again every [Timing.overrideRetryMs] until the deadline. */
+    /** The bench address [at] alone, again every [Timing.overrideRetryMs] until the deadline. */
     private suspend fun untilDeadline(
         look: Look,
+        at: Candidate,
         deadlineMs: Long,
     ): Outcome {
-        val at = look.last ?: return Outcome.NotFound(Why.NO_ANSWER)
         port.log("[WIFI] the bench address ${at.host}:${at.port} stands in for mDNS")
         while (true) {
             currentCoroutineContext().ensureActive()
@@ -152,22 +160,26 @@ class WifiBoxSearch(
         }
     }
 
-    /** One search: the address tried first and when it last was, and whether a box refused the key. */
+    /** One search: when the addresses tried directly last were, and whether a box refused the key. */
     private inner class Look(
         private val key: ByteArray,
-        val last: Candidate?,
         val now: () -> Long,
     ) {
         private var refused = false
-        private var lastTriedAt: Long? = null
+        private var directAt: Long? = null
 
-        /** The first address, when it is due again; found when it linked. */
-        fun lastAddress(): Outcome.Found? {
-            val at = last ?: return null
-            val before = lastTriedAt
+        /**
+         * The gateways, then the last address when it is another, each once, when they are due again; found when one
+         * linked. Both asked of [port] again each round: the head unit may join the adapter's Wi-Fi during the search.
+         */
+        fun direct(): Outcome.Found? {
+            val before = directAt
             if (before != null && now() - before < timing.lastRetryMs) return null
-            lastTriedAt = now()
-            return attempt(at, timing.lastConnectMs)
+            directAt = now()
+            val gateways = port.gateways()
+            val last = port.lastAddress()?.takeIf { l -> gateways.none { it.host == l.host && it.port == l.port } }
+            for (at in gateways + listOfNotNull(last)) attempt(at, timing.lastConnectMs)?.let { return it }
+            return null
         }
 
         /** The next advert carrying the id within [waitMs], tried; found when it linked. */

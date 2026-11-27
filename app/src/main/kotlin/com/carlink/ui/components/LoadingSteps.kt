@@ -36,6 +36,7 @@ internal object LoadingSteps {
             "adapter runs carlinkit firmware",
             // The Wi-Fi link (CarlinkManager.wifiMissStatus): "Adapter not found on Wi-Fi" is matched above.
             "waiting for the iphone's hotspot",
+            "waiting for the adapter's wi-fi",
             "the adapter refused",
             "android didn't let carlink",
         )

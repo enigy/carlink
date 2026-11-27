@@ -8,12 +8,19 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The Wi-Fi search's order: the bench address alone, then the last address, then the advert carrying this key's id. */
+/**
+ * The Wi-Fi search's order: the bench address alone, then the gateways (the AP link, ADDENDUM 24) and the last address,
+ * then the advert carrying this key's id.
+ */
 class WifiBoxSearchTest {
     private val key = ByteArray(32) { 0x11 }
     private val boxId = "cbb6a0d2a8710450"
 
-    /** A fake head unit: [answers] are the addresses where a box with this key answers; [adverts] what mDNS gives. */
+    /**
+     * A fake head unit: [answers] are the addresses where a box with this key answers; [adverts] what mDNS gives;
+     * [gatewaysAt] the gateways it reports at each round (the last list stands for every later round).
+     */
+    @Suppress("LongParameterList") // a fake head unit: one parameter per thing it answers
     private inner class FakePort(
         val wifi: Boolean = true,
         val last: WifiBoxSearch.Candidate? = null,
@@ -21,15 +28,19 @@ class WifiBoxSearchTest {
         val answers: Set<String> = emptySet(),
         val refusing: Set<String> = emptySet(),
         val bench: WifiBoxSearch.Candidate? = null,
+        val gatewaysAt: List<List<WifiBoxSearch.Candidate>> = emptyList(),
     ) : WifiBoxSearch.Port {
         val tried = ArrayList<String>()
         var browsedFor: String? = null
         var closed = false
         var clock = 0L
+        private var rounds = 0
 
         override fun override() = bench
 
         override fun onWifi() = wifi
+
+        override fun gateways(): List<WifiBoxSearch.Candidate> = gatewaysAt.getOrNull(rounds++) ?: gatewaysAt.lastOrNull().orEmpty()
 
         override fun lastAddress() = last
 
@@ -109,6 +120,56 @@ class WifiBoxSearchTest {
         val o = search(p) as WifiBoxSearch.Outcome.Found
         assertEquals("198.51.100.7", o.at.host)
         assertEquals(listOf("198.51.100.7"), p.tried)
+    }
+
+    @Test
+    fun `on the AP link the network's gateway is tried first, and found there nothing else is`() {
+        val p =
+            FakePort(
+                gatewaysAt = listOf(listOf(at("192.0.2.1"))),
+                last = at("192.0.2.10"),
+                adverts = listOf(at("192.0.2.20")),
+                answers = setOf("192.0.2.1", "192.0.2.10", "192.0.2.20"),
+            )
+        val o = search(p) as WifiBoxSearch.Outcome.Found
+        assertEquals("192.0.2.1", o.at.host)
+        assertEquals(listOf("192.0.2.1"), p.tried)
+    }
+
+    @Test
+    fun `a gateway that isn't the adapter costs one try, then the last address, then the advert`() {
+        val p =
+            FakePort(
+                gatewaysAt = listOf(listOf(at("192.0.2.1"))),
+                last = at("192.0.2.10"),
+                adverts = listOf(at("192.0.2.20")),
+                answers = setOf("192.0.2.20"),
+            )
+        val o = search(p) as WifiBoxSearch.Outcome.Found
+        assertEquals("192.0.2.20", o.at.host)
+        assertEquals(listOf("192.0.2.1", "192.0.2.10", "192.0.2.20"), p.tried)
+    }
+
+    @Test
+    fun `the last address that is the gateway is tried once a round, not twice`() {
+        val none = FakePort(gatewaysAt = listOf(listOf(at("192.0.2.1"))), last = at("192.0.2.1"))
+        assertEquals(WifiBoxSearch.Outcome.NotFound(WifiBoxSearch.Why.NO_ANSWER), search(none, windowMs = 4_000))
+        assertEquals("two rounds, 3 s apart, one try each", listOf("192.0.2.1", "192.0.2.1"), none.tried)
+    }
+
+    @Test
+    fun `a network the head unit joins during the search is looked at in the next round`() {
+        // First round: no gateway yet (the head unit not on the adapter's Wi-Fi); the next: the adapter's.
+        val p = FakePort(gatewaysAt = listOf(emptyList(), listOf(at("192.0.2.1"))), answers = setOf("192.0.2.1"))
+        val o = search(p, windowMs = 8_000) as WifiBoxSearch.Outcome.Found
+        assertEquals("192.0.2.1", o.at.host)
+        assertEquals(listOf("192.0.2.1"), p.tried)
+    }
+
+    @Test
+    fun `a gateway that proves another key says so at the end`() {
+        val p = FakePort(gatewaysAt = listOf(listOf(at("192.0.2.1"))), refusing = setOf("192.0.2.1"))
+        assertEquals(WifiBoxSearch.Outcome.NotFound(WifiBoxSearch.Why.KEY_REFUSED), search(p))
     }
 
     @Test

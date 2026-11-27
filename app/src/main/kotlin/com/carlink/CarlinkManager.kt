@@ -3,6 +3,7 @@ package com.carlink
 import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.ConnectivityManager
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
@@ -58,6 +59,7 @@ import com.carlink.ledger.ConnectLedgerStore
 import com.carlink.ledger.ConnectLedgerText
 import com.carlink.ledger.ConnectTimer
 import com.carlink.link.AdapterLink
+import com.carlink.link.AdapterNetworkRequest
 import com.carlink.link.ApBand
 import com.carlink.link.BridgePanel
 import com.carlink.link.ConnectOrder
@@ -289,6 +291,9 @@ class CarlinkManager(
         private const val WIFI_LINK_ANSWER_MS = 5_000L
 
         private const val WIFI_SEARCH_STATUS = "Looking for the adapter on Wi-Fi..."
+
+        /** The AP link, the head unit on no Wi-Fi: it hasn't joined the adapter's own yet (LoadingSteps shows it as is). */
+        private const val ADAPTER_WIFI_WAIT_STATUS = "Waiting for the adapter's Wi-Fi: join it in the car's Wi-Fi settings"
 
         /** Between SUBSCRIBE and the phone: the box waking its radios, or (M2, over Wi-Fi) a session it already runs. */
         private const val STARTING_PROJECTION_STATUS = "Starting projection..."
@@ -763,6 +768,13 @@ class CarlinkManager(
 
     /** Sends the link key to the adapter over whatever session is up (the AP link, or the hotspot link), and removes it. */
     val wifiSetup = WifiLinkSetup(wifiLink, ::wifiSetupSession) { logInfo(it, tag = Logger.Tags.ADAPTR) }
+
+    /**
+     * The AP link's network asked of Android, internet not required (the plan's ADDENDUM 24 item 8): held while the AP link
+     * is chosen and set up ([holdAdapterNetwork]), let go otherwise and at [release]. Nobody else ever holds it.
+     */
+    private val adapterNetwork =
+        AdapterNetworkRequest({ context.getSystemService(ConnectivityManager::class.java) }) { logInfo(it, tag = Logger.Tags.USB) }
 
     private val linkedOverState = MutableStateFlow<ConnectOrder.Route?>(null)
 
@@ -1888,7 +1900,7 @@ class CarlinkManager(
     /** The connecting screen's line for a Wi-Fi search that found nothing, the bridge not there to try next. */
     private fun wifiMissStatus(why: WifiBoxSearch.Why?): String =
         when (why) {
-            WifiBoxSearch.Why.NO_WIFI -> "Waiting for the iPhone's hotspot"
+            WifiBoxSearch.Why.NO_WIFI -> if (wifiLink.current.apLink) ADAPTER_WIFI_WAIT_STATUS else "Waiting for the iPhone's hotspot"
             WifiBoxSearch.Why.KEY_REFUSED -> "The adapter refused this head unit's Wi-Fi key"
             WifiBoxSearch.Why.NO_ANSWER, null -> "Adapter not found on Wi-Fi"
         }
@@ -2390,6 +2402,19 @@ class CarlinkManager(
                 .distinctUntilChanged()
                 .collect { types -> if (!types.isNullOrEmpty()) VehicleStore.get(context).keepReportedFuelTypes(types) }
         }
+        scope.launch { holdAdapterNetwork() }
+    }
+
+    /**
+     * The AP link's network, asked of Android for as long as the AP link is chosen and set up ([adapterNetwork]): from a
+     * set-up, a choice of Wi-Fi, or the start, until Remove or another choice. Off otherwise, and so for every driver who
+     * never chose Wi-Fi: nothing is asked and nothing is said.
+     */
+    private suspend fun holdAdapterNetwork() {
+        wifiLink.flow
+            .map { it.wifiActive && it.apLink }
+            .distinctUntilChanged()
+            .collect { on -> if (on && !released) adapterNetwork.hold() else adapterNetwork.release() }
     }
 
     /** Lazily rendered once per manager; the launcher icon cannot change under a running process. */
@@ -3400,6 +3425,7 @@ class CarlinkManager(
         released = true
         connectTimer.closing(SystemClock.elapsedRealtime()) // ledger: a connect in flight ended early
         scope.cancel()
+        adapterNetwork.release() // the AP link's network request: this manager's, never left behind
 
         stop()
         stockConversion.reset()
