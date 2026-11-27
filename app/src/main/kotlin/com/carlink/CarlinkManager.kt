@@ -58,6 +58,7 @@ import com.carlink.ledger.ConnectLedgerStore
 import com.carlink.ledger.ConnectLedgerText
 import com.carlink.ledger.ConnectTimer
 import com.carlink.link.AdapterLink
+import com.carlink.link.ApBand
 import com.carlink.link.BridgePanel
 import com.carlink.link.ConnectOrder
 import com.carlink.link.DirectUsb
@@ -753,14 +754,14 @@ class CarlinkManager(
     private val wifiLog = ProbeLog.sub("wifi")
 
     /**
-     * The Wi-Fi link (Settings › Adapter Config and about › Adapter connection): the driver's USB or Wi-Fi, the hotspot the
-     * adapter joins, the link key (sealed by the Keystore) and the last address it answered on.
+     * The Wi-Fi link (Settings › Adapter Config › Adapter connection): the driver's choice of road, the link's mode, the
+     * link key and the adapter's own Wi-Fi password (both sealed by the Keystore), and the last address it answered on.
      */
     val wifiLink: WifiLinkStore = WifiLinkStore.get(context)
 
     private val wifiSearch by lazy { WifiBoxSearch(WifiBoxFinder(context, wifiLink, wifiLog, logLine = { logInfo(it, tag = Logger.Tags.USB) })) }
 
-    /** Sends the hotspot and the link key to the adapter over whatever session is up, and removes them. */
+    /** Sends the link key to the adapter over whatever session is up (the AP link, or the hotspot link), and removes it. */
     val wifiSetup = WifiLinkSetup(wifiLink, ::wifiSetupSession) { logInfo(it, tag = Logger.Tags.ADAPTR) }
 
     private val linkedOverState = MutableStateFlow<ConnectOrder.Route?>(null)
@@ -789,8 +790,23 @@ class CarlinkManager(
     val setupNetwork = SetupOverNetwork(SetupNetworkPort(context, wifiLog), wifiLink, wifiLog)
 
     /**
-     * Run the set-up over the adapter's set-up network on this manager's scope (a pane left mid-way doesn't cut it), and on
-     * success look for the adapter on the phone's hotspot, where it goes next.
+     * Run the AP link's set-up over the adapter's set-up network on this manager's scope (a pane left mid-way doesn't cut
+     * it), and on success look for the adapter on its own Wi-Fi, which the driver joins next (Settings shows its name and
+     * password); the search finds it there by itself.
+     */
+    suspend fun setUpApOverSetupNetwork(band: ApBand): SetupOverNetwork.Result =
+        detached("the set-up over the adapter's Wi-Fi") {
+            val r = setupNetwork.runAp(band)
+            if (r == SetupOverNetwork.Result.SENT) {
+                wifiLink.setLink(AdapterLink.WIFI)
+                scope.launch { startIfDisconnected("set up over the adapter's set-up Wi-Fi") }
+            }
+            r
+        }
+
+    /**
+     * The hotspot link's set-up over the adapter's set-up network, no longer offered by Settings (ADDENDUM 24): as
+     * [setUpApOverSetupNetwork], and on success look for the adapter on the phone's hotspot, where it goes next.
      */
     suspend fun setUpOverSetupNetwork(
         ssid: String,
@@ -824,7 +840,7 @@ class CarlinkManager(
             override val takesWifiLink: Boolean get() = c.supportsWifiLink
             override val overWifi: Boolean = overWifi
 
-            override fun wifiLink(body: ByteArray): Int? = c.mgmtAction(Ocbm.MGMT_WIFI_LINK, body, WIFI_LINK_ANSWER_MS)
+            override fun wifiLink(body: ByteArray): ByteArray? = c.mgmtAnswer(Ocbm.MGMT_WIFI_LINK, body, WIFI_LINK_ANSWER_MS)
         }
     }
 

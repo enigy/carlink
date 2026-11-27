@@ -21,8 +21,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * power-up ([com.carlink.ocbm.OcbsSetup]). Carlink joins it ([Port.join]: Android's network request, one system dialog,
  * or a network the driver joined by hand in the car's Wi-Fi settings), runs the set-up exchange on a socket bound to it,
  * asks the driver one question ([Confirm]: the set-up code, which the adapter now shows as its Bluetooth name), and only
- * when the driver says they match sends CT_HELLO and the hotspot, through the same [WifiLinkSetup] as any session. Then it
- * lets the network go, so the head unit goes back to the phone's hotspot, where the Wi-Fi search finds the adapter.
+ * when the driver says they match sends CT_HELLO and the set-up, through the same [WifiLinkSetup] as any session. Then it
+ * lets the network go.
+ *
+ * Since the plan's ADDENDUM 24 the set-up is the AP link's ([runAp]): the adapter answers with its own Wi-Fi's name and
+ * password, which Settings shows, and the driver joins that network in the car's Wi-Fi settings, where the Wi-Fi search
+ * finds the adapter at the gateway. The hotspot link's set-up ([run]) is kept working, and no longer offered.
  */
 class SetupOverNetwork(
     private val port: Port,
@@ -124,18 +128,24 @@ class SetupOverNetwork(
 
     private val running = AtomicBoolean(false)
 
-    /** Join, exchange, ask, send [ssid] and [password] (checked by the caller), and let the network go. */
+    /** The AP link: join, exchange, ask, send the link key and [band], and let the network go. */
+    suspend fun runAp(band: ApBand): Result = runWith { it.sendAp(band) }
+
+    /** The hotspot link, no longer offered: join, exchange, ask, send [ssid] and [password] (checked by the caller), let go. */
     suspend fun run(
         ssid: String,
         password: String,
-    ): Result {
+    ): Result = runWith { it.send(ssid, password) }
+
+    /** One set-up whose MGMT_WIFI_LINK [sends] makes, through a [WifiLinkSetup] over the set-up session. */
+    private suspend fun runWith(sends: suspend (WifiLinkSetup) -> WifiLinkSetup.Sent): Result {
         if (!running.compareAndSet(false, true)) return Result.BUSY
         resultState.value = null
         phaseState.value = Phase.JOINING
         val r =
             try {
                 val joined = port.join()
-                if (joined == null) Result.NOT_JOINED else exchange(joined, ssid, password)
+                if (joined == null) Result.NOT_JOINED else exchange(joined, sends)
             } finally {
                 phaseState.value = Phase.DONE
                 running.set(false)
@@ -147,8 +157,7 @@ class SetupOverNetwork(
 
     private suspend fun exchange(
         joined: Joined,
-        ssid: String,
-        password: String,
+        sends: suspend (WifiLinkSetup) -> WifiLinkSetup.Sent,
     ): Result {
         phaseState.value = Phase.EXCHANGING
         try {
@@ -163,7 +172,7 @@ class SetupOverNetwork(
                     log.w("set-up port: ${e.javaClass.simpleName}: ${e.message}")
                     return Result.NO_ADAPTER
                 }
-            return session(t, joined.name, ssid, password)
+            return session(t, joined.name, sends)
         } finally {
             runCatching { joined.release() }
         }
@@ -176,8 +185,7 @@ class SetupOverNetwork(
     private suspend fun session(
         t: Linked,
         networkName: String?,
-        ssid: String,
-        password: String,
+        sends: suspend (WifiLinkSetup) -> WifiLinkSetup.Sent,
     ): Result {
         val c = OcbmClient(t.transport, log)
         val answer = CompletableDeferred<Answer>()
@@ -189,7 +197,7 @@ class SetupOverNetwork(
             val code = OcbsSetup.code(t.transcript) ?: return Result.NO_ADAPTER
             ask(Confirm(code, networkName), answer).result?.let { return it }
             if (!withContext(Dispatchers.IO) { c.hello(helloMs, untilLinkDead = true) }) return Result.NO_ADAPTER
-            return send(c, ssid, password)
+            return send(c, sends)
         } finally {
             // Also when the set-up is cancelled while the driver is asked: the link must not outlive it.
             withContext(NonCancellable + Dispatchers.IO) { c.stop(sendStop = false) }
@@ -218,11 +226,10 @@ class SetupOverNetwork(
 
     private suspend fun send(
         c: OcbmClient,
-        ssid: String,
-        password: String,
+        sends: suspend (WifiLinkSetup) -> WifiLinkSetup.Sent,
     ): Result {
         val setup = WifiLinkSetup(store, { sessionOf(c) }) { log.i(it) }
-        return when (setup.send(ssid, password)) {
+        return when (sends(setup)) {
             WifiLinkSetup.Sent.SENT, WifiLinkSetup.Sent.SENT_RECONNECTING -> Result.SENT
             WifiLinkSetup.Sent.NOT_SUPPORTED, WifiLinkSetup.Sent.NO_STATION -> Result.NOT_SUPPORTED
             WifiLinkSetup.Sent.REFUSED -> Result.REFUSED
@@ -239,7 +246,7 @@ class SetupOverNetwork(
             override val takesWifiLink: Boolean get() = c.supportsWifiLink
             override val overWifi: Boolean = true
 
-            override fun wifiLink(body: ByteArray): Int? = c.mgmtAction(Ocbm.MGMT_WIFI_LINK, body, ANSWER_MS)
+            override fun wifiLink(body: ByteArray): ByteArray? = c.mgmtAnswer(Ocbm.MGMT_WIFI_LINK, body, ANSWER_MS)
         }
 
     private companion object {

@@ -117,6 +117,36 @@ class SetupOverNetworkTest {
     }
 
     @Test
+    fun `the AP link's set-up goes the same way, v2 with the band once the codes match, and the adapter's network kept`() {
+        fakeAdapter()
+        val setup = SetupOverNetwork(FakePort(), store, ProbeLog.silent())
+        val r =
+            runBlocking {
+                withTimeout(TEST_MS) {
+                    launch {
+                        setup.confirm.first { it != null }
+                        assertTrue("no OCBM frame before the driver's answer: $frames", frames.isEmpty())
+                        setup.answer(true)
+                    }
+                    setup.runAp(ApBand.GHZ_2_4)
+                }
+            }
+        assertEquals(SetupOverNetwork.Result.SENT, r)
+        // CT_HELLO (repeated until its ACK), then one MGMT_WIFI_LINK: the verb and v2's 34 bytes.
+        val hello = "${Ocbm.CH_CTRL}:${Ocbm.CT_HELLO}:"
+        assertTrue(frames.toString(), frames.dropLast(1).isNotEmpty() && frames.dropLast(1).all { it.startsWith(hello) })
+        assertEquals("${Ocbm.CH_MGMT}:${Ocbm.MGMT_WIFI_LINK}:${1 + WifiLinkProvisioning.AP_BODY_LEN}", frames.last())
+        val body = bodies.poll(5, TimeUnit.SECONDS)!!
+        assertEquals(WifiLinkProvisioning.AP_BODY_VERSION, body[0])
+        assertArrayEquals(store.linkKey(), body.copyOfRange(1, 33))
+        assertEquals(WifiLinkProvisioning.BAND_2_4, body[33])
+        assertTrue(store.current.apLink)
+        assertEquals(AP_NAME, store.current.apName)
+        assertEquals(AP_PASSWORD, store.apPassword())
+        assertEquals(1, released)
+    }
+
+    @Test
     fun `no network joined, or nothing on the set-up port, says so and sets nothing up`() {
         assertEquals(SetupOverNetwork.Result.NOT_JOINED, runBlocking { SetupOverNetwork(FakePort(joins = false), store, ProbeLog.silent()).run("MyCar", "password") })
         assertEquals(SetupOverNetwork.Result.NO_ADAPTER, runBlocking { SetupOverNetwork(FakePort(answers = false), store, ProbeLog.silent()).run("MyCar", "password") })
@@ -297,7 +327,10 @@ class SetupOverNetworkTest {
                 out.send(Ocbm.CH_CTRL, byteArrayOf(Ocbm.CT_HELLO_ACK, Ocbm.VERSION, 0, (Ocbm.CAP_WIFI_LINK ushr 8).toByte(), 0, 0, Ocbm.MODE_PROJECTION))
             f.channel == Ocbm.CH_MGMT && p[0] == Ocbm.MGMT_WIFI_LINK && p.size > 1 -> {
                 bodies.add(p.copyOfRange(1, p.size))
-                out.send(Ocbm.CH_MGMT, byteArrayOf(Ocbm.MGMT_ACK, Ocbm.MGMT_WIFI_LINK, status.toByte()))
+                val ack = byteArrayOf(Ocbm.MGMT_ACK, Ocbm.MGMT_WIFI_LINK, status.toByte())
+                // v2 (the AP link) taken: the adapter's own Wi-Fi follows the ACK (the ADDENDUM 24 wire proposal).
+                val v2 = p[1] == WifiLinkProvisioning.AP_BODY_VERSION && status == 0
+                out.send(Ocbm.CH_MGMT, if (v2) ack + networkTail(AP_NAME, AP_PASSWORD) else ack)
             }
             else -> return false
         }
@@ -336,5 +369,18 @@ class SetupOverNetworkTest {
     private companion object {
         /** Each test's own limit, so a regression fails instead of hanging the suite. */
         const val TEST_MS = 20_000L
+
+        /** A made-up network: the adapter's own Wi-Fi, as its answer to v2 names it. */
+        const val AP_NAME = "CarLink-0000"
+        const val AP_PASSWORD = "example-pass"
+
+        fun networkTail(
+            name: String,
+            password: String,
+        ): ByteArray {
+            val n = name.toByteArray(Charsets.UTF_8)
+            val p = password.toByteArray(Charsets.US_ASCII)
+            return byteArrayOf(n.size.toByte()) + n + byteArrayOf(p.size.toByte()) + p
+        }
     }
 }

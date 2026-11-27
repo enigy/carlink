@@ -2,6 +2,8 @@ package com.carlink.link
 
 import com.carlink.link.ConnectOrder.Route
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Which ways a start tries, and in what order, for each choice and whether the USB bridge is installed. */
@@ -38,6 +40,17 @@ class ConnectOrderTest {
         assertEquals(listOf(Route.USB_BRIDGE), ConnectOrder.routes(wifiNotSetUp, bridgeInstalled = true))
         assertEquals(listOf(Route.USB_DIRECT), ConnectOrder.routes(wifiNotSetUp, bridgeInstalled = false))
         assertEquals(listOf(Route.USB_DIRECT), ConnectOrder.routes(wifiKeyLost, bridgeInstalled = false))
+    }
+
+    @Test
+    fun `the AP link set up goes Wi-Fi first as the hotspot link did, and not set up takes USB to set it up`() {
+        val ap = WifiLinkSettings(link = AdapterLink.WIFI, keyStored = true, mode = LinkMode.AP, apName = "CarLink-0000")
+        assertTrue(ap.setUp && ap.apLink && ap.wifiActive)
+        assertEquals(listOf(Route.WIFI, Route.USB_BRIDGE), ConnectOrder.routes(ap, bridgeInstalled = true))
+        assertEquals(listOf(Route.WIFI), ConnectOrder.routes(ap, bridgeInstalled = false))
+        assertEquals("its key lost", listOf(Route.USB_DIRECT), ConnectOrder.routes(ap.copy(keyUnreadable = true), bridgeInstalled = false))
+        assertEquals("the driver chose USB again", listOf(Route.USB_BRIDGE), ConnectOrder.routes(ap.copy(link = AdapterLink.USB_BRIDGE), bridgeInstalled = true))
+        assertFalse("a hotspot set-up is not the AP link", wifi.apLink)
     }
 
     @Test

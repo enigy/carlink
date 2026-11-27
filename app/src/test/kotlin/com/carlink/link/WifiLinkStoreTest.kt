@@ -2,6 +2,7 @@ package com.carlink.link
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.carlink.ocbm.ApNetwork
 import com.carlink.ocbm.OcbwLink
 import com.carlink.ocbm.toHex
 import org.junit.Assert.assertArrayEquals
@@ -112,6 +113,116 @@ class WifiLinkStoreTest {
         assertArrayEquals("readable again on the next try", key, s.linkKey())
         assertNull(WifiLinkStore(context, FakeSealer(broken = true), PREFS).linkKey())
         assertTrue(WifiLinkStore(context, FakeSealer(), PREFS).current.keyUnreadable)
+    }
+
+    // ---- The AP link (ADDENDUM 24) ----
+
+    private val network = ApNetwork("CarLink-0000", "example-pass")
+
+    @Test
+    fun `the AP link's set-up is kept across a restart, the key and the network's password only sealed`() {
+        val key = OcbwLink.random32()
+        store().apply {
+            setLink(AdapterLink.WIFI)
+            assertTrue(setUpAp(key, ApBand.GHZ_5, network))
+        }
+        val again = store()
+        assertTrue(again.current.wifiActive)
+        assertTrue(again.current.apLink)
+        assertEquals(LinkMode.AP, again.current.mode)
+        assertEquals(ApBand.GHZ_5, again.current.band)
+        assertEquals("CarLink-0000", again.current.apName)
+        assertTrue(again.current.apPasswordKept)
+        assertEquals("example-pass", again.apPassword())
+        assertArrayEquals(key, again.linkKey())
+        assertEquals("the AP link names no hotspot", "", again.current.ssid)
+        val kept =
+            context
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .all
+                .values
+                .map { it.toString() }
+        assertFalse("the key is never in plain preferences", kept.any { it.contains(key.toHex(), ignoreCase = true) })
+        assertFalse("nor the network's password", kept.any { it.contains("example-pass") })
+        assertEquals("the two sealed texts, and nothing else of that size", 2, kept.count { it.length > key.size })
+    }
+
+    @Test
+    fun `a set-up whose answer named no network holds the key, with no name or password`() {
+        val s = store()
+        assertTrue(s.setUpAp(OcbwLink.random32(), ApBand.GHZ_2_4, null))
+        assertTrue(store().current.apLink)
+        assertEquals("", store().current.apName)
+        assertFalse(store().current.apPasswordKept)
+        assertNull(store().apPassword())
+    }
+
+    @Test
+    fun `the band is the driver's choice, 2_4 GHz until they pick, and kept`() {
+        assertEquals(ApBand.GHZ_2_4, store().current.band)
+        store().setBand(ApBand.GHZ_5)
+        assertEquals(ApBand.GHZ_5, store().current.band)
+        assertEquals(ApBand.GHZ_2_4, ApBand.fromCode("6"))
+        assertEquals(null, ApBand.ofCode(null))
+        assertEquals(listOf("2.4 GHz", "5 GHz"), ApBand.entries.map { it.label })
+    }
+
+    @Test
+    fun `a hotspot set-up from before ADDENDUM 24 reads as the hotspot link, and the AP link's set-up replaces it`() {
+        val key = OcbwLink.random32()
+        // What an earlier build kept: the hotspot's name and the sealed key, and no mode.
+        context
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString("ssid", "MyCar")
+            .putString("link_key_sealed_v1", FakeSealer().seal(key))
+            .commit()
+        val legacy = store().current
+        assertEquals(LinkMode.HOTSPOT, legacy.mode)
+        assertTrue(legacy.setUp)
+        assertFalse(legacy.apLink)
+        val s = store()
+        assertTrue(s.setUpAp(s.linkKey()!!, ApBand.GHZ_2_4, network))
+        val now = store().current
+        assertTrue(now.apLink)
+        assertEquals("", now.ssid)
+        assertArrayEquals("the key the adapter holds is kept", key, store().linkKey())
+    }
+
+    @Test
+    fun `Remove forgets the AP link's network, password and band too`() {
+        val s = store()
+        s.setLink(AdapterLink.WIFI)
+        s.setUpAp(OcbwLink.random32(), ApBand.GHZ_5, network)
+        s.rememberAddress("192.0.2.1", OcbwLink.PORT)
+        s.forget()
+        val again = store()
+        assertEquals(WifiLinkSettings(link = AdapterLink.USB_BRIDGE), again.current)
+        assertNull(again.apPassword())
+        assertTrue(
+            "nothing of the link is left in the preferences",
+            context
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .all.keys == setOf("link"),
+        )
+    }
+
+    @Test
+    fun `a password this head unit can no longer open is not shown, and the key's state is not touched by it`() {
+        store().setUpAp(OcbwLink.random32(), ApBand.GHZ_2_4, network)
+        val lost = store(FakeSealer(broken = true))
+        assertNull(lost.apPassword())
+        assertFalse(lost.current.keyUnreadable)
+    }
+
+    @Test
+    fun `a KeyStore that can't seal keeps nothing of an AP set-up`() {
+        val sealer = FakeSealer()
+        val s = WifiLinkStore(context, sealer, PREFS)
+        sealer.unavailable = true
+        assertFalse(s.setUpAp(OcbwLink.random32(), ApBand.GHZ_2_4, network))
+        assertFalse(s.current.setUp)
+        assertFalse(store().current.keyStored)
     }
 
     private companion object {
