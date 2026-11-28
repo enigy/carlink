@@ -187,6 +187,9 @@ Each [GitHub Release](https://github.com/enigy/carlink/releases) also attaches t
 
 ### Adapter
 
+This app requires a Carlinkit CPC200-CCPA. The app will flash it with a custom firmware. You may find the adapter here: 
+https://a.co/d/08Xugr5Z
+
 The adapter runs lvalen91's OCBM userspace, installed and recovered per his documentation (`ocbm/docs/ops/`). Add phone and the phone order appear only when the adapter reports that it supports them. Lane guidance from the iPhone needs an adapter built with the lane guidance change.
 
 ### Modules
